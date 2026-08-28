@@ -89,4 +89,36 @@ describe('SessionStore', () => {
     store.applyHostFrame({ type: 'host/workspace-removed', workspaceId: 'w1' as never })
     expect(store.workspaces).toEqual([])
   })
+
+  it('emits jobSettled when a live job settles or leaves the snapshot', () => {
+    const store = new SessionStore()
+    const settled: unknown[] = []
+    store.on('jobSettled', e => settled.push(e))
+    const running = { id: 'bash-1', kind: 'bash', label: 'sleep 30', status: 'running', startedAt: 1 } as never
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [running] }))
+    expect(settled).toHaveLength(0)
+    // Settled in next snapshot
+    const completed = { id: 'bash-1', kind: 'bash', label: 'sleep 30', status: 'completed', startedAt: 1, finishedAt: 2 } as never
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [completed] }))
+    expect(settled).toHaveLength(1)
+    // Live again (new job), then disappears from snapshot = settled
+    const running2 = { id: 'bash-2', kind: 'bash', label: 'sleep 31', status: 'running', startedAt: 1 } as never
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [running2] }))
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [] }))
+    expect(settled).toHaveLength(2)
+    // No duplicate settle for an already-settled job
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [completed] }))
+    const failed = { id: 'bash-1', kind: 'bash', label: 'sleep 30', status: 'failed', startedAt: 1, finishedAt: 3 } as never
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [failed] }))
+    expect(settled).toHaveLength(2)
+  })
+
+  it('emits attention on approval/question requested', () => {
+    const store = new SessionStore()
+    const hits: unknown[] = []
+    store.on('attention', e => hits.push(e))
+    store.applyMuxFrame(...mux({ type: 'approval/requested', sessionId: sid, approvalId: 'a1' as never, toolName: 'bash' }))
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), { type: 'question/requested', sessionId: sid, questions: [{}] as never })
+    expect(hits).toHaveLength(2)
+  })
 })

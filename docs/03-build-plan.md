@@ -73,6 +73,11 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
+> - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。
+> - M2 命令面板：斜杠命令经 `session.prompt` 执行，返回的 `command` 槽以提示条展示；发送失败回填草稿并提示。注意：当前 harness 0.1.1-rc.2 的 apiproxy **没有** `command.list`/`command.execute` RPC（rpc-map 无此二法，插件白名单为前瞻占位）——命令发现列表待宿主版本补齐后接入。
+> - M3 任务面板：`session/jobs` 快照驱动折叠条（运行计数/状态点/label/detail）；列表页运行中任务徽章；前台提醒横幅（任务沉降 `jobSettled` + 待审批/待提问 `attention`，5s 自动消失，不依赖系统推送）。活体验证：pwsh 后台任务（run_in_background）→ 「任务·1（1 运行中）」→ 完成沉降。
+> - 测试：core 19/19（新增 jobSettled/attention 事件与 queuePreview 单测），App tsc 清洁。
 > 进度（2026-08-27）：**2.1/2.2 完成，2.3 骨架完成，native 构建通过，模拟器 e2e 链路打通**。
 > - monorepo 落地：`packages/protocol`（36 文件 vendor + `NatsApiClient`）、`packages/core`（连接生命周期/SessionStore/对话流推导）、`apps/mobile`（RN 0.87.1，配对/会话列表/对话页/审批动作条）。
 > - 测试：core 16/16 通过（含真 nats-server 集成：配对核销、token 门、门控 RPC、mux 帧订阅、hello 重放、断线基线）。
