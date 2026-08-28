@@ -54,6 +54,14 @@ type StoreEvents = {
   changed: { sessionId?: string | undefined }
   workspacesChanged: undefined
   error: { message: string }
+  /** A previously-live job reached a settled status (completed/killed/failed) or left the snapshot. */
+  jobSettled: { sessionId: string; job: JobView }
+  /** An answerable frame (approval/question) arrived or was replayed. */
+  attention: { sessionId: string; kind: 'approval' | 'question'; summary: string }
+}
+
+function isLiveJob(status: JobView['status']): boolean {
+  return status === 'running' || status === 'stopping'
 }
 
 function emptySession(sessionId: string): SessionState {
@@ -143,9 +151,21 @@ export class SessionStore extends Emitter<StoreEvents> {
       case 'session/queue':
         this.session(frame.sessionId).queue = frame.items
         break
-      case 'session/jobs':
-        this.session(frame.sessionId).jobs = frame.jobs
+      case 'session/jobs': {
+        const session = this.session(frame.sessionId)
+        // Settle detection: previously live job now settled or gone. The
+        // snapshot is authoritative; absence == settled (registry removal).
+        const next = new Map(frame.jobs.map(j => [j.id, j]))
+        for (const prev of session.jobs) {
+          if (!isLiveJob(prev.status)) continue
+          const current = next.get(prev.id)
+          if (current === undefined || !isLiveJob(current.status)) {
+            this.emit('jobSettled', { sessionId: frame.sessionId, job: current ?? prev })
+          }
+        }
+        session.jobs = frame.jobs
         break
+      }
       case 'approval/requested':
         this.session(frame.sessionId).pendingApprovals.set(frame.approvalId, {
           approvalId: frame.approvalId,
@@ -153,12 +173,14 @@ export class SessionStore extends Emitter<StoreEvents> {
           toolName: frame.toolName,
           reason: frame.reason,
         })
+        this.emit('attention', { sessionId: frame.sessionId, kind: 'approval', summary: frame.toolName })
         break
       case 'approval/resolved':
         this.session(frame.sessionId).pendingApprovals.delete(frame.approvalId)
         break
       case 'question/requested':
         this.session(frame.sessionId).pendingQuestions.set(rpcId, { rpcId, questions: frame.questions })
+        this.emit('attention', { sessionId: frame.sessionId, kind: 'question', summary: `${frame.questions.length} 个提问` })
         break
       case 'question/resolved':
         this.session(frame.sessionId).pendingQuestions.delete(frame.questionRpcId)

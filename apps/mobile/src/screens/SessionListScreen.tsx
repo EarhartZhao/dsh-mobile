@@ -84,6 +84,7 @@ function SessionRow({ manager, item, onOpen }: {
   const title = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
   const pending = manager.store.sessions.get(item.sessionId)
   const needsAttention = (pending?.pendingApprovals.size ?? 0) + (pending?.pendingQuestions.size ?? 0) > 0
+  const liveJobs = (pending?.jobs ?? []).filter(j => j.status === 'running' || j.status === 'stopping').length
   return (
     <TouchableOpacity style={styles.row} onPress={() => onOpen(item.sessionId)}>
       <View style={styles.rowText}>
@@ -91,6 +92,7 @@ function SessionRow({ manager, item, onOpen }: {
         <Text style={styles.rowSub}>{new Date(item.updatedAt).toLocaleString()}</Text>
       </View>
       {needsAttention && <View style={[styles.badge, { backgroundColor: colors.warning }]}><Text style={styles.badgeText}>待处理</Text></View>}
+      {liveJobs > 0 && <View style={[styles.badge, { backgroundColor: colors.success }]}><Text style={styles.badgeText}>任务×{liveJobs}</Text></View>}
       {item.running && <View style={[styles.badge, { backgroundColor: colors.running }]}><Text style={styles.badgeText}>运行中</Text></View>}
     </TouchableOpacity>
   )
