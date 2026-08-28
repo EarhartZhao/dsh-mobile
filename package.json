@@ -1,0 +1,16 @@
+{
+  "name": "dsh-mobile",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync-protocol": "node scripts/sync-protocol.mjs",
+    "sync-protocol:check": "node scripts/sync-protocol.mjs --check",
+    "build": "pnpm -r --filter './packages/*' build",
+    "test": "pnpm -r --filter './packages/*' test",
+    "typecheck": "pnpm -r --filter './packages/*' typecheck"
+  },
+  "devDependencies": {
+    "nats": "^2.29.3",
+    "typescript": "^5.9.0"
+  }
+}

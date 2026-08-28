@@ -1,0 +1,92 @@
+import { describe, expect, it } from 'vitest'
+import type { MuxFrame } from '@dsh-mobile/protocol'
+import { RpcId } from '@dsh-mobile/protocol'
+import { SessionStore } from '../src/session-store.ts'
+
+const sid = 's-1' as never
+
+function mux(frame: MuxFrame): [RpcId, MuxFrame] {
+  return [RpcId(crypto.randomUUID()), frame]
+}
+
+describe('SessionStore', () => {
+  it('appends live events with seq dedupe (replay-safe)', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 0 }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 1, type: 'user/message' } as never }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 2, type: 'assistant/chunk' } as never }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 2, type: 'assistant/chunk' } as never }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 3, type: 'assistant/message' } as never }))
+    const session = store.sessions.get('s-1')!
+    expect(session.events.map(e => (e.event as { seq: number }).seq)).toEqual([1, 2, 3])
+    expect(session.lastSeq).toBe(3)
+  })
+
+  it('the subscribed watermark drops already-committed replays', () => {
+    const store = new SessionStore()
+    // lastSeq=2 means "the host log already holds seq 1-2; pull history for them".
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 2 }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 2, type: 'assistant/message' } as never }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 3, type: 'assistant/chunk' } as never }))
+    const session = store.sessions.get('s-1')!
+    expect(session.events.map(e => (e.event as { seq: number }).seq)).toEqual([3])
+  })
+
+  it('projections follow higher-seq-wins', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'title', value: 'new', seq: 5 }))
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'title', value: 'stale', seq: 3 }))
+    expect(store.title('s-1')).toBe('new')
+  })
+
+  it('queue and jobs are whole-snapshot replacements', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/queue', sessionId: sid, items: [{ id: 'm1', placement: 'queued', message: null }] as never }))
+    store.applyMuxFrame(...mux({ type: 'session/queue', sessionId: sid, items: [] }))
+    expect(store.sessions.get('s-1')!.queue).toEqual([])
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [{ jobId: 'j1' }] as never }))
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [] }))
+    expect(store.sessions.get('s-1')!.jobs).toEqual([])
+  })
+
+  it('tracks pending approvals/questions until resolved', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'approval/requested', sessionId: sid, approvalId: 'a1' as never, toolName: 'bash' }))
+    expect(store.sessions.get('s-1')!.pendingApprovals.size).toBe(1)
+    store.applyMuxFrame(...mux({ type: 'approval/resolved', sessionId: sid, approvalId: 'a1' as never, outcome: 'approved' as never }))
+    expect(store.sessions.get('s-1')!.pendingApprovals.size).toBe(0)
+    const qRpcId = RpcId(crypto.randomUUID())
+    store.applyMuxFrame(qRpcId, { type: 'question/requested', sessionId: sid, questions: [{ text: '?' }] as never })
+    expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(1)
+    store.applyMuxFrame(...mux({ type: 'question/resolved', sessionId: sid, questionRpcId: qRpcId, outcome: 'answered' }))
+    expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(0)
+  })
+
+  it('history baseline seeds projections and merges without duplicates', () => {
+    const store = new SessionStore()
+    store.applyHistory('s-1', [
+      { event: { seq: 1, type: 'user/message' } as never },
+      { event: { seq: 2, type: 'assistant/message' } as never },
+    ], { asOfSeq: 2, values: { title: 'seeded' } })
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 2, type: 'assistant/message' } as never }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 3, type: 'assistant/chunk' } as never }))
+    const session = store.sessions.get('s-1')!
+    expect(session.events).toHaveLength(3)
+    expect(store.title('s-1')).toBe('seeded')
+    expect(session.lastSeq).toBe(3)
+  })
+
+  it('host frames drive running state and workspace set', () => {
+    const store = new SessionStore()
+    store.applyBaseline({
+      summaries: [{ sessionId: sid, updatedAt: 1, running: false, blank: false } as never],
+      workspaces: [],
+    })
+    store.applyHostFrame({ type: 'host/session-status', sessionId: sid, running: true })
+    expect(store.sessions.get('s-1')!.running).toBe(true)
+    expect(store.summaries[0]!.running).toBe(true)
+    store.applyHostFrame({ type: 'host/workspace-changed', workspace: { workspaceId: 'w1', title: 'W', sessionIds: [] } as never })
+    store.applyHostFrame({ type: 'host/workspace-removed', workspaceId: 'w1' as never })
+    expect(store.workspaces).toEqual([])
+  })
+})

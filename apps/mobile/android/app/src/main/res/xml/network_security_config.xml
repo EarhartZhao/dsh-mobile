@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trust the dsh-mobile private CA only for the Hub IP (docs: plugin 02 §4).
+     Everything else keeps the system trust store, so the bundled CA never
+     widens the attack surface. -->
+<network-security-config>
+  <!-- The dev loop (Metro, local stand-in) speaks cleartext to localhost;
+       the release story can tighten this to debug-overrides only. -->
+  <base-config cleartextTrafficPermitted="true" />
+  <domain-config>
+    <domain includeSubdomains="false">115.159.57.137</domain>
+    <trust-anchors>
+      <certificates src="@raw/dsh_root_ca" />
+    </trust-anchors>
+  </domain-config>
+</network-security-config>

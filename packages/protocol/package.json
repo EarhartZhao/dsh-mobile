@@ -1,0 +1,24 @@
+{
+  "name": "@dsh-mobile/protocol",
+  "version": "0.0.1",
+  "description": "deepseek-harness /api contract (vendored) + NATS-carrier client for dsh-mobile",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./vendor/*": "./src/vendor/*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"protocol tests live in @dsh-mobile/core\" && exit 0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
