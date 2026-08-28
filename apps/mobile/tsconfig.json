@@ -1,0 +1,5 @@
+{
+  "extends": "@react-native/typescript-config",
+  "include": ["**/*.ts", "**/*.tsx", "../../packages/protocol/src/harness-shims.d.ts"],
+  "exclude": ["**/node_modules", "**/Pods"]
+}
