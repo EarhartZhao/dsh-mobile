@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
+  Clipboard,
   Image,
   FlatList,
   KeyboardAvoidingView,
@@ -24,10 +25,12 @@ import {
 import { deriveConversation, placementLabel, queuePreview, type ConnectionManager, type ConversationImage, type ConversationItem, type TodoItemView, type UsageView } from '@dsh-mobile/core'
 import type { JobView, QueuedInboxItem } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
+import { Circle, Path, Rect, Svg } from 'react-native-svg'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { PromptModal } from '../components/PromptModal'
 import { GoalBar, PlanChip, TodoStrip, UsageBar, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
 
 interface PermissionSelectView {
   options: { value: string; name: string; description?: string }[]
@@ -153,14 +156,25 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   }
 
   const chooseImage = async (): Promise<void> => {
+    const image = await callImagePicker('pickImage')
+    if (image !== null && image !== undefined) setPendingImage(image)
+  }
+
+  const captureImage = async (): Promise<void> => {
+    const image = await callImagePicker('captureImage')
+    if (image !== null && image !== undefined) setPendingImage(image)
+  }
+
+  const callImagePicker = async (method: 'pickImage' | 'captureImage'): Promise<PendingImage | null | undefined> => {
     try {
       const picker = NativeModules.DshImagePicker as {
         pickImage(maxBytes: number): Promise<PendingImage | null>
+        captureImage(maxBytes: number): Promise<PendingImage | null>
       } | undefined
-      const image = await picker?.pickImage(20 * 1024 * 1024)
-      if (image !== null && image !== undefined) setPendingImage(image)
+      return await picker?.[method](20 * 1024 * 1024)
     } catch (error) {
       showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
+      return null
     }
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -376,7 +390,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
 
   const selectPermission = (value: string): void => {
     if (value === 'danger-full-access') {
-      Alert.alert('启用 Full access', '此权限允许绕过沙箱写入整个系统，确认继续？', [
+      Alert.alert('启用完全访问权限', '此权限允许绕过沙箱写入整个系统，确认继续？', [
         { text: '取消', style: 'cancel' },
         { text: '启用', style: 'destructive', onPress: () => { void runCommand('/permission danger-full-access') } },
       ])
@@ -419,7 +433,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         if (s === undefined) return null
         const bits: string[] = []
         if (s.cwd !== undefined) bits.push(s.cwd)
-        if (s.agentPreset !== undefined) bits.push(`preset ${s.agentPreset}`)
+        if (s.agentPreset !== undefined) bits.push(`预设 ${s.agentPreset}`)
         if (bits.length === 0) return null
         return <Text style={styles.metaLine} numberOfLines={1}>{bits.join(' · ')}</Text>
       })()}
@@ -435,7 +449,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
                 disabled={active}
                 onPress={() => selectPermission(option.value)}
               >
-                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{option.name}</Text>
+                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{commonLabel(option.name)}</Text>
               </TouchableOpacity>
             )
           })}
@@ -489,9 +503,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           </View>
         )}
         {editingItem === null && (
-          <TouchableOpacity style={styles.imageButton} onPress={() => void chooseImage()}>
-            <Text style={styles.imageButtonText}>＋</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => void captureImage()}
+              accessibilityRole="button"
+              accessibilityLabel="拍照"
+            >
+              <CameraGlyph color={colors.accent} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => void chooseImage()}
+              accessibilityRole="button"
+              accessibilityLabel="从相册选择图片"
+            >
+              <AlbumGlyph color={colors.accent} />
+            </TouchableOpacity>
+          </>
         )}
         {editingItem !== null && (
           <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
@@ -521,8 +550,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           </View>
         ) : (
           <TouchableOpacity
-            style={[styles.sendButton, draft.trim() === '' && editingItem === null && styles.disabled]}
-            disabled={draft.trim() === '' && editingItem === null}
+            style={[styles.sendButton, draft.trim() === '' && pendingImage === null && editingItem === null && styles.disabled]}
+            disabled={draft.trim() === '' && pendingImage === null && editingItem === null}
             onPress={() => void send()}
           >
             <Text style={styles.sendText}>{editingItem !== null ? '保存' : '发送'}</Text>
@@ -603,7 +632,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
                           ]}
                           onPress={() => void selectModel(group.id, model.id, effort.id)}
                         >
-                          <Text style={styles.menuText} numberOfLines={1}>{effort.name}</Text>
+                          <Text style={styles.menuText} numberOfLines={1}>{commonLabel(effort.name)}</Text>
                         </TouchableOpacity>
                       ))
                     )}
@@ -634,6 +663,25 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onConfirm={t => void goalSubmit(t)}
       />
     </KeyboardAvoidingView>
+  )
+}
+
+function CameraGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <Circle cx="12" cy="13" r="3" />
+    </Svg>
+  )
+}
+
+function AlbumGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Rect width={18} height={18} x={3} y={3} rx={2} ry={2} />
+      <Circle cx={9} cy={9} r={2} />
+      <Path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </Svg>
   )
 }
 
@@ -686,7 +734,7 @@ function JobsStrip({ jobs, open, onToggle }: {
           <View style={styles.jobText}>
             <Text style={styles.jobLabel} numberOfLines={1}>{job.label}</Text>
             <Text style={styles.jobMeta}>
-              {job.kind} · {jobStatusLabel(job.status)}{job.detail !== undefined && job.detail !== '' ? ` · ${job.detail}` : ''}
+              {jobKindLabel(job.kind)} · {jobStatusLabel(job.status)}{job.detail !== undefined && job.detail !== '' ? ` · ${job.detail}` : ''}
             </Text>
           </View>
         </View>
@@ -727,7 +775,7 @@ function Bubble({ item, manager, sessionId }: {
           {item.images.map(image => (
             <MessageImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
           ))}
-          <Markdown style={markdownStyles}>{item.text}</Markdown>
+          <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
         </View>
       )
     case 'compaction':
@@ -745,7 +793,7 @@ function Bubble({ item, manager, sessionId }: {
           onLongPress={item.kind === 'assistant' && item.text !== '' ? () => { void Share.share({ message: item.text }) } : undefined}
         >
           {item.reasoning !== '' && <Text style={styles.reasoning}>{item.reasoning}</Text>}
-          <Markdown style={markdownStyles}>{item.text}</Markdown>
+          <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
               {item.producedFiles.map(path => (
@@ -762,6 +810,34 @@ function Bubble({ item, manager, sessionId }: {
     case 'tool':
       return <ToolCard item={item} />
   }
+}
+
+function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }): React.JSX.Element {
+  const content = node.content.endsWith('\n') ? node.content.slice(0, -1) : node.content
+  const attributes = typeof node.attributes === 'object' && node.attributes !== null
+    ? node.attributes as { info?: unknown }
+    : {}
+  const language = typeof attributes.info === 'string' && attributes.info !== ''
+    ? attributes.info.split(/\s+/)[0]
+    : '代码'
+  return (
+    <View style={codeStyles.block}>
+      <View style={codeStyles.header}>
+        <Text style={codeStyles.language}>{language}</Text>
+        <View style={codeStyles.actions}>
+          <TouchableOpacity onPress={() => void Clipboard.setString(content)}>
+            <Text style={codeStyles.action}>复制</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { void Share.share({ message: content }) }}>
+            <Text style={codeStyles.action}>分享</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      <ScrollView horizontal nestedScrollEnabled>
+        <Text selectable style={codeStyles.code}>{content}</Text>
+      </ScrollView>
+    </View>
+  )
 }
 
 function MessageImage({ image, manager, sessionId }: {
@@ -802,7 +878,7 @@ function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): Reac
   return (
     <TouchableOpacity style={styles.toolCard} onPress={() => setOpen(o => !o)} activeOpacity={0.8}>
       <View style={styles.toolHeader}>
-        <Text style={styles.toolName}>{item.name}</Text>
+        <Text style={styles.toolName}>{toolDisplayName(item.name)}</Text>
         <Text style={[styles.toolStatus, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
       </View>
       {open && (
@@ -851,7 +927,7 @@ function ActionBar({ manager, sessionId }: { manager: ConnectionManager; session
       {approvals.map(approval => (
         <View key={approval.approvalId} style={styles.actionRow}>
           <Text style={styles.actionText} numberOfLines={2}>
-            审批：{approval.toolName}{approval.reason !== undefined && approval.reason !== '' ? `（${approval.reason}）` : ''}
+            审批：{toolDisplayName(approval.toolName)}{approval.reason !== undefined && approval.reason !== '' ? `（${approval.reason}）` : ''}
           </Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]}
@@ -969,7 +1045,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
   },
   pendingImage: { width: 64, height: 64, borderRadius: radius.card },
-  imageButton: {
+  iconButton: {
+    minWidth: 40,
+    paddingHorizontal: spacing(1.5),
     width: 40,
     height: 44,
     borderRadius: radius.card,
@@ -979,7 +1057,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  imageButtonText: { color: colors.accent, fontSize: 20, lineHeight: 24 },
   messageImage: { alignSelf: 'stretch', width: '100%', borderRadius: radius.card, marginBottom: spacing(2) },
   imageFallback: { color: colors.textDim, fontSize: fontSize.small, marginBottom: spacing(2) },
   cursor: { color: colors.accent },
@@ -1095,6 +1172,15 @@ const styles = StyleSheet.create({
   jobMeta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 1 },
 })
 
+const markdownRules = {
+  code_block: (node: { key: string; content: string; attributes?: unknown }): React.JSX.Element => (
+    <CodeBlock key={node.key} node={node} />
+  ),
+  fence: (node: { key: string; content: string; attributes?: unknown }): React.JSX.Element => (
+    <CodeBlock key={node.key} node={node} />
+  ),
+}
+
 const markdownStyles = StyleSheet.create({
   body: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
   strong: { color: colors.text, fontWeight: '700' },
@@ -1122,6 +1208,39 @@ const markdownStyles = StyleSheet.create({
   ordered_list_content: { color: colors.text, fontSize: fontSize.body },
   blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: spacing(2), backgroundColor: colors.bg },
   hr: { backgroundColor: colors.border },
+})
+
+const codeStyles = StyleSheet.create({
+  block: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    backgroundColor: colors.bg,
+    marginVertical: spacing(2),
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing(2.5),
+    paddingVertical: spacing(1.5),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bgElevated,
+  },
+  language: { color: colors.textDim, fontSize: fontSize.tiny },
+  actions: { flexDirection: 'row', gap: spacing(3) },
+  action: { color: colors.accent, fontSize: fontSize.tiny },
+  code: {
+    minWidth: '100%',
+    paddingHorizontal: spacing(2.5),
+    paddingVertical: spacing(2),
+    color: colors.text,
+    fontSize: fontSize.small,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
 })
 
 const toolStyles = StyleSheet.create({

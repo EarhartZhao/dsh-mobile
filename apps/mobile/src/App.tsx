@@ -3,10 +3,11 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { StatusBar, StyleSheet, Text, View } from 'react-native'
+import { DevSettings, NativeModules, Modal, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { colors, fontSize, spacing } from './theme'
+import { toolDisplayName } from './ui-labels'
 import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
@@ -14,6 +15,17 @@ import { SessionListScreen } from './screens/SessionListScreen'
 import { ChatScreen } from './screens/ChatScreen'
 
 type Route = { name: 'list' } | { name: 'chat'; sessionId: string }
+type ThemeMode = 'light' | 'dark' | 'system'
+
+function connectionStateLabel(state: ConnectionState): string {
+  switch (state) {
+    case 'idle': return '空闲'
+    case 'connecting': return '连接中'
+    case 'online': return '在线'
+    case 'reconnecting': return '重新连接中'
+    case 'stopped': return '已停止'
+  }
+}
 
 export default function App(): React.JSX.Element {
   const [pairing, setPairing] = useState<PairingRecord | null>(null)
@@ -21,6 +33,8 @@ export default function App(): React.JSX.Element {
   const [route, setRoute] = useState<Route>({ name: 'list' })
   const [connState, setConnState] = useState<ConnectionState>('idle')
   const [alert, setAlert] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system')
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -38,6 +52,26 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    void (NativeModules.DshTheme as { getMode(): Promise<ThemeMode> } | undefined)
+      ?.getMode()
+      .then(setThemeMode)
+      .catch(() => undefined)
+  }, [])
+
+  const setTheme = (mode: ThemeMode): void => {
+    setThemeMode(mode)
+    void (NativeModules.DshTheme as { setMode(mode: ThemeMode): Promise<null> } | undefined)
+      ?.setMode(mode)
+      .then(() => {
+        // Colors are module-level constants, so reload after the native mode
+        // lands and Activity recreation instead of threading a token object
+        // through every screen.
+        DevSettings.reload()
+      })
+      .catch(() => undefined)
+  }
+
+  useEffect(() => {
     if (pairing === null) return
     const manager = createManager(pairing)
     managerRef.current = manager
@@ -49,7 +83,7 @@ export default function App(): React.JSX.Element {
       showAlert(`任务 ${job.id} 已${status}：${job.label}`)
     })
     const offAttention = manager.store.on('attention', ({ kind, summary }) => {
-      showAlert(kind === 'approval' ? `待审批：${summary}` : `待回答：${summary}`)
+      showAlert(kind === 'approval' ? `待审批：${toolDisplayName(summary)}` : `待回答：${summary}`)
     })
     manager.start().catch(() => undefined)
     return () => {
@@ -83,7 +117,7 @@ export default function App(): React.JSX.Element {
           {connState !== 'online' && (
             <View style={styles.banner}>
               <Text style={styles.bannerText}>
-                {connState === 'reconnecting' || connState === 'connecting' ? '连接中…' : `连接状态：${connState}`}
+                {connState === 'reconnecting' || connState === 'connecting' ? '连接中…' : `连接状态：${connectionStateLabel(connState)}`}
               </Text>
             </View>
           )}
@@ -97,6 +131,7 @@ export default function App(): React.JSX.Element {
               manager={managerRef.current}
               onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
               onUnpair={onUnpair}
+              onOpenSettings={() => setSettingsOpen(true)}
             />
           ) : (
             <ChatScreen
@@ -109,6 +144,25 @@ export default function App(): React.JSX.Element {
         </>
       )}
     </SafeAreaView>
+      <Modal transparent visible={settingsOpen} animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
+        <View style={styles.backdrop}>
+          <View style={styles.settingsCard}>
+            <Text style={styles.settingsTitle}>设置</Text>
+            {(['light', 'dark', 'system'] as ThemeMode[]).map(mode => (
+              <TouchableOpacity
+                key={mode}
+                style={styles.settingsRow}
+                onPress={() => { setTheme(mode); setSettingsOpen(false) }}
+              >
+                <Text style={styles.settingsText}>
+                  {mode === 'light' ? '亮色' : mode === 'dark' ? '暗色' : '跟随系统'}
+                </Text>
+                <Text style={[styles.settingsCheck, themeMode !== mode && { opacity: 0 }]}>✓</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaProvider>
   )
 }
@@ -131,4 +185,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(4),
   },
   alertText: { color: colors.text, fontSize: fontSize.small },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
+  settingsCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: 8,
+    marginHorizontal: 40,
+    paddingVertical: 8,
+  },
+  settingsTitle: {
+    color: colors.textDim,
+    fontSize: 11,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  settingsText: { color: colors.text, fontSize: 15 },
+  settingsCheck: { color: colors.accent, fontSize: 15 },
 })
