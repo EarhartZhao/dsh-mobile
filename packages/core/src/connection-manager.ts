@@ -102,6 +102,23 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (conn !== null) await conn.close().catch(() => undefined)
   }
 
+  /** Refreshes list/workspace metadata after mutations that don't emit a mergeable session event. */
+  async refreshBaseline(): Promise<void> {
+    const client = this.client
+    if (client === null || this.state !== 'online') return
+    const [workspaces, sessions] = await Promise.all([
+      client.workspace.list({}),
+      client.sessions.list({}),
+    ])
+    if (workspaces.result.ok && sessions.result.ok) {
+      this.store.applyBaseline({
+        workspaces: workspaces.result.value.items,
+        archivedSessionIds: workspaces.result.value.archivedSessionIds,
+        summaries: sessions.result.value.items,
+      })
+    }
+  }
+
   /**
    * One full "become online" pass; also the reconnect-baseline path. Order
    * matters: baselines land before hello so replayed pending frames update

@@ -73,6 +73,13 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-08-29 第二轮）：**P0-P2 本地可实施面完成，附件和剩余指示已闭环。**
+> - 验证：`packages/core` 21/21、App `tsc --noEmit` 清洁、Android `gradlew assembleDebug` 通过；新 APK 已装回模拟器。
+> - 新增 P1/P2：Android 原生选图（ACTION_GET_CONTENT，超过 384KB 自动降采样/JPEG 压缩）、pending 预览、`session.prompt` 图片块、历史 data/attachment 图片渲染；长按「全部」打开目录浏览器（面包屑/子目录/新建目录，browse capability 缺失时显示宿主错误）；会话权限预设 chips（Full access 确认）；assistant 收尾交付物 chips；`compaction/summary` 标记。Core 推导新增图片/交付物/compaction 单测。
+> - 真链路附件验收：选择模拟器截图 → native base64 → vision 模型接收并识别为“mobile screenshot” → agent 开始基于图片制定计划；先切到 `deepseek-v4-flash-vision-exp`，非视觉模型返回的 `MODEL_DOES_NOT_SUPPORT_IMAGES` 被正确展示。
+> - 部署限制：当前宿主 composed picker 只提供 `native` capability，`host.listDirectory` 返回需要 `browse`；目录浏览器可运行但列表数据受该宿主配置限制。`session.search` 仍受 index `openAt: never` 限制；detach 会话的 `skill.list` 依赖宿主 attach 状态。
+> - 明确后续：完整亮色主题重构（当前是暗色优先）、系统推送（插件 v2）、iPad 双栏布局；TodoStrip 待真实任务触发 `todo/write` 后活体验证。
+
 > 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
 > - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。
 > - M2 命令面板：斜杠命令经 `session.prompt` 执行，返回的 `command` 槽以提示条展示；发送失败回填草稿并提示。注意：当前 harness 0.1.1-rc.2 的 apiproxy **没有** `command.list`/`command.execute` RPC（rpc-map 无此二法，插件白名单为前瞻占位）——命令发现列表待宿主版本补齐后接入。

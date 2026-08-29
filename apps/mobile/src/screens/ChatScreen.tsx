@@ -6,34 +6,163 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  Alert,
+  Image,
   FlatList,
   KeyboardAvoidingView,
+  NativeModules,
   Platform,
+  Modal,
+  ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, placementLabel, queuePreview, type ConnectionManager, type ConversationItem } from '@dsh-mobile/core'
+import { deriveConversation, placementLabel, queuePreview, type ConnectionManager, type ConversationImage, type ConversationItem, type TodoItemView, type UsageView } from '@dsh-mobile/core'
 import type { JobView, QueuedInboxItem } from '@dsh-mobile/protocol'
+import Markdown from 'react-native-markdown-display'
+import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
+import { PromptModal } from '../components/PromptModal'
+import { GoalBar, PlanChip, TodoStrip, UsageBar, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
+
+interface PermissionSelectView {
+  options: { value: string; name: string; description?: string }[]
+  currentValue: string
+}
+
+interface PendingImage {
+  mediaType: string
+  data: string
+  width: number
+  height: number
+  name?: string | null
+}
 
 interface Props {
   manager: ConnectionManager
   sessionId: string
   onBack: () => void
+  onOpenSession?: (sessionId: string) => void
 }
 
-export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Element {
+export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
   const [items, setItems] = useState<ConversationItem[]>([])
   const [draft, setDraft] = useState('')
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null)
   const [running, setRunning] = useState(false)
   const [queue, setQueue] = useState<QueuedInboxItem[]>([])
   const [jobs, setJobs] = useState<JobView[]>([])
   const [jobsOpen, setJobsOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<{ id: string } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [todos, setTodos] = useState<TodoItemView[]>([])
+  const [usage, setUsage] = useState<UsageView | null>(null)
+  const [goal, setGoal] = useState<GoalViewLite | null>(null)
+  const [goalPrompt, setGoalPrompt] = useState<'create' | 'edit' | null>(null)
+  const [planMode, setPlanMode] = useState<string | undefined>(undefined)
+  const [permissions, setPermissions] = useState<PermissionSelectView | undefined>(undefined)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [subOpen, setSubOpen] = useState<{ parentAvailable: boolean; entries: { id: string; activity: 'running' | 'inactive'; mode: string; label?: string }[] } | null>(null)
+  const [modelMenu, setModelMenu] = useState<{
+    current: { provider: string; model: string; reasoningEffort?: string }
+    groups: {
+      id: string
+      name: string
+      models: {
+        id: string
+        name: string
+        reasoning?: { efforts: { id: string; name: string }[]; defaultEffort?: string }
+      }[]
+    }[]
+  } | null>(null)
+  const [pendingModel, setPendingModel] = useState<{ providerId: string; modelId: string; efforts: { id: string; name: string }[] } | null>(null)
+  const [modelLabel, setModelLabel] = useState('模型')
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const skillsCache = useRef<{ sessionId: string; skills: { name: string; description: string }[] } | null>(null)
+
+  /** Trailing-token detection: /skill and @file/session triggers (ui-input-trigger lite). */
+  const onDraftChange = (text: string): void => {
+    setDraft(text)
+    const m = /(^|\s)(\/|@)([\w.-]*)$/.exec(text)
+    if (m === null) { setCandidates([]); return }
+    const token = m[3]
+    if (m[2] === '/') {
+      void resolveSkills(token)
+    } else {
+      void resolveAtRefs(token)
+    }
+  }
+
+  const resolveSkills = async (query: string): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    let skills = skillsCache.current?.sessionId === sessionId ? skillsCache.current.skills : null
+    if (skills === null) {
+      const result = await client.skills.list({ sessionId } as never).catch(() => null)
+      if (result?.result.ok) {
+        skills = (result.result.value.skills as never) as { name: string; description: string }[]
+        skillsCache.current = { sessionId, skills }
+      }
+    }
+    if (skills === null) return
+    setCandidates(skills
+      .filter(s => s.name.startsWith(query))
+      .map(s => ({ key: s.name, title: `/${s.name}`, subtitle: s.description, insert: `/${s.name} ` })))
+  }
+
+  const resolveAtRefs = async (query: string): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const summary = manager.store.summaries.find(s => s.sessionId === sessionId)
+    const cwd = summary?.cwd
+    const files: Candidate[] = []
+    if (cwd !== undefined && cwd !== '') {
+      const listing = await client.host.listDirectory({ path: cwd } as never).catch(() => null)
+      if (listing?.result.ok) {
+        for (const entry of listing.result.value.entries) {
+          if (entry.name.toLowerCase().startsWith(query.toLowerCase())) {
+            files.push({ key: entry.path, title: entry.name, subtitle: entry.path, insert: `@${entry.path} ` })
+          }
+        }
+      }
+    }
+    const sessions: Candidate[] = manager.store.summaries
+      .filter(s => s.sessionId !== sessionId)
+      .filter(s => {
+        const t = manager.store.title(s.sessionId) ?? ''
+        return t.toLowerCase().includes(query.toLowerCase())
+      })
+      .slice(0, 4)
+      .map(s => ({
+        key: s.sessionId,
+        title: manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8),
+        subtitle: '会话',
+        insert: `@${manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8)} `,
+      }))
+    setCandidates([...files.slice(0, 6), ...sessions])
+  }
+
+  const pickCandidate = (candidate: Candidate): void => {
+    setDraft(draft.replace(/(^|\s)(\/|@)([\w.-]*)$/, (_full, lead: string) => `${lead}${candidate.insert}`))
+    setCandidates([])
+  }
+
+  const chooseImage = async (): Promise<void> => {
+    try {
+      const picker = NativeModules.DshImagePicker as {
+        pickImage(maxBytes: number): Promise<PendingImage | null>
+      } | undefined
+      const image = await picker?.pickImage(20 * 1024 * 1024)
+      if (image !== null && image !== undefined) setPendingImage(image)
+    } catch (error) {
+      showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<ConversationItem>>(null)
 
@@ -44,7 +173,102 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
     setRunning(session.running)
     setQueue([...session.queue])
     setJobs([...session.jobs])
+    setTodos([...session.todos])
+    setUsage(session.usage)
+    const goalRaw = session.projections['goal']
+    if (goalRaw !== null && goalRaw !== undefined && typeof goalRaw === 'object' && 'goal' in (goalRaw as object)) {
+      const g = (goalRaw as { goal?: { id?: string; revision?: number; objective?: string; phase?: string } }).goal
+      if (g !== undefined && g !== null && typeof g.id === 'string' && typeof g.revision === 'number' && typeof g.objective === 'string') {
+        setGoal({ id: g.id, revision: g.revision, objective: g.objective, phase: (g.phase as GoalViewLite['phase']) ?? 'active' })
+      } else setGoal(null)
+    } else setGoal(null)
+    const planRaw = session.projections['plan']
+    if (typeof planRaw === 'string') setPlanMode(planRaw)
+    else if (planRaw !== null && typeof planRaw === 'object' && 'mode' in (planRaw as object) && typeof (planRaw as { mode?: unknown }).mode === 'string') {
+      setPlanMode((planRaw as { mode: string }).mode)
+    } else setPlanMode(undefined)
+    const permissionRaw = session.projections['permissions']
+    if (permissionRaw !== null && typeof permissionRaw === 'object') {
+      const raw = permissionRaw as { options?: unknown; currentValue?: unknown }
+      const options = Array.isArray(raw.options)
+        ? raw.options.filter((option): option is PermissionSelectView['options'][number] =>
+            typeof option === 'object' && option !== null &&
+            typeof (option as Record<string, unknown>)['value'] === 'string' &&
+            typeof (option as Record<string, unknown>)['name'] === 'string')
+        : []
+      if (options.length > 0 && typeof raw.currentValue === 'string') {
+        setPermissions({ options, currentValue: raw.currentValue })
+      } else setPermissions(undefined)
+    } else setPermissions(undefined)
   }, [manager, sessionId])
+
+  const goalAction = async (verb: 'pause' | 'resume' | 'complete' | 'clear'): Promise<void> => {
+    const client = manager.client
+    if (client === null || goal === null) return
+    const ref = { id: goal.id, revision: goal.revision }
+    await (verb === 'pause' ? client.goals.pause({ sessionId, ref } as never)
+      : verb === 'resume' ? client.goals.resume({ sessionId, ref } as never)
+      : verb === 'complete' ? client.goals.complete({ sessionId, ref } as never)
+      : client.goals.clear({ sessionId, ref } as never)).catch(() => undefined)
+  }
+
+  const goalSubmit = async (objective: string): Promise<void> => {
+    const client = manager.client
+    setGoalPrompt(null)
+    if (client === null) return
+    if (goalPrompt === 'create') {
+      const result = await client.goals.create({ sessionId, objective } as never).catch(() => null)
+      if (result?.result.ok) {
+        const ref = (result.result.value as { ref?: { id?: string; revision?: number } }).ref
+        if (typeof ref?.id === 'string' && typeof ref.revision === 'number') {
+          setGoal({ id: ref.id, revision: ref.revision, objective, phase: 'active' })
+        }
+      }
+      return
+    }
+    if (goal !== null) await client.goals.edit({ sessionId, ref: { id: goal.id, revision: goal.revision }, objective } as never).catch(() => undefined)
+  }
+
+  const rename = async (title: string): Promise<void> => {
+    setRenameOpen(false)
+    await manager.client?.sessions.rename({ sessionId, title } as never).catch(() => undefined)
+  }
+
+  const fork = async (): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const result = await client.sessions.fork({ sessionId } as never).catch(() => null)
+    setMenuOpen(false)
+    // New forked session: navigation lands on the list, where it now exists.
+    if (result?.result.ok) onBack()
+    void manager.refreshBaseline()
+  }
+
+  const openModels = async (): Promise<void> => {
+    setMenuOpen(false)
+    const client = manager.client
+    if (client === null) return
+    const result = await client.sessions.models({ sessionId } as never).catch(() => null)
+    if (result?.result.ok) {
+      setModelMenu(result.result.value as never)
+      setModelLabel(`${result.result.value.current.model}`)
+    }
+  }
+
+  const openSubagents = async (): Promise<void> => {
+    setMenuOpen(false)
+    const client = manager.client
+    if (client === null) return
+    const result = await client.subagents.list({ parentSessionId: sessionId } as never).catch(() => null)
+    if (result?.result.ok) setSubOpen(result.result.value as never)
+  }
+
+  const selectModel = async (provider: string, model: string, reasoningEffort?: string): Promise<void> => {
+    setModelMenu(null)
+    setModelLabel(model)
+    setPendingModel(null)
+    await manager.client?.sessions.selectModel({ sessionId, provider, model, reasoningEffort } as never).catch(() => undefined)
+  }
 
   const showNotice = useCallback((text: string) => {
     setNotice(text)
@@ -56,7 +280,7 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
     // Baseline: tail page (with projections watermark), then live frames take over.
     const client = manager.client
     if (client !== null) {
-      void client.sessions.history({ sessionId } as never).then(result => {
+      void client.sessions.history({ sessionId, maxMessages: 120 } as never).then(result => {
         if (result.result.ok) {
           manager.store.applyHistory(
             sessionId,
@@ -83,7 +307,7 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
   const send = async (): Promise<void> => {
     const client = manager.client
     const text = draft.trim()
-    if (client === null || text === '') return
+    if (client === null || (text === '' && pendingImage === null)) return
     setDraft('')
     // Edit mode: rewrite the queued item in place instead of a new prompt.
     if (editingItem !== null) {
@@ -100,22 +324,65 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
     const clientTimeZone = typeof tz === 'string' && (tz === 'UTC' || tz.includes('/')) ? tz : undefined
     if (clientTimeZone === undefined) console.warn('[prompt] non-IANA timeZone omitted:', tz)
-    const result = await client.sessions.prompt({
-      sessionId,
-      // Always queue: while a turn runs the message parks in the inbox FIFO
-      // (dock below); explicit steering is the dock's 引导 action.
-      mode: 'queue',
-      content: [{ type: 'text', text }],
-      clientTimeZone,
-    } as never)
-    if (!result.result.ok) {
+    let result
+    try {
+      result = await client.sessions.prompt({
+        sessionId,
+        // Always queue: while a turn runs the message parks in the inbox FIFO
+        // (dock below); explicit steering is the dock's 引导 action.
+        mode: 'queue',
+        content: [
+          ...(text !== '' ? [{ type: 'text', text }] : []),
+          ...(pendingImage === null ? [] : [{
+            type: 'image',
+            mediaType: pendingImage.mediaType,
+            data: pendingImage.data,
+            ...(pendingImage.name === null ? {} : { name: pendingImage.name }),
+          }]),
+        ],
+        clientTimeZone,
+      } as never)
+    } catch (error) {
+      result = null
+      showNotice(`发送失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (result === null || !result.result.ok) {
       setDraft(text) // put the draft back on failure
-      showNotice(`发送失败：${result.result.error.message}`)
+      if (result !== null && !result.result.ok) showNotice(`发送失败：${result.result.error.message}`)
       return
     }
+    setPendingImage(null)
     // Slash commands report their result in the command slot.
     const command = result.result.value.command
     if (command?.text !== undefined && command.text !== '') showNotice(command.text)
+  }
+
+  const runCommand = async (command: string): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const response = await client.sessions.prompt({
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: command }],
+    } as never).catch(() => null)
+    const result = response?.result
+    if (result?.ok) {
+      const text = result.value.command?.text
+      if (text !== undefined && text !== '') showNotice(text)
+    } else if (result !== undefined && !result.ok) {
+      showNotice(`命令失败：${result.error.message}`)
+    }
+  }
+
+  const selectPermission = (value: string): void => {
+    if (value === 'danger-full-access') {
+      Alert.alert('启用 Full access', '此权限允许绕过沙箱写入整个系统，确认继续？', [
+        { text: '取消', style: 'cancel' },
+        { text: '启用', style: 'destructive', onPress: () => { void runCommand('/permission danger-full-access') } },
+      ])
+      return
+    }
+    void runCommand(`/permission ${value}`)
   }
 
   const cancel = async (): Promise<void> => {
@@ -138,20 +405,60 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
   const title = manager.store.title(sessionId) ?? '会话'
 
   return (
-    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ 返回</Text></TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
-        <View style={styles.back} />
+        <TouchableOpacity style={styles.back} onPress={() => setMenuOpen(true)}><Text style={styles.back}>⋯</Text></TouchableOpacity>
       </View>
+      <TouchableOpacity style={styles.modelChip} onPress={() => void openModels()}>
+        <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
+      </TouchableOpacity>
+      {(() => {
+        const s = manager.store.summaries.find(x => x.sessionId === sessionId)
+        if (s === undefined) return null
+        const bits: string[] = []
+        if (s.cwd !== undefined) bits.push(s.cwd)
+        if (s.agentPreset !== undefined) bits.push(`preset ${s.agentPreset}`)
+        if (bits.length === 0) return null
+        return <Text style={styles.metaLine} numberOfLines={1}>{bits.join(' · ')}</Text>
+      })()}
+      {permissions !== undefined && (
+        <ScrollView horizontal style={styles.permissionBar} contentContainerStyle={styles.permissionContent} showsHorizontalScrollIndicator={false}>
+          {permissions.options.map(option => {
+            const active = option.value === permissions.currentValue
+            const danger = option.value === 'danger-full-access'
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.chip, active && styles.chipActive, danger && styles.permissionDanger]}
+                disabled={active}
+                onPress={() => selectPermission(option.value)}
+              >
+                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{option.name}</Text>
+              </TouchableOpacity>
+            )
+          })}
+        </ScrollView>
+      )}
       <FlatList
         ref={listRef}
         data={items}
         keyExtractor={item => item.key}
         contentContainerStyle={styles.listContent}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item }) => <Bubble item={item} />}
+        renderItem={({ item }) => <Bubble item={item} manager={manager} sessionId={sessionId} />}
       />
+      {planMode !== undefined && <PlanChip mode={planMode} />}
+      <GoalBar
+        goal={goal}
+        onEdit={() => setGoalPrompt('edit')}
+        onPause={() => void goalAction('pause')}
+        onResume={() => void goalAction('resume')}
+        onComplete={() => void goalAction('complete')}
+        onClear={() => void goalAction('clear')}
+      />
+      <TodoStrip todos={todos} />
       {notice !== null && (
         <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>
       )}
@@ -170,7 +477,22 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
       {(approvals.length > 0 || questions.length > 0) && (
         <ActionBar manager={manager} sessionId={sessionId} />
       )}
+      <CandidateMenu items={candidates} onPick={pickCandidate} />
+      <UsageBar usage={usage} />
       <View style={styles.composer}>
+        {pendingImage !== null && (
+          <View style={styles.pendingImageRow}>
+            <Image source={{ uri: `data:${pendingImage.mediaType};base64,${pendingImage.data}` }} style={styles.pendingImage} />
+            <TouchableOpacity onPress={() => setPendingImage(null)} hitSlop={8}>
+              <Text style={styles.editCancelText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {editingItem === null && (
+          <TouchableOpacity style={styles.imageButton} onPress={() => void chooseImage()}>
+            <Text style={styles.imageButtonText}>＋</Text>
+          </TouchableOpacity>
+        )}
         {editingItem !== null && (
           <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
             <Text style={styles.editCancelText}>✕</Text>
@@ -179,7 +501,7 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
         <TextInput
           style={styles.input}
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={onDraftChange}
           placeholder={editingItem !== null ? '编辑排队消息…' : running ? '排队新消息…' : '发消息…'}
           placeholderTextColor={colors.textDim}
           multiline
@@ -190,8 +512,8 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
               <Text style={styles.sendText}>停止</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.sendButton, draft.trim() === '' && editingItem === null && styles.disabled]}
-              disabled={draft.trim() === '' && editingItem === null}
+              style={[styles.sendButton, draft.trim() === '' && pendingImage === null && editingItem === null && styles.disabled]}
+              disabled={draft.trim() === '' && pendingImage === null && editingItem === null}
               onPress={() => void send()}
             >
               <Text style={styles.sendText}>{editingItem !== null ? '保存' : '排队'}</Text>
@@ -207,6 +529,110 @@ export function ChatScreen({ manager, sessionId, onBack }: Props): React.JSX.Ele
           </TouchableOpacity>
         )}
       </View>
+      <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <View style={styles.backdrop}>
+          <View style={styles.menuCard}>
+            <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setRenameOpen(true) }}>
+              <Text style={styles.menuText}>重命名</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuRow} onPress={() => void fork()}>
+              <Text style={styles.menuText}>分叉会话</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuRow} onPress={() => void openModels()}>
+              <Text style={styles.menuText}>切换模型</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuRow} onPress={() => void openSubagents()}>
+              <Text style={styles.menuText}>子代理</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}>
+              <Text style={styles.menuText}>{goal === null ? '设置目标' : '编辑目标'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal transparent visible={subOpen !== null} animationType="fade" onRequestClose={() => setSubOpen(null)}>
+        <View style={styles.backdrop}>
+          <View style={styles.menuCard}>
+            {(subOpen?.entries.length ?? 0) === 0 && (
+              <Text style={[styles.menuText, { color: colors.textDim, paddingHorizontal: spacing(4) }]}>没有子代理会话。</Text>
+            )}
+            {subOpen?.entries.map(entry => (
+              <TouchableOpacity
+                key={entry.id}
+                style={styles.menuRow}
+                onPress={() => { setSubOpen(null); onOpenSession?.(entry.id) }}
+              >
+                <View style={styles.subRow}>
+                  <View style={[styles.jobDot, { backgroundColor: entry.activity === 'running' ? colors.running : colors.textDim }]} />
+                  <Text style={styles.menuText} numberOfLines={1}>
+                    {entry.label ?? entry.id.slice(0, 8)}（{entry.mode === 'continuable' ? '可续' : '一次性'}）
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
+      <Modal transparent visible={modelMenu !== null} animationType="fade" onRequestClose={() => setModelMenu(null)}>
+        <View style={styles.backdrop}>
+          <ScrollView style={styles.modelCard}>
+            {modelMenu?.groups.map(group => (
+              <View key={group.id}>
+                <Text style={styles.modelGroup}>{group.name}</Text>
+                {group.models.map(model => (
+                  <React.Fragment key={model.id}>
+                    <TouchableOpacity
+                      style={[styles.menuRow, modelMenu.current.model === model.id && styles.menuRowActive]}
+                      onPress={() => {
+                        if (model.reasoning === undefined) { void selectModel(group.id, model.id); return }
+                        setPendingModel({ providerId: group.id, modelId: model.id, efforts: model.reasoning.efforts })
+                      }}
+                    >
+                      <Text style={styles.menuText} numberOfLines={1}>{model.name}</Text>
+                    </TouchableOpacity>
+                    {pendingModel?.providerId === group.id && pendingModel.modelId === model.id && (
+                      model.reasoning?.efforts.map(effort => (
+                        <TouchableOpacity
+                          key={effort.id}
+                          style={[
+                            styles.menuRow,
+                            styles.submenuRow,
+                            modelMenu.current.model === model.id &&
+                              modelMenu.current.reasoningEffort === effort.id &&
+                              styles.menuRowActive,
+                          ]}
+                          onPress={() => void selectModel(group.id, model.id, effort.id)}
+                        >
+                          <Text style={styles.menuText} numberOfLines={1}>{effort.name}</Text>
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </React.Fragment>
+                ))}
+              </View>
+            ))}
+            <TouchableOpacity style={styles.menuRow} onPress={() => setModelMenu(null)}>
+              <Text style={[styles.menuText, { color: colors.textDim }]}>关闭</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+      <PromptModal
+        visible={renameOpen}
+        title="重命名会话"
+        initial={title}
+        confirmLabel="重命名"
+        onCancel={() => setRenameOpen(false)}
+        onConfirm={t => void rename(t)}
+      />
+      <PromptModal
+        visible={goalPrompt !== null}
+        title={goalPrompt === 'create' ? '设置目标' : '编辑目标'}
+        initial={goal?.objective ?? ''}
+        confirmLabel={goalPrompt === 'create' ? '创建' : '保存'}
+        onCancel={() => setGoalPrompt(null)}
+        onConfirm={t => void goalSubmit(t)}
+      />
     </KeyboardAvoidingView>
   )
 }
@@ -289,35 +715,90 @@ function jobStatusLabel(status: JobView['status']): string {
   }
 }
 
-function Bubble({ item }: { item: ConversationItem }): React.JSX.Element {
+function Bubble({ item, manager, sessionId }: {
+  item: ConversationItem
+  manager: ConnectionManager
+  sessionId: string
+}): React.JSX.Element {
   switch (item.kind) {
     case 'user':
       return (
         <View style={[styles.bubble, styles.bubbleUser]}>
-          <Text style={styles.bubbleText}>{item.text}</Text>
+          {item.images.map(image => (
+            <MessageImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+          ))}
+          <Markdown style={markdownStyles}>{item.text}</Markdown>
+        </View>
+      )
+    case 'compaction':
+      return (
+        <View style={styles.compactionRow}>
+          <Text style={styles.compactionText}>上下文已压缩 · {item.summary}</Text>
         </View>
       )
     case 'assistant':
     case 'stream':
       return (
-        <View style={[styles.bubble, styles.bubbleAssistant]}>
+        <TouchableOpacity
+          activeOpacity={1}
+          style={[styles.bubble, styles.bubbleAssistant]}
+          onLongPress={item.kind === 'assistant' && item.text !== '' ? () => { void Share.share({ message: item.text }) } : undefined}
+        >
           {item.reasoning !== '' && <Text style={styles.reasoning}>{item.reasoning}</Text>}
-          <Text style={styles.bubbleText}>
-            {item.text}
-            {item.kind === 'stream' && <Text style={styles.cursor}>▍</Text>}
-            {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>（已中断）</Text>}
-          </Text>
-        </View>
+          <Markdown style={markdownStyles}>{item.text}</Markdown>
+          {item.kind === 'assistant' && item.producedFiles.length > 0 && (
+            <View style={styles.deliverableRow}>
+              {item.producedFiles.map(path => (
+                <View key={path} style={styles.deliverableChip}>
+                  <Text style={styles.deliverableText} numberOfLines={1}>{path.split(/[\\/]/).at(-1) ?? path}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {item.kind === 'stream' && <Text style={styles.cursor}>▍</Text>}
+          {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>（已中断）</Text>}
+        </TouchableOpacity>
       )
     case 'tool':
       return <ToolCard item={item} />
   }
 }
 
+function MessageImage({ image, manager, sessionId }: {
+  image: ConversationImage
+  manager: ConnectionManager
+  sessionId: string
+}): React.JSX.Element {
+  const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
+  const [aspect, setAspect] = useState(4 / 3)
+
+  useEffect(() => {
+    if (image.kind !== 'attachment') return
+    let alive = true
+    void manager.client?.sessions.attachment({ sessionId, attachmentId: image.attachmentId } as never)
+      .then(result => {
+        if (!alive || !result.result.ok) return
+        const value = result.result.value as {
+          attachment: { mediaType: string; width: number; height: number }
+          data: string
+        }
+        setSource(`data:${value.attachment.mediaType};base64,${value.data}`)
+        setAspect(value.attachment.width / value.attachment.height)
+      })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [image, manager, sessionId])
+
+  if (source === null) return <Text style={styles.imageFallback}>图片加载中…</Text>
+  return <Image source={{ uri: source }} style={[styles.messageImage, { aspectRatio: aspect }]} />
+}
+
 function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const statusColor = item.status === 'running' ? colors.running : item.status === 'error' ? colors.danger : colors.success
   const statusText = item.status === 'running' ? '执行中' : item.status === 'error' ? '失败' : '完成'
+  const isTerminal = /^(bash|pwsh|sh|zsh|cmd|powershell|pty-send)$/.test(item.name)
+  const isRead = /^(read|cat|Read)$/.test(item.name)
   return (
     <TouchableOpacity style={styles.toolCard} onPress={() => setOpen(o => !o)} activeOpacity={0.8}>
       <View style={styles.toolHeader}>
@@ -326,8 +807,16 @@ function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): Reac
       </View>
       {open && (
         <View>
-          {item.args !== '' && <Text style={styles.toolBody}>{item.args}</Text>}
-          {item.resultPreview !== '' && <Text style={styles.toolBody}>{item.resultPreview}</Text>}
+          {item.args !== '' && (
+            <Text style={[styles.toolBody, isTerminal && toolStyles.mono]} numberOfLines={open ? undefined : 3}>{item.args}</Text>
+          )}
+          {(isTerminal || isRead) && item.resultText !== '' ? (
+            <View style={toolStyles.block}>
+              <ScrollView style={toolStyles.scroll} nestedScrollEnabled>
+                <Text style={[toolStyles.mono, isRead && toolStyles.read]}>{item.resultText}</Text>
+              </ScrollView>
+            </View>
+          ) : item.resultPreview !== '' && <Text style={styles.toolBody}>{item.resultPreview}</Text>}
         </View>
       )}
     </TouchableOpacity>
@@ -421,11 +910,78 @@ const styles = StyleSheet.create({
   back: { color: colors.accent, fontSize: fontSize.body, width: 56 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { padding: spacing(3), gap: spacing(2) },
+  modelChip: { alignSelf: 'flex-end', marginRight: spacing(3), marginVertical: spacing(1) },
+  modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
+  metaLine: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), marginBottom: spacing(1) },
+  permissionBar: { flexGrow: 0, height: 56, marginBottom: spacing(1) },
+  permissionContent: { paddingHorizontal: spacing(3), paddingVertical: spacing(1), gap: spacing(2), alignItems: 'center' },
+  permissionDanger: { borderColor: colors.danger },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
+  menuCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.card,
+    marginHorizontal: spacing(10),
+    paddingVertical: spacing(2),
+  },
+  menuRow: { paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
+  menuRowActive: { backgroundColor: colors.bgBubbleUser },
+  submenuRow: { paddingLeft: spacing(7) },
+  menuText: { color: colors.text, fontSize: fontSize.body },
+  modelCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.card,
+    marginHorizontal: spacing(6),
+    maxHeight: '70%',
+    paddingVertical: spacing(2),
+  },
+  modelGroup: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), paddingTop: spacing(3), paddingBottom: spacing(1) },
   bubble: { maxWidth: '88%', borderRadius: radius.bubble, padding: spacing(3) },
   bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser },
   bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: colors.bgBubbleAssistant },
   bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
   reasoning: { color: colors.textDim, fontSize: fontSize.small, fontStyle: 'italic', marginBottom: spacing(1) },
+  compactionRow: {
+    alignSelf: 'stretch',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(2),
+    backgroundColor: colors.bgElevated,
+  },
+  compactionText: { color: colors.textDim, fontSize: fontSize.small },
+  deliverableRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(2), marginTop: spacing(2) },
+  deliverableChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    maxWidth: 180,
+    paddingHorizontal: spacing(2.5),
+    paddingVertical: spacing(1),
+  },
+  deliverableText: { color: colors.accent, fontSize: fontSize.tiny },
+  pendingImageRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(2),
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(2),
+  },
+  pendingImage: { width: 64, height: 64, borderRadius: radius.card },
+  imageButton: {
+    width: 40,
+    height: 44,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageButtonText: { color: colors.accent, fontSize: 20, lineHeight: 24 },
+  messageImage: { alignSelf: 'stretch', width: '100%', borderRadius: radius.card, marginBottom: spacing(2) },
+  imageFallback: { color: colors.textDim, fontSize: fontSize.small, marginBottom: spacing(2) },
   cursor: { color: colors.accent },
   interrupted: { color: colors.warning, fontSize: fontSize.small },
   toolCard: {
@@ -533,7 +1089,44 @@ const styles = StyleSheet.create({
   jobsChevron: { color: colors.textDim, fontSize: fontSize.small },
   jobRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), marginTop: spacing(2) },
   jobDot: { width: 8, height: 8, borderRadius: 4 },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   jobText: { flex: 1 },
   jobLabel: { color: colors.text, fontSize: fontSize.small },
   jobMeta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 1 },
+})
+
+const markdownStyles = StyleSheet.create({
+  body: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
+  strong: { color: colors.text, fontWeight: '700' },
+  em: { fontStyle: 'italic' },
+  link: { color: colors.accent },
+  heading1: { color: colors.text, fontSize: 18, fontWeight: '700', marginTop: 8, marginBottom: 4 },
+  heading2: { color: colors.text, fontSize: 17, fontWeight: '700', marginTop: 8, marginBottom: 4 },
+  heading3: { color: colors.text, fontSize: 16, fontWeight: '600', marginTop: 6, marginBottom: 3 },
+  code_inline: {
+    color: colors.accent,
+    backgroundColor: colors.bg,
+    fontSize: fontSize.small,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  fence: {
+    backgroundColor: colors.bg,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.card,
+    padding: spacing(2),
+    marginVertical: spacing(1.5),
+  },
+  code: { color: colors.text, fontSize: fontSize.small, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  bullet_list_icon: { color: colors.textDim },
+  ordered_list_content: { color: colors.text, fontSize: fontSize.body },
+  blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: spacing(2), backgroundColor: colors.bg },
+  hr: { backgroundColor: colors.border },
+})
+
+const toolStyles = StyleSheet.create({
+  block: { backgroundColor: colors.bg, borderRadius: radius.card, borderWidth: 1, borderColor: colors.border, marginTop: spacing(2), maxHeight: 260 },
+  scroll: { padding: spacing(2) },
+  mono: { color: colors.text, fontSize: fontSize.tiny, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  read: { color: colors.textDim },
 })

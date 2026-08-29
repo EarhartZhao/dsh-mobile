@@ -33,6 +33,18 @@ export interface PendingQuestion {
   questions: unknown[]
 }
 
+export interface TodoItemView {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface UsageView {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number | undefined
+  reasoningTokens?: number | undefined
+}
+
 export interface SessionState {
   sessionId: string
   /** Append-only log, seq-ascending; baseline page plus live appends. */
@@ -48,6 +60,8 @@ export interface SessionState {
   pendingApprovals: Map<string, PendingApproval>
   pendingQuestions: Map<string, PendingQuestion>
   running: boolean
+  todos: TodoItemView[]
+  usage: UsageView | null
 }
 
 type StoreEvents = {
@@ -76,7 +90,29 @@ function emptySession(sessionId: string): SessionState {
     pendingApprovals: new Map(),
     pendingQuestions: new Map(),
     running: false,
+    todos: [],
+    usage: null,
   }
+}
+
+/** Latest-step token usage extractor (defensive: shimmed wire boundary). */
+function usageOf(data: unknown): UsageView | null {
+  if (!isRecord(data)) return null
+  const usage = data['usage']
+  if (!isRecord(usage)) return null
+  const inputTokens = usage['inputTokens']
+  const outputTokens = usage['outputTokens']
+  if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return null
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens: typeof usage['cacheReadTokens'] === 'number' ? usage['cacheReadTokens'] : undefined,
+    reasoningTokens: typeof usage['reasoningTokens'] === 'number' ? usage['reasoningTokens'] : undefined,
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 export class SessionStore extends Emitter<StoreEvents> {
@@ -104,6 +140,9 @@ export class SessionStore extends Emitter<StoreEvents> {
   /** History page merge (tail page first). Returns the merged log length. */
   applyHistory(sessionId: string, entries: HistoryEntry[], projections?: SessionProjectionsBlock): number {
     const session = this.session(sessionId)
+    for (const entry of entries) {
+      this.absorbDerived(session, entry.event)
+    }
     const known = new Set(session.events.map(e => eventSeq(e)).filter((s): s is number => s !== undefined))
     for (const entry of entries) {
       const seq = eventSeq(entry)
@@ -125,12 +164,34 @@ export class SessionStore extends Emitter<StoreEvents> {
     return session.events.length
   }
 
+  /** Side-channel extraction (todos / usage) shared by history and live paths. */
+  private absorbDerived(session: SessionState, event: unknown): void {
+    if (!isRecord(event)) return
+    if (event['type'] === 'todo/write' && isRecord(event['data'])) {
+      const todos = event['data']['todos']
+      if (Array.isArray(todos)) {
+        session.todos = todos
+          .filter(t => isRecord(t) && typeof t['content'] === 'string')
+          .map(t => ({
+            content: t['content'] as string,
+            status: t['status'] === 'in_progress' ? 'in_progress' : t['status'] === 'completed' ? 'completed' : 'pending',
+          }))
+      }
+      return
+    }
+    if (event['type'] === 'assistant/message') {
+      const usage = usageOf(event['data'])
+      if (usage !== null) session.usage = usage
+    }
+  }
+
   applyMuxFrame(rpcId: RpcId, frame: MuxFrame): void {
     switch (frame.type) {
       case 'session/event': {
         const session = this.session(frame.sessionId)
         const seq = eventSeq(frame.event)
         if (seq !== undefined && seq <= session.lastSeq) return // replay / duplicate
+        this.absorbDerived(session, frame.event)
         session.events.push({ event: frame.event, ...(frame.view === undefined ? {} : { view: frame.view }) })
         if (seq !== undefined) session.lastSeq = seq
         break
