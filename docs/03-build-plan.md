@@ -79,6 +79,10 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 真链路附件验收：选择模拟器截图 → native base64 → vision 模型接收并识别为“mobile screenshot” → agent 开始基于图片制定计划；先切到 `deepseek-v4-flash-vision-exp`，非视觉模型返回的 `MODEL_DOES_NOT_SUPPORT_IMAGES` 被正确展示。
 > - 部署限制：当前宿主 composed picker 只提供 `native` capability，`host.listDirectory` 返回需要 `browse`；目录浏览器可运行但列表数据受该宿主配置限制。`session.search` 仍受 index `openAt: never` 限制；detach 会话的 `skill.list` 依赖宿主 attach 状态。
 > - 明确后续：完整亮色主题重构（当前是暗色优先）、系统推送（插件 v2）、iPad 双栏布局；TodoStrip 待真实任务触发 `todo/write` 后活体验证。
+> 进度（2026-08-29 第三轮）：**移动端可实施功能补齐：拍照附件、排序、代码块操作、亮色/跟随主题和相机扫码配对已落地。**
+> - 配对页接入 `react-native-vision-camera` QR 扫描，Android 开启 `VisionCamera_enableCodeScanner`，相机权限/设备不可用时保留粘贴二维码兜底。
+> - 会话列表支持 workspace 和会话长按排序，持久化顺序驱动「全部」列表；代码块支持复制与分享；主题设置支持亮色/暗色/跟随系统，选择后保存原生模式并重载 JS 以立即生效。
+> - 验证：`packages/core` 21/21、App `tsc --noEmit` 清洁、包含 VisionCamera 的 Android `gradlew assembleDebug` 通过。拍照、主题和扫码的真机/模拟器活体验证待下一次部署后确认。
 
 > 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
 > - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。

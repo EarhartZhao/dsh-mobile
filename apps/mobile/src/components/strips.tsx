@@ -70,8 +70,8 @@ export function UsageBar({ usage }: { usage: UsageView | null }): React.JSX.Elem
   return (
     <View style={styles.usageRow}>
       <Text style={styles.usageText}>
-        in {k(usage.inputTokens)} · out {k(usage.outputTokens)}
-        {usage.cacheReadTokens !== undefined ? ` · cache ${k(usage.cacheReadTokens)}` : ''}
+        输入 {k(usage.inputTokens)} · 输出 {k(usage.outputTokens)}
+        {usage.cacheReadTokens !== undefined ? ` · 缓存 ${k(usage.cacheReadTokens)}` : ''}
       </Text>
     </View>
   )

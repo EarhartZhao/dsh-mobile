@@ -14,6 +14,7 @@ interface Props {
   manager: ConnectionManager
   onOpenSession: (sessionId: string) => void
   onUnpair: () => void
+  onOpenSettings?: () => void
 }
 
 function useStoreVersion(manager: ConnectionManager): number {
@@ -33,7 +34,7 @@ function useStoreVersion(manager: ConnectionManager): number {
   return version
 }
 
-export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): React.JSX.Element {
+export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSettings }: Props): React.JSX.Element {
   useStoreVersion(manager)
   const { store } = manager
   const [query, setQuery] = useState('')
@@ -49,9 +50,19 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const visible = store.summaries.filter(s => !s.blank && !store.archivedSessionIds.includes(s.sessionId))
   const archived = store.summaries.filter(s => store.archivedSessionIds.includes(s.sessionId))
+  const visibleById = new Map(visible.map(s => [s.sessionId, s]))
+  const accountedIds = new Set(store.workspaces.flatMap(ws => ws.sessionIds))
+  const allOrdered = [
+    ...store.workspaces.flatMap(ws => ws.sessionIds),
+    ...visible.filter(s => !accountedIds.has(s.sessionId)).map(s => s.sessionId),
+  ]
+    .map(id => visibleById.get(id))
+    .filter((s): s is SessionSummary => s !== undefined)
   const inWorkspace = selectedWs === null
-    ? visible
-    : visible.filter(s => (store.workspaces.find(w => w.workspaceId === selectedWs)?.sessionIds ?? []).includes(s.sessionId))
+    ? allOrdered
+    : (store.workspaces.find(w => w.workspaceId === selectedWs)?.sessionIds ?? [])
+        .map(id => visibleById.get(id))
+        .filter((s): s is SessionSummary => s !== undefined)
 
   const wsRename = (workspaceId: string): void => {
     setWsRenameId(workspaceId)
@@ -68,6 +79,37 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
 
   const wsCreate = (path: string): void => {
     void manager.client?.workspace.create({ path } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
+  }
+
+  const moveWorkspace = (workspaceId: string, direction: -1 | 1): void => {
+    const index = store.workspaces.findIndex(ws => ws.workspaceId === workspaceId)
+    if (index < 0) return
+    const next = index + direction
+    if (next < 0 || next >= store.workspaces.length) return
+    const anchor = direction === -1
+      ? store.workspaces[index - 1]?.workspaceId
+      : store.workspaces[index + 2]?.workspaceId
+    void manager.client?.workspace.insertBefore({
+      workspaceId,
+      ...(anchor === undefined ? {} : { beforeWorkspaceId: anchor }),
+    } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
+  }
+
+  const moveSession = (sessionId: string, direction: -1 | 1): void => {
+    const ws = store.workspaces.find(w => w.sessionIds.includes(sessionId as never))
+    if (ws === undefined) return
+    const order = ws.sessionIds.filter(id => !store.archivedSessionIds.includes(id))
+    const index = order.indexOf(sessionId as never)
+    const next = index + direction
+    if (index < 0 || next < 0 || next >= order.length) return
+    const anchor = direction === -1
+      ? order[index - 1]
+      : order[index + 2]
+    void manager.client?.workspace.insertSessionBefore({
+      workspaceId: ws.workspaceId,
+      sessionId,
+      ...(anchor === undefined ? {} : { beforeSessionId: anchor }),
+    } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
   }
 
   const loadDirectory = async (path?: string): Promise<void> => {
@@ -151,6 +193,11 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
           <TouchableOpacity onPress={onUnpair} style={styles.headerButton}>
             <Text style={[styles.headerButtonText, { color: colors.danger }]}>解除配对</Text>
           </TouchableOpacity>
+          {onOpenSettings !== undefined && (
+            <TouchableOpacity onPress={onOpenSettings} style={styles.headerButton}>
+              <Text style={styles.headerButtonText}>设置</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
       <ScrollView horizontal style={styles.wsBar} contentContainerStyle={styles.wsBarContent} showsHorizontalScrollIndicator={false}>
@@ -169,7 +216,9 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
             onLongPress={() => {
               Alert.alert(ws.title, ws.path, [
               { text: '取消', style: 'cancel' },
-              { text: '重命名', onPress: () => wsRename(ws.workspaceId) },
+                { text: '上移', onPress: () => moveWorkspace(ws.workspaceId, -1) },
+                { text: '下移', onPress: () => moveWorkspace(ws.workspaceId, 1) },
+                { text: '重命名', onPress: () => wsRename(ws.workspaceId) },
                 { text: '删除', style: 'destructive', onPress: () => wsDelete(ws.workspaceId) },
               ])
             }}
@@ -236,7 +285,15 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
                 const s = inWorkspace.find(v => v.sessionId === item.sessionId)
                 return s === undefined
                   ? <View />
-                  : <SessionRow manager={manager} item={s} onOpen={onOpenSession} onArchive={archive} />
+                  : (
+                    <SessionRow
+                      manager={manager}
+                      item={s}
+                      onOpen={onOpenSession}
+                      onMove={direction => moveSession(s.sessionId, direction)}
+                      onArchive={archive}
+                    />
+                  )
               })()}
           />
         </>
@@ -252,7 +309,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
       <Modal transparent visible={presetPick !== null} animationType="fade" onRequestClose={() => setPresetPick(null)}>
         <View style={styles.backdrop}>
           <View style={styles.menuCard}>
-            <Text style={styles.wsChipText}>选择 Agent Preset</Text>
+            <Text style={styles.wsChipText}>选择智能体预设</Text>
             {presetPick?.presets.map(p => (
               <TouchableOpacity
                 key={p.id}
@@ -331,10 +388,11 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair }: Props): 
   )
 }
 
-function SessionRow({ manager, item, onOpen, onArchive }: {
+function SessionRow({ manager, item, onOpen, onMove, onArchive }: {
   manager: ConnectionManager
   item: SessionSummary
   onOpen: (sessionId: string) => void
+  onMove: (direction: -1 | 1) => void
   onArchive: (sessionId: string) => void
 }): React.JSX.Element {
   const title = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
@@ -345,11 +403,18 @@ function SessionRow({ manager, item, onOpen, onArchive }: {
     <TouchableOpacity
       style={styles.row}
       onPress={() => onOpen(item.sessionId)}
-      onLongPress={() => onArchive(item.sessionId)}
+      onLongPress={() => {
+        Alert.alert('会话操作', title, [
+          { text: '取消', style: 'cancel' },
+          { text: '上移', onPress: () => onMove(-1) },
+          { text: '下移', onPress: () => onMove(1) },
+          { text: '归档', style: 'destructive', onPress: () => onArchive(item.sessionId) },
+        ])
+      }}
     >
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
-        <Text style={styles.rowSub}>{new Date(item.updatedAt).toLocaleString()}</Text>
+        <Text style={styles.rowSub}>{new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })}</Text>
       </View>
       {needsAttention && <View style={[styles.badge, { backgroundColor: colors.warning }]}><Text style={styles.badgeText}>待处理</Text></View>}
       {liveJobs > 0 && <View style={[styles.badge, { backgroundColor: colors.success }]}><Text style={styles.badgeText}>任务×{liveJobs}</Text></View>}
