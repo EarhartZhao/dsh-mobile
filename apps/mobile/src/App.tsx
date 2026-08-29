@@ -103,6 +103,7 @@ export default function App(): React.JSX.Element {
               manager={managerRef.current}
               sessionId={route.sessionId}
               onBack={() => setRoute({ name: 'list' })}
+              onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
             />
           )}
         </>

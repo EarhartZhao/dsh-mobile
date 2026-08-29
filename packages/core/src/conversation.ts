@@ -8,10 +8,23 @@
 import type { SessionState } from './session-store.ts'
 
 export type ConversationItem =
-  | { kind: 'user'; key: string; seq: number; text: string }
-  | { kind: 'assistant'; key: string; seq: number; text: string; reasoning: string; interrupted: boolean }
-  | { kind: 'tool'; key: string; seq: number; callId: string; name: string; args: string; status: 'running' | 'done' | 'error'; resultPreview: string }
+  | { kind: 'user'; key: string; seq: number; text: string; images: ConversationImage[] }
+  | {
+      kind: 'assistant'
+      key: string
+      seq: number
+      text: string
+      reasoning: string
+      interrupted: boolean
+      producedFiles: string[]
+    }
+  | { kind: 'compaction'; key: string; seq: number; summary: string; compactionId: string }
+  | { kind: 'tool'; key: string; seq: number; callId: string; name: string; args: string; status: 'running' | 'done' | 'error'; resultPreview: string; resultText: string }
   | { kind: 'stream'; key: string; seq: number; text: string; reasoning: string }
+
+export type ConversationImage =
+  | { kind: 'data'; uri: string; name?: string | undefined }
+  | { kind: 'attachment'; attachmentId: string; name?: string | undefined }
 
 interface ChunkBuffer {
   seq: number
@@ -49,13 +62,44 @@ function blocksToReasoning(content: unknown): string {
   return parts.join('')
 }
 
+/** User-visible image blocks; attachment refs resolve lazily in the UI layer. */
+function blocksToImages(content: unknown): ConversationImage[] {
+  if (!Array.isArray(content)) return []
+  const images: ConversationImage[] = []
+  for (const block of content) {
+    if (!isObj(block) || block['type'] !== 'image') continue
+    const attachment = isObj(block['attachment']) ? block['attachment'] : undefined
+    const attachmentId = typeof attachment?.['attachmentId'] === 'string' ? attachment['attachmentId'] : undefined
+    const mediaType = typeof block['mediaType'] === 'string' ? block['mediaType'] : 'image/png'
+    const name = typeof block['name'] === 'string' ? block['name'] : undefined
+    if (attachmentId !== undefined) images.push({ kind: 'attachment', attachmentId, name })
+    else if (typeof block['data'] === 'string') images.push({ kind: 'data', uri: `data:${mediaType};base64,${block['data']}`, name })
+  }
+  return images
+}
+
+/** Tool view render intent: diff and edit cards report the paths they produced. */
+function producedPaths(view: unknown): string[] {
+  if (!isObj(view)) return []
+  const card = view['card']
+  if (card !== 'diff' && !(card === 'generic' && view['kind'] === 'edit')) return []
+  if (!Array.isArray(view['locations'])) return []
+  return view['locations']
+    .filter(isObj)
+    .map(location => location['path'])
+    .filter((path): path is string => typeof path === 'string')
+}
+
 export function deriveConversation(session: SessionState): ConversationItem[] {
   const items: ConversationItem[] = []
   const live = new Map<string, ChunkBuffer>()
   const finalizedSteps = new Set<string>()
   const tools = new Map<string, ConversationItem & { kind: 'tool' }>()
+  const toolTurns = new Map<string, number>()
+  const produced = new Map<number, { seq: number; path: string }[]>()
 
-  for (const { event } of session.events) {
+  for (const entry of session.events) {
+    const event = entry.event
     if (!isObj(event)) continue
     const seq = typeof event['seq'] === 'number' ? event['seq'] : 0
     const data: unknown = event['data']
@@ -73,8 +117,8 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
               : undefined
           if (isObj(source) && typeof source['kind'] === 'string' && source['kind'] !== 'user') break
         }
-        const text = isObj(data) ? blocksToText(extractContent(data['message'] ?? data)) : ''
-        items.push({ kind: 'user', key: `u${seq}`, seq, text })
+        const content = isObj(data) ? extractContent(data['message'] ?? data) : undefined
+        items.push({ kind: 'user', key: `u${seq}`, seq, text: blocksToText(content), images: blocksToImages(content) })
         break
       }
       case 'assistant/message': {
@@ -85,6 +129,13 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         live.delete(`${turn}:${step}`)
         const message = data['message']
         const content = isObj(message) ? message['content'] : undefined
+        const turnFiles = (produced.get(turn) ?? []).filter(file => file.seq <= seq).map(file => file.path)
+        const seenFiles = new Set<string>()
+        const producedFiles = turnFiles.filter(path => {
+          if (seenFiles.has(path)) return false
+          seenFiles.add(path)
+          return true
+        })
         items.push({
           kind: 'assistant',
           key: `a${seq}`,
@@ -92,12 +143,14 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           text: blocksToText(content),
           reasoning: blocksToReasoning(content),
           interrupted: data['interrupted'] === true,
+          producedFiles,
         })
         break
       }
       case 'tool/call': {
         if (!isObj(data)) break
         const callId = typeof data['callId'] === 'string' ? data['callId'] : `c${seq}`
+        const turn = typeof data['turn'] === 'number' ? data['turn'] : -1
         const item: ConversationItem & { kind: 'tool' } = {
           kind: 'tool',
           key: `t${seq}`,
@@ -107,8 +160,10 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           args: typeof data['arguments'] === 'string' ? data['arguments'] : '',
           status: 'running',
           resultPreview: '',
+          resultText: '',
         }
         tools.set(callId, item)
+        if (turn >= 0) toolTurns.set(callId, turn)
         items.push(item)
         break
       }
@@ -122,7 +177,18 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         if (target !== undefined) {
           target.status = isObj(data['error']) ? 'error' : 'done'
           const content = isObj(message) ? message['content'] : undefined
-          target.resultPreview = truncate(blocksToText(content), 300)
+          const text = blocksToText(content)
+          target.resultPreview = truncate(text, 300)
+          target.resultText = truncate(text, 5000)
+          const resultView = typeof entry.view === 'object' && entry.view !== null && isObj((entry.view as Record<string, unknown>)['view'])
+            ? (entry.view as Record<string, unknown>)['view']
+            : undefined
+          const turn = callId === undefined ? undefined : toolTurns.get(callId)
+          if (target.status !== 'error' && turn !== undefined) {
+            const files = produced.get(turn) ?? []
+            files.push(...producedPaths(resultView).map(path => ({ seq, path })))
+            produced.set(turn, files)
+          }
         }
         break
       }
@@ -146,6 +212,14 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         // A cancelled turn may never finalize: its live buffer stays as the
         // delivered prefix (the host emits an interrupted assistant/message
         // when any content streamed, which clears the buffer itself).
+        break
+      }
+      case 'compaction/summary': {
+        const compactionId = isObj(data) && typeof data['compactionId'] === 'string'
+          ? data['compactionId']
+          : `compaction-${seq}`
+        const summary = isObj(data) && typeof data['summary'] === 'string' ? data['summary'] : '上下文已压缩'
+        items.push({ kind: 'compaction', key: `compaction-${seq}`, seq, summary, compactionId })
         break
       }
       default:

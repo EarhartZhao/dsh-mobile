@@ -5,9 +5,10 @@ import { RpcId } from '@dsh-mobile/protocol'
 
 const sid = 's-1' as never
 
-function feed(store: SessionStore, seq: number, type: string, data: unknown): void {
+function feed(store: SessionStore, seq: number, type: string, data: unknown, view?: unknown): void {
   store.applyMuxFrame(RpcId(crypto.randomUUID()), {
     type: 'session/event', sessionId: sid, event: { seq, type, data } as never,
+    ...(view === undefined ? {} : { view } as never),
   })
 }
 
@@ -24,6 +25,42 @@ describe('deriveConversation', () => {
     expect(items[0]).toMatchObject({ text: '你好' })
     expect(items[1]).toMatchObject({ text: '你好！', interrupted: false })
     expect(items[2]).toMatchObject({ name: 'bash', status: 'done', resultPreview: 'a.txt' })
+  })
+
+  it('renders inline user images and compaction markers', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', {
+      message: {
+        content: [
+          { type: 'text', text: '看这张图' },
+          { type: 'image', mediaType: 'image/png', data: 'aGk=' },
+        ],
+      },
+    })
+    feed(store, 2, 'compaction/summary', { compactionId: 'compact-1', summary: '旧上下文' })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(item => item.kind)).toEqual(['user', 'compaction'])
+    expect(items[0]).toMatchObject({
+      text: '看这张图',
+      images: [{ kind: 'data', uri: 'data:image/png;base64,aGk=' }],
+    })
+    expect(items[1]).toMatchObject({ summary: '旧上下文', compactionId: 'compact-1' })
+  })
+
+  it('derives produced files from successful mutation result views', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'edit', arguments: '{}' })
+    feed(store, 2, 'tool/result', {
+      turn: 1,
+      step: 1,
+      message: { toolCallId: 'c1', content: [{ type: 'text', text: 'written' }] },
+    }, { for: 'result', view: { card: 'diff', locations: [{ path: 'out/index.html' }] } })
+    feed(store, 3, 'assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'Done.' }] } })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(item => item.kind)).toEqual(['tool', 'assistant'])
+    expect(items[1]).toMatchObject({ text: 'Done.', producedFiles: ['out/index.html'] })
   })
 
   it('live chunks form a stream item until the durable message lands', () => {

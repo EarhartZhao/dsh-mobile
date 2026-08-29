@@ -10,6 +10,8 @@ export type {
   HostFrame,
   HistoryEntry,
   QueuedInboxItem,
+  DirectoryEntry,
+  DirectoryListing,
   RpcError,
   RpcRequest,
   RpcResponse,
