@@ -25,17 +25,21 @@ import {
 import { deriveConversation, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView } from '@dsh-mobile/core'
 import type { JobView, QueuedInboxItem, SubagentCatalog } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
-import { Path, Svg } from 'react-native-svg'
+import { Circle, Path, Svg } from 'react-native-svg'
+import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
+import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
+import { ToolCard } from '../components/ToolCard'
 import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, type PlusReference } from '../components/PlusMenuSheet'
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
+import { useI18n, type TranslationKey } from '../i18n'
 
 interface PermissionSelectView {
   options: { value: string; name: string; description?: string }[]
@@ -67,6 +71,7 @@ interface Props {
 }
 
 export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
+  const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
   const [draft, setDraft] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
@@ -83,6 +88,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [planMode, setPlanMode] = useState<string | undefined>(undefined)
   const [permissions, setPermissions] = useState<PermissionSelectView | undefined>(undefined)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
@@ -110,7 +117,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     }[]
   } | null>(null)
   const [pendingModel, setPendingModel] = useState<{ providerId: string; modelId: string; efforts: { id: string; name: string }[] } | null>(null)
-  const [modelLabel, setModelLabel] = useState('模型')
+  const [modelLabel, setModelLabel] = useState(t('chat.model'))
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const skillsCache = useRef<{ sessionId: string; skills: { name: string; description: string }[] } | null>(null)
 
@@ -170,7 +177,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       .map(s => ({
         key: s.sessionId,
         title: manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8),
-        subtitle: '会话',
+        subtitle: t('chat.session'),
         insert: `@${manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8)} `,
       }))
     setCandidates([...files.slice(0, 6), ...sessions])
@@ -186,13 +193,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       const picker = NativeModules.DshImagePicker as {
         pickImages(maxBytes: number): Promise<PendingImage[]>
       } | undefined
-      if (picker?.pickImages === undefined) throw new Error('当前 App 不支持多图选择。')
+      if (picker?.pickImages === undefined) throw new Error(t('chat.multiImageUnsupported'))
       const images = await picker.pickImages(imageLimits?.maxImageBytes ?? 20 * 1024 * 1024)
       for (const image of images) {
         appendImage(image)
       }
     } catch (error) {
-      showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
+      showNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -211,7 +218,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       } | undefined
       return await picker?.[method](imageLimits?.maxImageBytes ?? 20 * 1024 * 1024)
     } catch (error) {
-      showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
+      showNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
       return null
     }
   }
@@ -219,12 +226,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const validateImage = (image: PendingImage): string | null => {
     if (imageLimits === null) return null
     const bytes = Math.floor(image.data.length * 3 / 4)
-    if (!imageLimits.mediaTypes.includes(image.mediaType)) return '不支持的图片格式。'
-    if (bytes > imageLimits.maxImageBytes) return `图片超过单张大小上限 ${formatBytes(imageLimits.maxImageBytes)}。`
+    if (!imageLimits.mediaTypes.includes(image.mediaType)) return t('chat.unsupportedImageFormat')
+    if (bytes > imageLimits.maxImageBytes) return t('chat.imageTooLarge', { size: formatBytes(imageLimits.maxImageBytes) })
     if (image.width > imageLimits.maxImageDimension || image.height > imageLimits.maxImageDimension) {
-      return `图片超过最大边长 ${imageLimits.maxImageDimension}px。`
+      return t('chat.imageTooWide', { size: imageLimits.maxImageDimension })
     }
-    if (image.width * image.height > imageLimits.maxImagePixels) return '图片像素数超过上限。'
+    if (image.width * image.height > imageLimits.maxImagePixels) return t('chat.imageTooManyPixels')
     return null
   }
 
@@ -237,13 +244,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     setPendingImages(current => {
       const next = [...current, image]
       if (imageLimits !== null && next.length > imageLimits.maxImagesPerMessage) {
-        showNotice(`一条消息最多添加 ${imageLimits.maxImagesPerMessage} 张图片。`)
+        showNotice(t('chat.maxImages', { count: imageLimits.maxImagesPerMessage }))
         return current
       }
       if (imageLimits !== null) {
         const total = next.reduce((sum, item) => sum + Math.floor(item.data.length * 3 / 4), 0)
         if (total > imageLimits.maxMessageImageBytes) {
-          showNotice(`图片总大小超过 ${formatBytes(imageLimits.maxMessageImageBytes)}。`)
+          showNotice(t('chat.imagesTooLarge', { size: formatBytes(imageLimits.maxMessageImageBytes) }))
           return current
         }
       }
@@ -382,15 +389,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       setCommandStatus('ready')
     } catch {
       setCommands([
-        { name: 'compact', description: '压缩当前会话上下文。' },
-        { name: 'goal', description: '设置或查看当前任务目标。', hint: '<objective>', images: true },
-        { name: 'permission', description: '切换权限预设。', hint: '<preset>' },
-        { name: 'plan', description: '进入或退出 Plan 模式。', hint: '[off|message]', images: true },
+        { name: 'compact', description: t('chat.commandCompact') },
+        { name: 'goal', description: t('chat.commandGoal'), hint: '<objective>', images: true },
+        { name: 'permission', description: t('chat.commandPermission'), hint: '<preset>' },
+        { name: 'plan', description: t('chat.commandPlan'), hint: '[off|message]', images: true },
       ])
       setCommandStatus('ready')
-      setCommandError('动态命令目录不可用，已显示常用命令。')
+      setCommandError(t('chat.commandDirectoryFallback'))
     }
-  }, [commandStatus, manager, sessionId])
+  }, [commandStatus, manager, sessionId, t])
 
   const loadPresets = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
@@ -401,12 +408,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     if (result?.result.ok !== true) {
       setPresets([])
       setPresetStatus('failed')
-      setPresetError(result?.result.ok === false ? `加载失败：${result.result.error.message}` : '加载失败：连接不可用。')
+      setPresetError(result?.result.ok === false ? t('chat.loadFailed', { message: result.result.error.message }) : t('chat.loadConnection'))
       return
     }
     setPresets(result.result.value.presets.filter(preset => preset.broken === undefined))
     setPresetStatus('ready')
-  }, [manager, presetStatus])
+  }, [manager, presetStatus, t])
 
   const loadReferences = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
@@ -427,7 +434,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       .slice(0, 20)
       .map(item => {
         const label = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(-8)
-        return { key: `session:${item.sessionId}`, title: label, subtitle: '会话', insert: `@${label} ` }
+        return { key: `session:${item.sessionId}`, title: label, subtitle: t('chat.session'), insert: `@${label} ` }
       })
     const skills: PlusReference[] = []
     const skillResult = await client.skills.list({ sessionId } as never).catch(() => null)
@@ -438,7 +445,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     }
     setReferences([...skills.slice(0, 12), ...files.slice(0, 12), ...sessions])
     setReferenceStatus('ready')
-  }, [manager, referenceStatus, sessionId])
+  }, [manager, referenceStatus, sessionId, t])
 
   const openModels = async (): Promise<void> => {
     setMenuOpen(false)
@@ -541,11 +548,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       } as never)
     } catch (error) {
       result = null
-      showNotice(`发送失败：${error instanceof Error ? error.message : String(error)}`)
+      showNotice(t('chat.sendFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
     if (result === null || !result.result.ok) {
       setDraft(text) // put the draft back on failure
-      if (result !== null && !result.result.ok) showNotice(`发送失败：${result.result.error.message}`)
+      if (result !== null && !result.result.ok) showNotice(t('chat.sendFailed', { message: result.result.error.message }))
       return
     }
     setPendingImages([])
@@ -567,14 +574,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       const text = result.value.command?.text
       if (text !== undefined && text !== '') showNotice(text)
     } else if (result !== undefined && !result.ok) {
-      showNotice(`命令失败：${result.error.message}`)
+      showNotice(t('chat.commandFailed', { message: result.error.message }))
     }
   }
 
   const runMenuCommand = async (command: PlusCommand, argument?: string): Promise<void> => {
     const client = manager.client
     if (client === null) return
-    showNotice(`执行中：/${command.name}`)
+    showNotice(t('chat.executing', { command: command.name }))
     const text = argument === undefined || argument.trim() === ''
       ? `/${command.name}`
       : `/${command.name} ${argument.trim()}`
@@ -591,7 +598,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           })),
         })
         if (result.result.kind === 'error') {
-          showNotice(`命令失败：${result.result.text}`)
+          showNotice(t('chat.commandFailed', { message: result.result.text }))
           return
         }
         setPendingImages([])
@@ -603,13 +610,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       }
     }
     if (command.images !== true && pendingImages.length > 0) {
-      showNotice(`/${command.name} 不接受图片附件。`)
+      showNotice(t('chat.commandRejectsImages', { command: command.name }))
       return
     }
     try {
       const result = await client.commands.execute({ sessionId, line: text })
       if (result.result.kind === 'error') {
-        showNotice(`命令失败：${result.result.text}`)
+        showNotice(t('chat.commandFailed', { message: result.result.text }))
         return
       }
       if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
@@ -628,11 +635,108 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     void runMenuCommand(command)
   }
 
+  const messageText = (item: ConversationItem): string => {
+    if (item.kind === 'tool') return item.resultText !== '' ? item.resultText : item.args
+    if (item.kind === 'compaction') return item.summary
+    return item.text
+  }
+
+  const messageActions = (item: ConversationItem): SheetAction[] => {
+    const text = messageText(item)
+    const actions: SheetAction[] = []
+    if (text !== '') {
+      actions.push({ key: 'copy', label: t('actions.copy') })
+      actions.push({ key: 'share', label: t('actions.share') })
+    }
+    if (item.kind !== 'stream') actions.push({ key: 'fork', label: t('actions.forkHere') })
+    if (item.kind === 'user') actions.push({ key: 'resend', label: t('actions.resendNew') })
+    return actions
+  }
+
+  const forkAtMessage = async (item: ConversationItem): Promise<void> => {
+    const result = await manager.client?.sessions.fork({ sessionId, atSeq: item.seq } as never).catch(() => null)
+    const rpc = result?.result
+    if (rpc?.ok) {
+      showNotice(t('notice.forked'))
+      onOpenSession?.(rpc.value.sessionId)
+    } else if (rpc !== undefined && !rpc.ok) {
+      showNotice(t('notice.forkFailed', { message: rpc.error.message }))
+    } else {
+      showNotice(t('notice.connectionUnavailable'))
+    }
+  }
+
+  const resendToNewSession = async (item: ConversationItem): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const created = await client.sessions.create({} as never)
+    if (!created.result.ok) {
+      showNotice(t('notice.createdSessionFailed', { message: created.result.error.message }))
+      return
+    }
+    const newSessionId = created.result.value.sessionId
+    const content: unknown[] = []
+    if (item.kind === 'user') {
+      for (const image of item.images) {
+        if (image.kind === 'data') {
+          content.push({ type: 'image', mediaType: image.uri.slice(5, image.uri.indexOf(';')), data: image.uri.split(',')[1] ?? '', name: image.name })
+          continue
+        }
+        const attachment = await client.sessions.attachment({ sessionId, attachmentId: image.attachmentId } as never).catch(() => null)
+        const value = attachment?.result.ok ? attachment.result.value as { attachment: { mediaType: string }; data: string } : null
+        if (value !== null) {
+          content.push({
+            type: 'image',
+            mediaType: value.attachment.mediaType,
+            data: value.data,
+            name: image.name,
+          })
+        }
+      }
+    }
+    const text = item.kind === 'user' ? item.text : messageText(item)
+    if (text.trim() !== '') content.unshift({ type: 'text', text })
+    if (content.length === 0) {
+      showNotice(t('notice.noResendContent'))
+      return
+    }
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const clientTimeZone = typeof tz === 'string' && (tz === 'UTC' || tz.includes('/')) ? tz : undefined
+    const sent = await client.sessions.prompt({
+      sessionId: newSessionId,
+      mode: 'queue',
+      content,
+      ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
+    } as never)
+    if (!sent.result.ok) {
+      showNotice(t('notice.resendFailed', { message: sent.result.error.message }))
+      return
+    }
+    showNotice(t('notice.resent'))
+    onOpenSession?.(newSessionId)
+  }
+
+  const runMessageAction = async (key: string): Promise<void> => {
+    const item = messageAction
+    setMessageAction(null)
+    if (item === null) return
+    if (key === 'copy') { void Clipboard.setString(messageText(item)); return }
+    if (key === 'share') { void Share.share({ message: messageText(item) }).catch(() => undefined); return }
+    if (key === 'fork') { await forkAtMessage(item); return }
+    if (key === 'resend') { await resendToNewSession(item); return }
+  }
+
+  const jumpToItem = (target: ConversationItem): void => {
+    const index = items.findIndex(item => item.key === target.key)
+    if (index < 0) return
+    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.15 })
+  }
+
   const selectPermission = (value: string): void => {
     if (value === 'danger-full-access') {
-      Alert.alert('启用完全访问权限', '此权限允许绕过沙箱写入整个系统，确认继续？', [
-        { text: '取消', style: 'cancel' },
-        { text: '启用', style: 'destructive', onPress: () => { void runCommand('/permission danger-full-access') } },
+      Alert.alert(t('chat.fullAccessTitle'), t('chat.fullAccessMessage'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('chat.enable'), style: 'destructive', onPress: () => { void runCommand('/permission danger-full-access') } },
       ])
       return
     }
@@ -667,21 +771,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       rpcId: rpcId as never,
       result: {
         ok: false,
-        error: { code: 'cancelled', message: '用户关闭了这组提问', details: {} },
+        error: { code: 'cancelled', message: t('chat.questionCancelled'), details: {} },
       },
     })
-  }, [manager])
+  }, [manager, t])
 
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
   const questions = [...(session?.pendingQuestions.values() ?? [])]
-  const title = manager.store.title(sessionId) ?? '会话'
+  const title = manager.store.title(sessionId) ?? t('chat.fallbackTitle')
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ 返回</Text></TouchableOpacity>
+        <TouchableOpacity onPress={onBack}><Text style={styles.back}>{t('chat.back')}</Text></TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+        <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
+          <SearchGlyph color={colors.accent} />
+        </TouchableOpacity>
         <TouchableOpacity style={styles.back} onPress={() => setMenuOpen(true)}><Text style={styles.back}>⋯</Text></TouchableOpacity>
       </View>
       {(() => {
@@ -689,12 +796,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         return (
           <View style={styles.metaHeader}>
             <View style={styles.metaText}>
-              {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>目录 {s.cwd}</Text>}
-              {s?.agentPreset !== undefined && <Text style={styles.metaLine} numberOfLines={1}>预设 {s.agentPreset}</Text>}
-              {s?.parentSessionId !== undefined && <Text style={styles.metaLine} numberOfLines={1}>父会话 {s.parentSessionId.slice(0, 8)}</Text>}
+              {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.directory', { value: s.cwd })}</Text>}
+              {s?.agentPreset !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.preset', { value: s.agentPreset })}</Text>}
+              {s?.parentSessionId !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.parentSession', { value: s.parentSessionId.slice(0, 8) })}</Text>}
               <Text style={styles.metaLine} numberOfLines={1}>
-                更新 {new Date(s?.updatedAt ?? Date.now()).toLocaleString('zh-CN', { hour12: false })}
-                {s?.origin === 'subagent' ? ' · 子代理' : ''}
+                {t('chat.updated', { value: new Date(s?.updatedAt ?? Date.now()).toLocaleString(locale, { hour12: false }) })}
+                {s?.origin === 'subagent' ? t('chat.subagentMeta') : ''}
               </Text>
             </View>
             <TouchableOpacity style={styles.modelChip} onPress={() => void openModels()}>
@@ -715,7 +822,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
                 disabled={active}
                 onPress={() => selectPermission(option.value)}
               >
-                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{commonLabel(option.name)}</Text>
+                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{commonLabel(option.name, t)}</Text>
               </TouchableOpacity>
             )
           })}
@@ -727,7 +834,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         keyExtractor={item => item.key}
         contentContainerStyle={styles.listContent}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item }) => <Bubble item={item} manager={manager} sessionId={sessionId} />}
+        renderItem={({ item }) => (
+          <Bubble
+            item={item}
+            manager={manager}
+            sessionId={sessionId}
+            onLongPress={() => setMessageAction(item)}
+          />
+        )}
       />
       {planMode !== undefined && <PlanChip mode={planMode} />}
       <GoalBar
@@ -770,7 +884,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             style={styles.iconButton}
             onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
             accessibilityRole="button"
-            accessibilityLabel="添加命令、附件或控制项"
+            accessibilityLabel={t('chat.add')}
           >
             <PlusGlyph color={colors.accent} />
           </TouchableOpacity>
@@ -800,7 +914,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         )}
         {imageLimits !== null && pendingImages.length === 0 && editingItem === null && (
           <View style={styles.imageLimitsBar}>
-            <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits)}</Text>
+            <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits, t)}</Text>
           </View>
         )}
         {editingItem !== null && (
@@ -812,21 +926,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           style={styles.input}
           value={draft}
           onChangeText={onDraftChange}
-          placeholder={editingItem !== null ? '编辑排队消息…' : running ? '排队新消息…' : '发消息…'}
+          placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
           placeholderTextColor={colors.textDim}
           multiline
         />
         {running ? (
           <View style={styles.runningButtons}>
             <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
-              <Text style={styles.sendText}>停止</Text>
+              <Text style={styles.sendText}>{t('chat.stop')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
               disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
               onPress={() => void send()}
             >
-              <Text style={styles.sendText}>{editingItem !== null ? '保存' : '排队'}</Text>
+              <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.queue')}</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -835,7 +949,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
             onPress={() => void send()}
           >
-            <Text style={styles.sendText}>{editingItem !== null ? '保存' : '发送'}</Text>
+            <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.send')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -843,19 +957,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         <ModalBackdrop onClose={() => setMenuOpen(false)}>
           <View style={styles.menuCard}>
             <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setRenameOpen(true) }}>
-              <Text style={styles.menuText}>重命名</Text>
+              <Text style={styles.menuText}>{t('chat.renameAction')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuRow} onPress={() => void fork()}>
-              <Text style={styles.menuText}>分叉会话</Text>
+              <Text style={styles.menuText}>{t('chat.forkAction')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuRow} onPress={() => void openModels()}>
-              <Text style={styles.menuText}>切换模型</Text>
+              <Text style={styles.menuText}>{t('chat.switchModel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuRow} onPress={() => void openSubagents()}>
-              <Text style={styles.menuText}>子代理</Text>
+              <Text style={styles.menuText}>{t('chat.subagents')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}>
-              <Text style={styles.menuText}>{goal === null ? '设置目标' : '编辑目标'}</Text>
+              <Text style={styles.menuText}>{goal === null ? t('plus.goalCreate') : t('plus.goalEdit')}</Text>
             </TouchableOpacity>
           </View>
         </ModalBackdrop>
@@ -903,7 +1017,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
                           ]}
                           onPress={() => void selectModel(group.id, model.id, effort.id)}
                         >
-                          <Text style={styles.menuText} numberOfLines={1}>{commonLabel(effort.name)}</Text>
+                          <Text style={styles.menuText} numberOfLines={1}>{commonLabel(effort.name, t)}</Text>
                         </TouchableOpacity>
                       ))
                     )}
@@ -912,7 +1026,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
               </View>
             ))}
             <TouchableOpacity style={styles.menuRow} onPress={() => setModelMenu(null)}>
-              <Text style={[styles.menuText, { color: colors.textDim }]}>关闭</Text>
+              <Text style={[styles.menuText, { color: colors.textDim }]}>{t('common.close')}</Text>
             </TouchableOpacity>
           </ScrollView>
         </ModalBackdrop>
@@ -941,7 +1055,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onPickImages={() => { setPlusOpen(false); void chooseImages() }}
         onInsertReference={reference => { setPlusOpen(false); setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`) }}
         onPermission={value => { setPlusOpen(false); selectPermission(value) }}
-        onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: '切换 Plan 模式', images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
+        onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: t('plus.planSubtitle'), images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
         onGoal={() => { setPlusOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}
         onModel={() => { setPlusOpen(false); void openModels() }}
         onPresets={() => { void loadPresets(true) }}
@@ -949,21 +1063,34 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           setPlusOpen(false)
           void manager.client?.agentPresets.select({ sessionId, agentPreset: preset.id } as never)
             .then(result => {
-              if (!result.result.ok) showNotice(`切换失败：${result.result.error.message}`)
+              if (!result.result.ok) showNotice(t('chat.switchFailed', { message: result.result.error.message }))
               else {
                 void manager.refreshBaseline()
                 void loadCommands(true)
               }
             })
-            .catch(() => showNotice('切换失败：连接不可用。'))
+            .catch(() => showNotice(t('chat.switchConnection')))
         }}
         onSubagents={() => { setPlusOpen(false); void openSubagents() }}
+      />
+      <ChatSearchSheet
+        visible={searchOpen}
+        items={items}
+        onClose={() => setSearchOpen(false)}
+        onJump={jumpToItem}
+      />
+      <ActionSheet
+        visible={messageAction !== null}
+        title={messageAction === null ? t('actions.message') : messageAction.kind === 'tool' ? t('chat.toolTitle', { name: messageAction.name }) : t('actions.message')}
+        actions={messageAction === null ? [] : messageActions(messageAction)}
+        onClose={() => setMessageAction(null)}
+        onAction={key => { void runMessageAction(key) }}
       />
       <PromptModal
         visible={commandPrompt !== null}
         title={commandPrompt === null ? '' : `/${commandPrompt.command.name}`}
         initial=""
-        confirmLabel="执行"
+        confirmLabel={t('chat.execute')}
         onCancel={() => setCommandPrompt(null)}
         onConfirm={argument => {
           const command = commandPrompt?.command
@@ -973,19 +1100,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       />
       <PromptModal
         visible={renameOpen}
-        title="重命名会话"
+        title={t('chat.renameSession')}
         initial={title}
-        confirmLabel="重命名"
+        confirmLabel={t('common.rename')}
         onCancel={() => setRenameOpen(false)}
-        onConfirm={t => void rename(t)}
+        onConfirm={value => void rename(value)}
       />
       <PromptModal
         visible={goalPrompt !== null}
-        title={goalPrompt === 'create' ? '设置目标' : '编辑目标'}
+        title={goalPrompt === 'create' ? t('plus.goalCreate') : t('plus.goalEdit')}
         initial={goal?.objective ?? ''}
-        confirmLabel={goalPrompt === 'create' ? '创建' : '保存'}
+        confirmLabel={goalPrompt === 'create' ? t('common.create') : t('chat.save')}
         onCancel={() => setGoalPrompt(null)}
-        onConfirm={t => void goalSubmit(t)}
+        onConfirm={value => void goalSubmit(value)}
       />
     </KeyboardAvoidingView>
   )
@@ -996,19 +1123,28 @@ function formatBytes(size: number): string {
   return `${Math.round(size / 1024)}KB`
 }
 
-function imageLimitsSummary(limits: ImageLimitsView): string {
+function imageLimitsSummary(limits: ImageLimitsView, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
   const mediaTypes = limits.mediaTypes
     .map(type => type.replace('image/', '').toUpperCase())
     .filter((value, index, values) => values.indexOf(value) === index)
     .slice(0, 4)
     .join('/')
-  return `图片限制：单张≤${formatBytes(limits.maxImageBytes)} · 每条${limits.maxImagesPerMessage}张 · ${mediaTypes}`
+  return t('chat.imageLimits', { size: formatBytes(limits.maxImageBytes), count: limits.maxImagesPerMessage, types: mediaTypes })
 }
 
 function PlusGlyph({ color }: { color: string }): React.JSX.Element {
   return (
     <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 5v14M5 12h14" />
+    </Svg>
+  )
+}
+
+function SearchGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Circle cx={11} cy={11} r={7} />
+      <Path d="m20 20-3.5-3.5" />
     </Svg>
   )
 }
@@ -1020,23 +1156,24 @@ function QueueDock({ queue, editingId, onEdit, onRemove, onSteer }: {
   onRemove: (id: string) => void
   onSteer: (id: string) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   return (
     <View style={styles.dock}>
-      <Text style={styles.dockTitle}>队列 · {queue.length}</Text>
+      <Text style={styles.dockTitle}>{t('chat.queueTitle', { count: queue.length })}</Text>
       {queue.map(item => (
         <View key={item.id} style={styles.dockRow}>
           <View style={styles.dockBadge}><Text style={styles.dockBadgeText}>{placementLabel(item.placement)}</Text></View>
           <Text style={styles.dockPreview} numberOfLines={1}>{queuePreview(item)}</Text>
           <TouchableOpacity onPress={() => onEdit(item)} disabled={editingId === item.id}>
-            <Text style={[styles.dockAction, editingId === item.id && { color: colors.textDim }]}>编辑</Text>
+            <Text style={[styles.dockAction, editingId === item.id && { color: colors.textDim }]}>{t('chat.edit')}</Text>
           </TouchableOpacity>
           {item.placement === 'queued' && (
             <TouchableOpacity onPress={() => onSteer(item.id)}>
-              <Text style={styles.dockAction}>引导</Text>
+              <Text style={styles.dockAction}>{t('chat.steer')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={() => onRemove(item.id)}>
-            <Text style={[styles.dockAction, { color: colors.danger }]}>删除</Text>
+            <Text style={[styles.dockAction, { color: colors.danger }]}>{t('common.delete')}</Text>
           </TouchableOpacity>
         </View>
       ))}
@@ -1049,11 +1186,12 @@ function JobsStrip({ jobs, open, onToggle }: {
   open: boolean
   onToggle: () => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const live = jobs.filter(j => j.status === 'running' || j.status === 'stopping').length
   return (
     <View style={styles.jobs}>
       <TouchableOpacity style={styles.jobsHeader} onPress={onToggle}>
-        <Text style={styles.jobsTitle}>任务 · {jobs.length}{live > 0 ? `（${live} 运行中）` : ''}</Text>
+        <Text style={styles.jobsTitle}>{t('chat.jobsTitle', { count: jobs.length })}{live > 0 ? t('chat.jobsLive', { live }) : ''}</Text>
         <Text style={styles.jobsChevron}>{open ? '▾' : '▸'}</Text>
       </TouchableOpacity>
       {open && jobs.map(job => (
@@ -1062,7 +1200,7 @@ function JobsStrip({ jobs, open, onToggle }: {
           <View style={styles.jobText}>
             <Text style={styles.jobLabel} numberOfLines={1}>{job.label}</Text>
             <Text style={styles.jobMeta}>
-              {jobKindLabel(job.kind)} · {jobStatusLabel(job.status)}{job.detail !== undefined && job.detail !== '' ? ` · ${job.detail}` : ''}
+              {jobKindLabel(job.kind, t)} · {jobStatusLabel(job.status, t)}{job.detail !== undefined && job.detail !== '' ? ` · ${job.detail}` : ''}
             </Text>
           </View>
         </View>
@@ -1081,35 +1219,37 @@ function jobStatusColor(status: JobView['status']): string {
   }
 }
 
-function jobStatusLabel(status: JobView['status']): string {
+function jobStatusLabel(status: JobView['status'], t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
   switch (status) {
-    case 'running': return '运行中'
-    case 'stopping': return '停止中'
-    case 'completed': return '已完成'
-    case 'failed': return '失败'
-    case 'killed': return '已终止'
+    case 'running': return t('session.running')
+    case 'stopping': return t('chat.stopping')
+    case 'completed': return t('chat.completed')
+    case 'failed': return t('job.failed')
+    case 'killed': return t('chat.killed')
   }
 }
 
-function Bubble({ item, manager, sessionId }: {
+function Bubble({ item, manager, sessionId, onLongPress }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
+  onLongPress: () => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   switch (item.kind) {
     case 'user':
       return (
-        <View style={[styles.bubble, styles.bubbleUser]}>
+        <TouchableOpacity activeOpacity={1} style={[styles.bubble, styles.bubbleUser]} onLongPress={onLongPress}>
           {item.images.map(image => (
             <MessageImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
           ))}
           <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
-        </View>
+        </TouchableOpacity>
       )
     case 'compaction':
       return (
         <View style={styles.compactionRow}>
-          <Text style={styles.compactionText}>上下文已压缩 · {item.summary}</Text>
+          <Text style={styles.compactionText}>{t('chat.compacted', { summary: item.summary })}</Text>
         </View>
       )
     case 'assistant':
@@ -1118,46 +1258,52 @@ function Bubble({ item, manager, sessionId }: {
         <TouchableOpacity
           activeOpacity={1}
           style={[styles.bubble, styles.bubbleAssistant]}
-          onLongPress={item.kind === 'assistant' && item.text !== '' ? () => { void Share.share({ message: item.text }) } : undefined}
+          onLongPress={onLongPress}
         >
           {item.reasoning !== '' && <Text style={styles.reasoning}>{item.reasoning}</Text>}
           <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
               {item.producedFiles.map(path => (
-                <View key={path} style={styles.deliverableChip}>
-                  <Text style={styles.deliverableText} numberOfLines={1}>{path.split(/[\\/]/).at(-1) ?? path}</Text>
-                </View>
+              <TouchableOpacity
+                key={path}
+                style={styles.deliverableChip}
+                onPress={() => { void Clipboard.setString(path) }}
+                onLongPress={() => { void Share.share({ message: path }) }}
+              >
+                <Text style={styles.deliverableText} numberOfLines={1}>{path.split(/[\\/]/).at(-1) ?? path}</Text>
+              </TouchableOpacity>
               ))}
             </View>
           )}
           {item.kind === 'stream' && <Text style={styles.cursor}>▍</Text>}
-          {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>（已中断）</Text>}
+          {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>{t('chat.interrupted')}</Text>}
         </TouchableOpacity>
       )
     case 'tool':
-      return <ToolCard item={item} />
+      return <ToolCard item={item} onLongPress={onLongPress} />
   }
 }
 
 function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }): React.JSX.Element {
+  const { t } = useI18n()
   const content = node.content.endsWith('\n') ? node.content.slice(0, -1) : node.content
   const attributes = typeof node.attributes === 'object' && node.attributes !== null
     ? node.attributes as { info?: unknown }
     : {}
   const language = typeof attributes.info === 'string' && attributes.info !== ''
     ? attributes.info.split(/\s+/)[0]
-    : '代码'
+    : t('chat.code')
   return (
     <View style={codeStyles.block}>
       <View style={codeStyles.header}>
         <Text style={codeStyles.language}>{language}</Text>
         <View style={codeStyles.actions}>
           <TouchableOpacity onPress={() => void Clipboard.setString(content)}>
-            <Text style={codeStyles.action}>复制</Text>
+            <Text style={codeStyles.action}>{t('common.copy')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { void Share.share({ message: content }) }}>
-            <Text style={codeStyles.action}>分享</Text>
+            <Text style={codeStyles.action}>{t('common.share')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1173,6 +1319,7 @@ function MessageImage({ image, manager, sessionId }: {
   manager: ConnectionManager
   sessionId: string
 }): React.JSX.Element {
+  const { t } = useI18n()
   const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
   const [aspect, setAspect] = useState(4 / 3)
   const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -1194,7 +1341,7 @@ function MessageImage({ image, manager, sessionId }: {
     return () => { alive = false }
   }, [image, manager, sessionId])
 
-  if (source === null) return <Text style={styles.imageFallback}>图片加载中…</Text>
+  if (source === null) return <Text style={styles.imageFallback}>{t('chat.imageLoading')}</Text>
   return (
     <>
       <TouchableOpacity onPress={() => setLightboxOpen(true)}>
@@ -1205,42 +1352,13 @@ function MessageImage({ image, manager, sessionId }: {
   )
 }
 
-function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const statusColor = item.status === 'running' ? colors.running : item.status === 'error' ? colors.danger : colors.success
-  const statusText = item.status === 'running' ? '执行中' : item.status === 'error' ? '失败' : '完成'
-  const isTerminal = /^(bash|pwsh|sh|zsh|cmd|powershell|pty-send)$/.test(item.name)
-  const isRead = /^(read|cat|Read)$/.test(item.name)
-  return (
-    <TouchableOpacity style={styles.toolCard} onPress={() => setOpen(o => !o)} activeOpacity={0.8}>
-      <View style={styles.toolHeader}>
-        <Text style={styles.toolName}>{toolDisplayName(item.name)}</Text>
-        <Text style={[styles.toolStatus, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
-      </View>
-      {open && (
-        <View>
-          {item.args !== '' && (
-            <Text style={[styles.toolBody, isTerminal && toolStyles.mono]} numberOfLines={open ? undefined : 3}>{item.args}</Text>
-          )}
-          {(isTerminal || isRead) && item.resultText !== '' ? (
-            <View style={toolStyles.block}>
-              <ScrollView style={toolStyles.scroll} nestedScrollEnabled>
-                <Text style={[toolStyles.mono, isRead && toolStyles.read]}>{item.resultText}</Text>
-              </ScrollView>
-            </View>
-          ) : item.resultPreview !== '' && <Text style={styles.toolBody}>{item.resultPreview}</Text>}
-        </View>
-      )}
-    </TouchableOpacity>
-  )
-}
-
 function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion }: {
   manager: ConnectionManager
   sessionId: string
   onAnswerQuestion: (rpcId: string, answer: QuestionAnswerPayload) => Promise<void>
   onCancelQuestion: (rpcId: string) => Promise<void>
 }): React.JSX.Element {
+  const { t } = useI18n()
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
   const questions = [...(session?.pendingQuestions.values() ?? [])]
@@ -1258,16 +1376,16 @@ function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion }: {
       {approvals.map(approval => (
         <View key={approval.approvalId} style={styles.actionRow}>
           <Text style={styles.actionText} numberOfLines={2}>
-            审批：{toolDisplayName(approval.toolName)}{approval.reason !== undefined && approval.reason !== '' ? `（${approval.reason}）` : ''}
+            {t('chat.approval', { tool: toolDisplayName(approval.toolName, t), reason: approval.reason !== undefined && approval.reason !== '' ? t('chat.approvalReason', { reason: approval.reason }) : '' })}
           </Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]}
               onPress={() => void answerApproval(approval.rpcId, approval.approvalId, 'allowed-once')}>
-              <Text style={styles.actionButtonText}>允许</Text>
+              <Text style={styles.actionButtonText}>{t('chat.allow')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.danger }]}
               onPress={() => void answerApproval(approval.rpcId, approval.approvalId, 'rejected')}>
-              <Text style={styles.actionButtonText}>拒绝</Text>
+              <Text style={styles.actionButtonText}>{t('chat.deny')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1298,6 +1416,7 @@ const styles = StyleSheet.create({
     gap: spacing(2),
   },
   back: { color: colors.accent, fontSize: fontSize.body, width: 56 },
+  headerAction: { width: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { padding: spacing(3), gap: spacing(2) },
   metaHeader: {
@@ -1584,11 +1703,4 @@ const codeStyles = StyleSheet.create({
     fontSize: fontSize.small,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-})
-
-const toolStyles = StyleSheet.create({
-  block: { backgroundColor: colors.bg, borderRadius: radius.card, borderWidth: 1, borderColor: colors.border, marginTop: spacing(2), maxHeight: 260 },
-  scroll: { padding: spacing(2) },
-  mono: { color: colors.text, fontSize: fontSize.tiny, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  read: { color: colors.textDim },
 })

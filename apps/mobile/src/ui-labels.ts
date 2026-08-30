@@ -1,44 +1,51 @@
-/** Chinese labels for fixed host identifiers shown as ordinary UI text. */
-const commonLabels: Record<string, string> = {
-  default: '默认',
-  low: '低',
-  medium: '中',
-  high: '高',
-  max: '最高',
+/** Locale-aware labels for fixed host identifiers shown as ordinary UI text. */
+import type { TranslationKey } from './i18n'
+
+export type LabelTranslate = (key: TranslationKey, values?: Record<string, string | number>) => string
+
+const commonLabels: Record<string, TranslationKey> = {
+  default: 'label.default',
+  low: 'label.low',
+  medium: 'label.medium',
+  high: 'label.high',
+  max: 'label.max',
 }
 
-export function commonLabel(value: string): string {
-  return commonLabels[value.toLowerCase()] ?? value
+export function commonLabel(value: string, t: LabelTranslate): string {
+  const key = commonLabels[value.toLowerCase()]
+  return key === undefined ? value : t(key)
 }
 
-const toolLabels: Record<string, string> = {
-  bash: '命令行',
-  pwsh: 'PowerShell',
-  powershell: 'PowerShell',
-  read: '读取文件',
-  write: '写入文件',
-  edit: '编辑文件',
-  glob: '查找文件',
-  grep: '搜索内容',
-  web_search: '网络搜索',
-  skill: '技能',
-  subagent: '子代理',
-  todo_write: '更新计划',
-  str_replace_editor: '文件编辑器',
+const toolLabels: Record<string, TranslationKey> = {
+  bash: 'tool.bash',
+  pwsh: 'tool.powershell',
+  powershell: 'tool.powershell',
+  read: 'tool.read',
+  write: 'tool.write',
+  edit: 'tool.edit',
+  glob: 'tool.glob',
+  grep: 'tool.grep',
+  web_search: 'tool.webSearch',
+  skill: 'tool.skill',
+  subagent: 'tool.subagent',
+  todo_write: 'tool.todoWrite',
+  str_replace_editor: 'tool.strReplaceEditor',
 }
 
-export function toolDisplayName(name: string): string {
-  return toolLabels[name.toLowerCase()] ?? name
+export function toolDisplayName(name: string, t: LabelTranslate): string {
+  const key = toolLabels[name.toLowerCase()]
+  return key === undefined ? name : t(key)
 }
 
-const jobKindLabels: Record<string, string> = {
-  command: '命令',
-  process: '进程',
-  script: '脚本',
-  terminal: '终端',
-  task: '任务',
+const jobKindLabels: Record<string, TranslationKey> = {
+  command: 'jobKind.command',
+  process: 'jobKind.process',
+  script: 'jobKind.script',
+  terminal: 'jobKind.terminal',
+  task: 'jobKind.task',
 }
 
-export function jobKindLabel(kind: string): string {
-  return jobKindLabels[kind.toLowerCase()] ?? kind
+export function jobKindLabel(kind: string, t: LabelTranslate): string {
+  const key = jobKindLabels[kind.toLowerCase()]
+  return key === undefined ? kind : t(key)
 }

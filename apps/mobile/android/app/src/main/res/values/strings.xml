@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DshMobile</string>
+    <string name="shortcutNewSession">New session</string>
 </resources>

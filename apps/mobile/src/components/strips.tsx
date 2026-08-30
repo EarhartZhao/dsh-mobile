@@ -4,13 +4,15 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { Path, Svg } from 'react-native-svg'
 import type { ContextBreakdownProjection, SessionStatsView, TodoItemView, UsageView } from '@dsh-mobile/core'
 import { colors, fontSize, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Element | null {
+  const { t } = useI18n()
   if (todos.length === 0) return null
   const done = todos.filter(t => t.status === 'completed').length
   return (
     <View style={styles.strip}>
-      <Text style={styles.stripTitle}>计划 · {done}/{todos.length}</Text>
+      <Text style={styles.stripTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
       {todos.map((t, i) => (
         <View key={i} style={styles.todoRow}>
           <Text style={[styles.todoMark, t.status === 'completed' && styles.todoDone]}>{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '·'}</Text>
@@ -36,18 +38,19 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onComplete, onClear }
   onComplete: () => void
   onClear: () => void
 }): React.JSX.Element | null {
+  const { t } = useI18n()
   if (goal === null) return null
-  const phaseText = goal.phase === 'active' ? '进行中' : goal.phase === 'paused' ? '已暂停' : goal.phase === 'blocked' ? '受阻' : '已完成'
+  const phaseKey = goal.phase === 'active' ? 'goal.active' : goal.phase === 'paused' ? 'goal.paused' : goal.phase === 'blocked' ? 'goal.blocked' : 'goal.complete'
   return (
     <View style={styles.strip}>
       <View style={styles.goalHeader}>
-        <Text style={styles.stripTitle}>目标 · {phaseText}</Text>
+        <Text style={styles.stripTitle}>{t('goal.title', { phase: t(phaseKey) })}</Text>
         <View style={styles.goalActions}>
-          {goal.phase === 'active' && <ActionText label="暂停" onPress={onPause} />}
-          {goal.phase === 'paused' && <ActionText label="恢复" onPress={onResume} />}
-          <ActionText label="编辑" onPress={onEdit} />
-          {goal.phase !== 'complete' && <ActionText label="完成" onPress={onComplete} />}
-          <ActionText label="清除" onPress={onClear} danger />
+          {goal.phase === 'active' && <ActionText label={t('goal.pause')} onPress={onPause} />}
+          {goal.phase === 'paused' && <ActionText label={t('goal.resume')} onPress={onResume} />}
+          <ActionText label={t('goal.edit')} onPress={onEdit} />
+          {goal.phase !== 'complete' && <ActionText label={t('goal.completeAction')} onPress={onComplete} />}
+          <ActionText label={t('goal.clear')} onPress={onClear} danger />
         </View>
       </View>
       <Text style={styles.goalObjective} numberOfLines={2}>{goal.objective}</Text>
@@ -64,6 +67,7 @@ function ActionText({ label, onPress, danger }: { label: string; onPress: () => 
 }
 
 export function UsageBar({ usage }: { usage: UsageView | null }): React.JSX.Element | null {
+  const { t } = useI18n()
   if (usage === null) return null
   const total = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0)
   if (total === 0) return null
@@ -71,8 +75,8 @@ export function UsageBar({ usage }: { usage: UsageView | null }): React.JSX.Elem
   return (
     <View style={styles.usageRow}>
       <Text style={styles.usageText}>
-        输入 {k(usage.inputTokens)} · 输出 {k(usage.outputTokens)}
-        {usage.cacheReadTokens !== undefined ? ` · 缓存 ${k(usage.cacheReadTokens)}` : ''}
+        {t('stats.usage', { input: k(usage.inputTokens), output: k(usage.outputTokens) })}
+        {usage.cacheReadTokens !== undefined ? t('stats.cacheUsage', { cache: k(usage.cacheReadTokens) }) : ''}
       </Text>
     </View>
   )
@@ -114,6 +118,7 @@ function VerticalArrowGlyph({ direction }: { direction: 'up' | 'down' }): React.
  * narrow phones.
  */
 export function SessionStatsBar({ view }: { view: SessionStatsView | null }): React.JSX.Element | null {
+  const { t } = useI18n()
   const [expanded, setExpanded] = React.useState(false)
   if (view === null) return null
   const { stats, usage, pressure, breakdown } = view
@@ -121,11 +126,11 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   const hasUsage = billedInput > 0 || usage.outputTokens > 0
   const chips: { key: string; label: string; emphasis?: boolean }[] = []
   if (stats.steps > 0) {
-    chips.push({ key: 'counts', label: `${stats.turns} 轮 · ${stats.steps} 步`, emphasis: true })
-    if (stats.llmMs > 0) chips.push({ key: 'llm', label: `LLM ${compactDuration(stats.llmMs)}` })
-    if (stats.toolMs > 0) chips.push({ key: 'tools', label: `工具调用 ${compactDuration(stats.toolMs)}` })
+    chips.push({ key: 'counts', label: t('stats.counts', { turns: stats.turns, steps: stats.steps }), emphasis: true })
+    if (stats.llmMs > 0) chips.push({ key: 'llm', label: t('stats.llm', { duration: compactDuration(stats.llmMs) }) })
+    if (stats.toolMs > 0) chips.push({ key: 'tools', label: t('stats.toolCalls', { duration: compactDuration(stats.toolMs) }) })
     if (stats.ttftSteps > 0) {
-      chips.push({ key: 'ttft', label: `首 token 平均 ${compactDuration(stats.ttftMs / stats.ttftSteps)}` })
+      chips.push({ key: 'ttft', label: t('stats.ttft', { duration: compactDuration(stats.ttftMs / stats.ttftSteps) }) })
     }
     if (stats.decodeMs > 0) {
       const rate = stats.decodeTokens / (stats.decodeMs / 1_000)
@@ -133,11 +138,11 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
     }
   }
   if (hasUsage && billedInput > 0) {
-    chips.push({ key: 'cache', label: `缓存命中 ${Math.round(usage.cacheReadTokens / billedInput * 100)}%` })
+    chips.push({ key: 'cache', label: t('stats.cacheHit', { percent: Math.round(usage.cacheReadTokens / billedInput * 100) }) })
   }
   if (hasUsage) {
-    chips.push({ key: 'input', label: `输入 ${compactTokens(billedInput)} tok` })
-    chips.push({ key: 'output', label: `输出 ${compactTokens(usage.outputTokens)} tok` })
+    chips.push({ key: 'input', label: t('stats.inputTokens', { tokens: compactTokens(billedInput) }) })
+    chips.push({ key: 'output', label: t('stats.outputTokens', { tokens: compactTokens(usage.outputTokens) }) })
   }
 
   const usedTokens = pressure?.projectedTokens ?? pressure?.pressureTokens
@@ -145,7 +150,7 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   const hasContext = usedTokens !== undefined && windowTokens !== undefined && windowTokens > 0
   const contextPercent = hasContext ? Math.min(100, Math.round(usedTokens! / windowTokens! * 100)) : null
   if (chips.length === 0 && !hasContext) return null
-  const contextSize = contextPercent === null ? null : `上下文 ${compactTokens(usedTokens!)} / ${compactTokens(windowTokens!)}`
+  const contextSize = contextPercent === null ? null : t('stats.contextBadge', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })
 
   const breakdownTotal = breakdown === null
     ? 0
@@ -162,11 +167,11 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   return (
     <View style={styles.statsCard}>
       <View style={styles.statsHeader}>
-        <Text style={styles.statsTitle}>会话统计</Text>
+        <Text style={styles.statsTitle}>{t('stats.title')}</Text>
         <TouchableOpacity
           style={styles.statsToggle}
           accessibilityRole="button"
-          accessibilityLabel={expanded ? '收起会话统计' : '展开会话统计'}
+          accessibilityLabel={expanded ? t('stats.collapse') : t('stats.expand')}
           accessibilityState={{ expanded }}
           hitSlop={10}
           onPress={() => setExpanded(current => !current)}
@@ -190,9 +195,9 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
             ))}
           </View>
           <Text style={styles.contextText} numberOfLines={1}>
-            约 {compactTokens(usedTokens!)} / {compactTokens(windowTokens!)} tok
+            {t('stats.approx', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })}
             {breakdown !== null && breakdownTotal > 0
-              ? ` · 系统 ${compactTokens(breakdown.systemTokens)} · 工具 ${compactTokens(breakdown.toolsTokens)} · 消息 ${compactTokens(breakdown.messageTokens)}`
+              ? t('stats.breakdown', { system: compactTokens(breakdown.systemTokens), tools: compactTokens(breakdown.toolsTokens), messages: compactTokens(breakdown.messageTokens) })
               : ''}
           </Text>
         </View>
@@ -202,10 +207,11 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
 }
 
 export function PlanChip({ mode }: { mode: string | undefined }): React.JSX.Element | null {
+  const { t } = useI18n()
   if (mode === undefined || mode === null || mode === '') return null
   return (
     <View style={styles.planChip}>
-      <Text style={styles.planChipText}>计划模式 · {mode}</Text>
+      <Text style={styles.planChipText}>{t('plan.mode', { mode })}</Text>
     </View>
   )
 }

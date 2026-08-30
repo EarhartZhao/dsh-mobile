@@ -2,6 +2,7 @@
 import React from 'react'
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { colors, fontSize, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 export function ImageLightbox({ visible, source, name, onClose }: {
   visible: boolean
@@ -9,13 +10,14 @@ export function ImageLightbox({ visible, source, name, onClose }: {
   name?: string
   onClose: () => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.root} onPress={onClose}>
         <View style={styles.header}>
-          <Text style={styles.name} numberOfLines={1}>{name ?? '图片预览'}</Text>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="关闭原图预览" onPress={onClose}>
-            <Text style={styles.close}>关闭</Text>
+          <Text style={styles.name} numberOfLines={1}>{name ?? t('image.preview')}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('image.closePreview')} onPress={onClose}>
+          <Text style={styles.close}>{t('common.close')}</Text>
           </TouchableOpacity>
         </View>
         <ScrollView

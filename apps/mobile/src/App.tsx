@@ -3,10 +3,12 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { DevSettings, NativeModules, Modal, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Clipboard, DevSettings, Linking, Modal, NativeModules, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
-import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
+import type { CompatibilityResult, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { APP_VERSION } from '@dsh-mobile/core'
+import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
+import { I18nProvider, useI18n, type Language, type TranslationKey } from './i18n'
 import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
@@ -19,18 +21,52 @@ import { ChatScreen } from './screens/ChatScreen'
 type Route = { name: 'list' } | { name: 'chat'; sessionId: string }
 type ThemeMode = 'light' | 'dark' | 'system'
 
-function connectionStateLabel(state: ConnectionState): string {
+interface DiagnosticError {
+  at: string
+  message: string
+}
+
+interface DiagnosticEvent {
+  at: string
+  state: ConnectionState
+}
+
+function connectionStateKey(state: ConnectionState): TranslationKey {
   switch (state) {
-    case 'idle': return '空闲'
-    case 'connecting': return '连接中'
-    case 'online': return '在线'
-    case 'reconnecting': return '重新连接中'
-    case 'stopped': return '已停止'
-    case 'incompatible': return '版本不一致'
+    case 'idle': return 'connection.idle'
+    case 'connecting': return 'connection.connectingState'
+    case 'online': return 'connection.online'
+    case 'reconnecting': return 'connection.reconnecting'
+    case 'stopped': return 'connection.stopped'
+    case 'incompatible': return 'connection.incompatible'
   }
 }
 
-export default function App(): React.JSX.Element {
+function compatibilityTitle(result: CompatibilityResult | null, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
+  if (result?.status === 'unknown') return t('compat.unknownTitle')
+  if (result?.status === 'incompatible') return result.missingFeatures.length > 0 ? t('compat.featuresTitle') : t('compat.versionTitle')
+  return result?.title ?? t('compat.versionTitle')
+}
+
+function compatibilityMessage(result: CompatibilityResult | null, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
+  if (result?.status === 'unknown') return t('compat.unknownMessage')
+  if (result?.status === 'incompatible') {
+    if (result.missingFeatures.length > 0) {
+      return t('compat.featuresMessage', { app: result.appVersion, features: result.missingFeatures.join(', '), plugin: result.pluginVersion })
+    }
+    return t('compat.versionMessage', {
+      app: result.appVersion,
+      range: result.supportedPluginRange,
+      apis: result.mobileApi,
+      plugin: result.pluginVersion,
+      api: result.mobileApi,
+    })
+  }
+  return result?.message ?? ''
+}
+
+function AppContent(): React.JSX.Element {
+  const { language, locale, setLanguage, t } = useI18n()
   const [pairing, setPairing] = useState<PairingRecord | null>(null)
   const [booted, setBooted] = useState(false)
   const [route, setRoute] = useState<Route>({ name: 'list' })
@@ -38,6 +74,11 @@ export default function App(): React.JSX.Element {
   const [alert, setAlert] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [themeMode, setThemeMode] = useState<ThemeMode>('system')
+  const [errors, setErrors] = useState<DiagnosticError[]>([])
+  const [events, setEvents] = useState<DiagnosticEvent[]>([])
+  const [pendingNewSession, setPendingNewSession] = useState(false)
+  const [inventory, setInventory] = useState<MobileInventorySnapshot | null | undefined>(undefined)
+  const [inventoryLoading, setInventoryLoading] = useState(false)
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -45,6 +86,10 @@ export default function App(): React.JSX.Element {
     setAlert(text)
     if (alertTimer.current !== null) clearTimeout(alertTimer.current)
     alertTimer.current = setTimeout(() => setAlert(null), 5000)
+  }, [])
+
+  const recordError = useCallback((message: string) => {
+    setErrors(current => [...current.slice(-4), { at: new Date().toISOString(), message }])
   }, [])
 
   useEffect(() => {
@@ -78,25 +123,63 @@ export default function App(): React.JSX.Element {
     if (pairing === null) return
     const manager = createManager(pairing)
     managerRef.current = manager
-    const off = manager.on('state', ({ state }) => setConnState(state))
+    const off = manager.on('state', ({ state }) => {
+      setConnState(state)
+      setEvents(current => [...current.slice(-9), { at: new Date().toISOString(), state }])
+    })
+    setErrors([])
+    setEvents([])
+    const offManagerError = manager.on('error', ({ message }) => recordError(message))
+    const offStoreError = manager.store.on('error', ({ message }) => recordError(message))
     // Foreground alerts: task settlement + answerable frames (M3 scope: no
     // system push, foreground banner only).
     const offSettled = manager.store.on('jobSettled', ({ job }) => {
-      const status = job.status === 'completed' ? '完成' : job.status === 'failed' ? '失败' : '结束'
-      showAlert(`任务 ${job.id} 已${status}：${job.label}`)
+      const statusKey: TranslationKey = job.status === 'completed'
+        ? 'job.completed'
+        : job.status === 'failed' ? 'job.failed' : 'job.settled'
+      showAlert(t('job.settledMessage', { id: job.id, status: t(statusKey), label: job.label }))
     })
     const offAttention = manager.store.on('attention', ({ kind, summary }) => {
-      showAlert(kind === 'approval' ? `待审批：${toolDisplayName(summary)}` : `待回答：${summary}`)
+      showAlert(kind === 'approval'
+        ? t('attention.approval', { summary: toolDisplayName(summary, t) })
+        : t('attention.question', { summary }))
     })
     manager.start().catch(() => undefined)
     return () => {
       off()
       offSettled()
       offAttention()
+      offManagerError()
+      offStoreError()
       void manager.stop()
       managerRef.current = null
     }
-  }, [pairing, showAlert])
+  }, [pairing, recordError, showAlert, t])
+
+  useEffect(() => {
+    if (connState !== 'online') {
+      setInventory(undefined)
+      setInventoryLoading(false)
+      return
+    }
+    const compatibility = managerRef.current?.compatibility
+    if (compatibility === null || compatibility?.features.includes('plugin-inventory') !== true) {
+      setInventory(null)
+      setInventoryLoading(false)
+      return
+    }
+    let alive = true
+    setInventory(undefined)
+    setInventoryLoading(true)
+    void managerRef.current?.loadInventory().then(snapshot => {
+      if (alive) setInventory(snapshot)
+    }).catch(() => {
+      if (alive) setInventory(null)
+    }).finally(() => {
+      if (alive) setInventoryLoading(false)
+    })
+    return () => { alive = false }
+  }, [connState, pairing])
 
   const onPaired = useCallback((record: PairingRecord) => setPairing(record), [])
   const onUnpair = useCallback(() => {
@@ -111,6 +194,77 @@ export default function App(): React.JSX.Element {
     await manager.stop()
     await manager.start()
   }, [])
+
+  const refreshInventory = useCallback(() => {
+    if (connState !== 'online') return
+    setInventory(undefined)
+    setInventoryLoading(true)
+    void managerRef.current?.loadInventory().then(snapshot => setInventory(snapshot))
+      .catch(() => setInventory(null))
+      .finally(() => setInventoryLoading(false))
+  }, [connState])
+
+  const copyDiagnostics = useCallback(() => {
+    const compatibility = managerRef.current?.compatibility
+    const record = pairing
+    const payload = {
+      appVersion: APP_VERSION,
+      state: connState,
+      compatibility,
+      hostInfo: managerRef.current?.hostInfo ?? null,
+      pairing: record === null ? null : {
+        hub: record.hub,
+        instance: record.instance,
+        caFp: record.caFp,
+        deviceId: record.deviceId,
+      },
+      recentErrors: errors,
+      recentConnectionEvents: events,
+    }
+    Clipboard.setString(JSON.stringify(payload, null, 2))
+  }, [connState, errors, events, pairing])
+
+  const openDeepLink = useCallback(async (url: string): Promise<void> => {
+    const path = url.replace(/^dshmobile:\/\//, '').split(/[?#]/)[0]?.replace(/^\/+/, '')
+    if (path !== 'new-session') return
+    const manager = managerRef.current
+    const client = manager?.client
+    if (connState !== 'online' || manager === null || client === null || client === undefined) {
+      setPendingNewSession(true)
+      showAlert(t('link.connectionUnavailable'))
+      return
+    }
+    try {
+      const result = await client.sessions.create({} as never)
+      if (result.result.ok) setRoute({ name: 'chat', sessionId: result.result.value.sessionId })
+      else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
+    } catch (cause) {
+      showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }, [connState, showAlert, t])
+
+  useEffect(() => {
+    const subscription = Linking.addEventListener('url', ({ url }) => { void openDeepLink(url) })
+    void Linking.getInitialURL().then(url => { if (typeof url === 'string') void openDeepLink(url) })
+    return () => subscription.remove()
+  }, [openDeepLink])
+
+  useEffect(() => {
+    if (connState !== 'online' || !pendingNewSession) return
+    setPendingNewSession(false)
+    const createSession = async (): Promise<void> => {
+      const client = managerRef.current?.client
+      if (client === null || client === undefined) return
+      try {
+        const result = await client.sessions.create({} as never)
+        if (result.result.ok) setRoute({ name: 'chat', sessionId: result.result.value.sessionId })
+        else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
+      } catch (cause) {
+        showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+      }
+    }
+    void createSession()
+  }, [connState, pendingNewSession, showAlert, t])
 
   if (!booted) {
     return <View style={styles.root} />
@@ -127,7 +281,7 @@ export default function App(): React.JSX.Element {
           {connState !== 'online' && (
             <View style={styles.banner}>
               <Text style={styles.bannerText}>
-                {connState === 'reconnecting' || connState === 'connecting' ? '连接中…' : `连接状态：${connectionStateLabel(connState)}`}
+                {connState === 'reconnecting' || connState === 'connecting' ? t('connection.connecting') : t('connection.state', { state: t(connectionStateKey(connState)) })}
               </Text>
             </View>
           )}
@@ -157,16 +311,61 @@ export default function App(): React.JSX.Element {
       <Modal transparent visible={settingsOpen} animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
         <ModalBackdrop onClose={() => setSettingsOpen(false)}>
           <View style={styles.settingsCard}>
-            <Text style={styles.settingsTitle}>设置</Text>
+            <ScrollView style={styles.settingsScroll} contentContainerStyle={styles.settingsScrollContent} showsVerticalScrollIndicator={false}>
+              <Text style={styles.settingsTitle}>{t('app.settings')}</Text>
             <Text style={styles.settingsVersion}>
-              App {APP_VERSION} · Plugin {managerRef.current?.compatibility?.pluginVersion ?? '未知'}
-              {managerRef.current?.compatibility === null ? '' : ` · mobileApi ${managerRef.current?.compatibility?.mobileApi ?? 0}`}
+              App {APP_VERSION} · {t('app.plugin')} {managerRef.current?.compatibility?.pluginVersion ?? t('common.unknown')}
+              {managerRef.current?.compatibility === null ? '' : ` · ${t('app.mobileApi')} ${managerRef.current?.compatibility?.mobileApi ?? 0}`}
             </Text>
             <Text style={styles.settingsFeatures}>
               {managerRef.current?.compatibility?.features.length
                 ? managerRef.current.compatibility.features.join(' · ')
-                : '未上报插件功能'}
+                : t('app.pluginFeaturesMissing')}
             </Text>
+            <View style={styles.inventoryBlock}>
+              <View style={styles.inventoryHeader}>
+                <Text style={styles.inventoryTitle}>{t('inventory.title')}</Text>
+                {inventory !== null && (
+                  <TouchableOpacity onPress={refreshInventory} disabled={inventoryLoading}>
+                    <Text style={styles.inventoryRefresh}>{t('inventory.refresh')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {inventory === undefined ? (
+                <Text style={styles.settingsMeta}>{t('inventory.loading')}</Text>
+              ) : inventory === null ? (
+                <Text style={styles.settingsMeta}>{t('inventory.unavailable')}</Text>
+              ) : inventory.entries.length === 0 ? (
+                <Text style={styles.settingsMeta}>{t('inventory.empty')}</Text>
+              ) : inventory.entries.map(entry => (
+                <View key={entry.entryId} style={styles.inventoryRow}>
+                  <Text style={styles.inventoryName} numberOfLines={1}>{entry.moduleName}</Text>
+                  <Text style={styles.inventoryMeta} numberOfLines={1}>
+                    {entry.enabled ? t('inventory.enabled') : t('inventory.disabled')}
+                    {' · '}
+                    {t(`inventory.phase.${entry.fiberPhase ?? 'none'}` as TranslationKey)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.diagnosticsBlock}>
+              <Text style={styles.settingsMeta}>{t('diagnostics.state')}: {t(connectionStateKey(connState))}</Text>
+              <Text style={styles.settingsMeta}>{t('diagnostics.recentErrors')}: {errors.length}</Text>
+              <Text style={styles.settingsMeta}>{t('diagnostics.recentEvents')}: {events.length}</Text>
+              {events.slice(-4).reverse().map((event, index) => (
+                <Text key={`${event.at}:event:${index}`} style={styles.settingsMeta} numberOfLines={1}>
+                  {new Date(event.at).toLocaleString(locale, { hour12: false })} · {t(connectionStateKey(event.state))}
+                </Text>
+              ))}
+              {errors.map((error, index) => (
+                <Text key={`${error.at}:${index}`} style={styles.diagnosticError} numberOfLines={3}>
+                  {new Date(error.at).toLocaleString(locale, { hour12: false })} · {error.message}
+                </Text>
+              ))}
+              <TouchableOpacity style={styles.diagnosticButton} onPress={copyDiagnostics}>
+                <Text style={styles.diagnosticButtonText}>{t('diagnostics.copy')}</Text>
+              </TouchableOpacity>
+            </View>
             {(['light', 'dark', 'system'] as ThemeMode[]).map(mode => (
               <TouchableOpacity
                 key={mode}
@@ -174,11 +373,24 @@ export default function App(): React.JSX.Element {
                 onPress={() => { setTheme(mode); setSettingsOpen(false) }}
               >
                 <Text style={styles.settingsText}>
-                  {mode === 'light' ? '亮色' : mode === 'dark' ? '暗色' : '跟随系统'}
+                  {mode === 'light' ? t('app.theme.light') : mode === 'dark' ? t('app.theme.dark') : t('app.theme.system')}
                 </Text>
                 <Text style={[styles.settingsCheck, themeMode !== mode && { opacity: 0 }]}>✓</Text>
               </TouchableOpacity>
             ))}
+            {(['system', 'zh', 'en'] as Language[]).map(mode => (
+              <TouchableOpacity
+                key={mode}
+                style={styles.settingsRow}
+                onPress={() => setLanguage(mode)}
+              >
+                <Text style={styles.settingsText}>
+                  {mode === 'system' ? t('app.language.system') : mode === 'zh' ? t('app.language.zh') : t('app.language.en')}
+                </Text>
+                <Text style={[styles.settingsCheck, language !== mode && { opacity: 0 }]}>✓</Text>
+              </TouchableOpacity>
+            ))}
+            </ScrollView>
           </View>
         </ModalBackdrop>
       </Modal>
@@ -186,19 +398,27 @@ export default function App(): React.JSX.Element {
         <Modal transparent visible animationType="fade" onRequestClose={() => undefined}>
           <View style={styles.backdrop}>
             <View style={styles.compatCard}>
-              <Text style={styles.compatTitle}>{managerRef.current?.compatibility?.title ?? '版本不一致'}</Text>
-              <Text style={styles.compatMessage}>{managerRef.current?.compatibility?.message}</Text>
+              <Text style={styles.compatTitle}>{compatibilityTitle(managerRef.current?.compatibility ?? null, t)}</Text>
+              <Text style={styles.compatMessage}>{compatibilityMessage(managerRef.current?.compatibility ?? null, t)}</Text>
               <Text style={styles.compatMeta}>
-                App {managerRef.current?.compatibility?.appVersion ?? ''} · 支持插件 {managerRef.current?.compatibility?.supportedPluginRange ?? ''}
+                App {managerRef.current?.compatibility?.appVersion ?? ''} · {t('connection.supportedPlugins', { range: managerRef.current?.compatibility?.supportedPluginRange ?? '' })}
               </Text>
               <TouchableOpacity style={styles.compatRetry} onPress={() => void retryConnection()}>
-                <Text style={styles.compatRetryText}>更新后重试</Text>
+                <Text style={styles.compatRetryText}>{t('connection.retryAfterUpdate')}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
     </SafeAreaProvider>
+  )
+}
+
+export default function App(): React.JSX.Element {
+  return (
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
   )
 }
 
@@ -245,6 +465,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 6,
   },
+  settingsScroll: { maxHeight: 440 },
+  settingsScrollContent: { paddingBottom: 8 },
+  inventoryBlock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    marginTop: 6,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  inventoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  inventoryTitle: { color: colors.text, fontSize: 12, fontWeight: '600' },
+  inventoryRefresh: { color: colors.accent, fontSize: 11 },
+  inventoryRow: { marginTop: 6, gap: 1 },
+  inventoryName: { color: colors.text, fontSize: 11 },
+  inventoryMeta: { color: colors.textDim, fontSize: 10 },
+  diagnosticsBlock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    marginTop: 6,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  settingsMeta: { color: colors.textDim, fontSize: 11 },
+  diagnosticError: { color: colors.warning, fontSize: 11, marginTop: 4 },
+  diagnosticButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  diagnosticButtonText: { color: colors.accent, fontSize: 12 },
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',

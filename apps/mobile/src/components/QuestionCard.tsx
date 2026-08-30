@@ -3,6 +3,7 @@ import React, { useMemo, useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import Markdown from 'react-native-markdown-display'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 export interface QuestionOptionView {
   label: string
@@ -61,6 +62,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
   onSubmit: (answer: QuestionAnswerPayload) => Promise<void>
   onCancel: () => Promise<void>
 }): React.JSX.Element {
+  const { t } = useI18n()
   const questions = useMemo(() => (Array.isArray(pending.questions)
     ? pending.questions.filter((item): item is QuestionItemView =>
         typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>)['id'] === 'string')
@@ -100,7 +102,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
     const missing = values.findIndex(value => !answered(value) && !value.skipped)
     if (missing >= 0) {
       setIndex(missing)
-      setError('请先回答当前问题。')
+      setError(t('question.needAnswer'))
       return
     }
     setBusy('answer')
@@ -128,7 +130,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
     if (question === undefined) return
     const draft = drafts[index]
     if (draft === undefined || !answered(draft)) {
-      setError('请选择选项或输入自定义答案。')
+      setError(t('question.needChoice'))
       return
     }
     if (index < questions.length - 1) {
@@ -166,9 +168,9 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
   if (questions.length === 0) {
     return (
       <View style={styles.card}>
-        <Text style={styles.questionText}>收到无法显示的提问。</Text>
+        <Text style={styles.questionText}>{t('question.noDisplay')}</Text>
         <TouchableOpacity style={styles.secondaryButton} disabled={busy !== null} onPress={() => void cancel()}>
-          <Text style={styles.secondaryText}>关闭</Text>
+          <Text style={styles.secondaryText}>{t('common.close')}</Text>
         </TouchableOpacity>
       </View>
     )
@@ -189,7 +191,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
       <View style={styles.planCard}>
         <View style={styles.planStrip}>
           <View style={styles.planDot} />
-          <Text style={styles.planStripText}>计划待确认</Text>
+          <Text style={styles.planStripText}>{t('question.planReview')}</Text>
         </View>
         <ScrollView style={styles.planBody} nestedScrollEnabled showsVerticalScrollIndicator={false}>
           <Text style={styles.questionText}>{review.question}</Text>
@@ -198,15 +200,15 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
         {error !== null && <Text style={styles.error}>{error}</Text>}
         <View style={styles.row}>
           <TouchableOpacity style={styles.secondaryButton} disabled={busy !== null} onPress={() => void cancel()}>
-            <Text style={styles.secondaryText}>讨论</Text>
+            <Text style={styles.secondaryText}>{t('question.discuss')}</Text>
           </TouchableOpacity>
           {reviewDecline !== undefined && (
             <TouchableOpacity style={styles.secondaryButton} disabled={busy !== null} onPress={() => void decide(reviewDecline.label)}>
-              <Text style={styles.secondaryText}>拒绝</Text>
+              <Text style={styles.secondaryText}>{t('question.decline')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={[styles.primaryButton, busy !== null && styles.disabled]} disabled={busy !== null} onPress={() => void decide(reviewApprove.label)}>
-            <Text style={styles.primaryText}>批准</Text>
+            <Text style={styles.primaryText}>{t('question.approve')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -225,7 +227,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
           <Text style={styles.progress}>{index + 1} / {questions.length}</Text>
         </View>
         <TouchableOpacity disabled={busy !== null} onPress={() => void cancel()}>
-          <Text style={styles.close}>关闭</Text>
+          <Text style={styles.close}>{t('common.close')}</Text>
         </TouchableOpacity>
       </View>
       <ScrollView style={styles.body} nestedScrollEnabled showsVerticalScrollIndicator={false}>
@@ -248,7 +250,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
               <View style={styles.optionCopy}>
                 <View style={styles.optionLine}>
                   <Text style={styles.optionLabel}>{display.label}</Text>
-                  {display.recommended && <Text style={styles.badge}>推荐</Text>}
+                  {display.recommended && <Text style={styles.badge}>{t('question.recommended')}</Text>}
                 </View>
                 {option.description !== undefined && <Text style={styles.optionDescription}>{option.description}</Text>}
               </View>
@@ -261,7 +263,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
               style={styles.customInput}
               value={draft.custom}
               editable={busy === null}
-              placeholder="输入自定义答案"
+              placeholder={t('question.customPlaceholder')}
               placeholderTextColor={colors.textDim}
               onChangeText={value => updateDraft(question.id, current => ({
                 ...current,
@@ -277,7 +279,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
             style={styles.customInput}
             value={draft.custom}
             editable={busy === null}
-            placeholder="输入你的答案"
+            placeholder={t('question.answerPlaceholder')}
             placeholderTextColor={colors.textDim}
             onChangeText={value => updateDraft(question.id, current => ({
               ...current,
@@ -296,17 +298,17 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
           disabled={index === 0 || busy !== null}
           onPress={() => setIndex(index - 1)}
         >
-          <Text style={styles.secondaryText}>上一题</Text>
+          <Text style={styles.secondaryText}>{t('question.previous')}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryButton} disabled={busy !== null} onPress={() => void skipQuestion()}>
-          <Text style={styles.secondaryText}>跳过</Text>
+          <Text style={styles.secondaryText}>{t('question.skip')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.primaryButton, (!answered(draft) || busy !== null) && styles.disabled]}
           disabled={!answered(draft) || busy !== null}
           onPress={() => void continueFlow()}
         >
-          <Text style={styles.primaryText}>{index === questions.length - 1 ? '提交回答' : '下一题'}</Text>
+          <Text style={styles.primaryText}>{index === questions.length - 1 ? t('question.submit') : t('question.next')}</Text>
         </TouchableOpacity>
       </View>
     </View>

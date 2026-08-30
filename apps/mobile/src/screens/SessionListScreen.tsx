@@ -4,12 +4,13 @@
  * store 'changed' (throttled).
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Alert, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import type { DirectoryListing, SessionSummary } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 interface Props {
   manager: ConnectionManager
@@ -35,7 +36,11 @@ function useStoreVersion(manager: ConnectionManager): number {
   return version
 }
 
+function copyPath(path: string): void { Clipboard.setString(path) }
+function sharePath(path: string): void { void Share.share({ message: path }).catch(() => undefined) }
+
 export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSettings }: Props): React.JSX.Element {
+  const { t } = useI18n()
   useStoreVersion(manager)
   const { store } = manager
   const [query, setQuery] = useState('')
@@ -70,9 +75,9 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   }
 
   const wsDelete = (workspaceId: string): void => {
-    Alert.alert('删除工作区', '会话保留，仅移除工作区分组。', [
-      { text: '取消', style: 'cancel' },
-      { text: '删除', style: 'destructive', onPress: () => {
+    Alert.alert(t('session.deleteWorkspaceTitle'), t('session.deleteWorkspaceMessage'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: () => {
         void manager.client?.workspace.delete({ workspaceId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
       } },
     ])
@@ -172,9 +177,9 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   }
 
   const archive = (sessionId: string): void => {
-    Alert.alert('归档会话', '归档后从列表隐藏，可在「归档」中查看。', [
-      { text: '取消', style: 'cancel' },
-      { text: '归档', style: 'destructive', onPress: () => {
+    Alert.alert(t('session.archiveTitle'), t('session.archiveMessage'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.archive'), style: 'destructive', onPress: () => {
         void manager.client?.workspace.archiveSession({ sessionId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
       } },
     ])
@@ -183,20 +188,20 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>会话</Text>
+        <Text style={styles.headerTitle}>{t('session.title')}</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => void newSession(undefined)} onLongPress={() => void openPresetPicker()} style={styles.headerButton}>
-            <Text style={styles.headerButtonText}>＋ 新会话</Text>
+            <Text style={styles.headerButtonText}>{t('session.new')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowArchived(a => !a)} style={styles.headerButton}>
-            <Text style={styles.headerButtonText}>{showArchived ? '返回' : '归档'}</Text>
+            <Text style={styles.headerButtonText}>{showArchived ? t('common.back') : t('common.archive')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onUnpair} style={styles.headerButton}>
-            <Text style={[styles.headerButtonText, { color: colors.danger }]}>解除配对</Text>
+            <Text style={[styles.headerButtonText, { color: colors.danger }]}>{t('session.unpair')}</Text>
           </TouchableOpacity>
           {onOpenSettings !== undefined && (
             <TouchableOpacity onPress={onOpenSettings} style={styles.headerButton}>
-              <Text style={styles.headerButtonText}>设置</Text>
+              <Text style={styles.headerButtonText}>{t('app.settings')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -207,7 +212,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
           onPress={() => setSelectedWs(null)}
           onLongPress={() => setBrowser({})}
         >
-          <Text style={styles.wsChipText}>全部</Text>
+          <Text style={styles.wsChipText}>{t('session.all')}</Text>
         </TouchableOpacity>
         {store.workspaces.map(ws => (
           <TouchableOpacity
@@ -216,11 +221,11 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
             onPress={() => setSelectedWs(ws.workspaceId)}
             onLongPress={() => {
               Alert.alert(ws.title, ws.path, [
-              { text: '取消', style: 'cancel' },
-                { text: '上移', onPress: () => moveWorkspace(ws.workspaceId, -1) },
-                { text: '下移', onPress: () => moveWorkspace(ws.workspaceId, 1) },
-                { text: '重命名', onPress: () => wsRename(ws.workspaceId) },
-                { text: '删除', style: 'destructive', onPress: () => wsDelete(ws.workspaceId) },
+              { text: t('common.cancel'), style: 'cancel' },
+                { text: t('session.moveUp'), onPress: () => moveWorkspace(ws.workspaceId, -1) },
+                { text: t('session.moveDown'), onPress: () => moveWorkspace(ws.workspaceId, 1) },
+                { text: t('common.rename'), onPress: () => wsRename(ws.workspaceId) },
+                { text: t('common.delete'), style: 'destructive', onPress: () => wsDelete(ws.workspaceId) },
               ])
             }}
           >
@@ -228,14 +233,14 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
           </TouchableOpacity>
         ))}
         <TouchableOpacity style={[styles.wsChip, styles.wsChipAdd]} onPress={() => setWsCreateOpen(true)}>
-          <Text style={styles.wsChipText}>＋ 工作区</Text>
+          <Text style={styles.wsChipText}>{t('session.workspaceAdd')}</Text>
         </TouchableOpacity>
       </ScrollView>
       {showArchived ? (
         <FlatList
           data={archived}
           keyExtractor={item => item.sessionId}
-          ListEmptyComponent={<Text style={styles.empty}>没有归档会话。</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>{t('session.noArchived')}</Text>}
           renderItem={({ item }) => (
             <View style={styles.row}>
               <View style={styles.rowText}>
@@ -253,14 +258,14 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
               style={styles.searchInput}
               value={query}
               onChangeText={setQuery}
-              placeholder="搜索会话内容…"
+              placeholder={t('session.searchPlaceholder')}
               placeholderTextColor={colors.textDim}
               onSubmitEditing={() => void runSearch()}
               returnKeyType="search"
             />
             {searchHits !== null && (
               <TouchableOpacity onPress={() => { setQuery(''); setSearchHits(null) }}>
-                <Text style={styles.headerButtonText}>清除</Text>
+                <Text style={styles.headerButtonText}>{t('common.clear')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -270,7 +275,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
               : inWorkspace.map(s => ({ sessionId: s.sessionId, snippet: '' }))}
             keyExtractor={item => item.sessionId}
             contentContainerStyle={searchHits === null && visible.length === 0 ? styles.emptyContainer : undefined}
-            ListEmptyComponent={<Text style={styles.empty}>{searchHits !== null ? '无匹配结果。' : '暂无会话，点右上角新建。'}</Text>}
+            ListEmptyComponent={<Text style={styles.empty}>{searchHits !== null ? t('session.noMatches') : t('session.noSessions')}</Text>}
             renderItem={({ item }) => searchHits !== null
               ? (
                 <TouchableOpacity style={styles.row} onPress={() => onOpenSession(item.sessionId)}>
@@ -301,16 +306,16 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
       )}
       <PromptModal
         visible={wsCreateOpen}
-        title="新建工作区（目录路径）"
+        title={t('session.newWorkspace')}
         initial="C:\\"
-        confirmLabel="创建"
+        confirmLabel={t('common.create')}
         onCancel={() => setWsCreateOpen(false)}
         onConfirm={p => { setWsCreateOpen(false); wsCreate(p) }}
       />
       <Modal transparent visible={presetPick !== null} animationType="fade" onRequestClose={() => setPresetPick(null)}>
         <ModalBackdrop onClose={() => setPresetPick(null)}>
           <View style={styles.menuCard}>
-            <Text style={styles.wsChipText}>选择智能体预设</Text>
+            <Text style={styles.wsChipText}>{t('session.choosePreset')}</Text>
             {presetPick?.presets.map(p => (
               <TouchableOpacity
                 key={p.id}
@@ -325,9 +330,9 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
       </Modal>
       <PromptModal
         visible={wsRenameId !== null}
-        title="重命名工作区"
+        title={t('session.renameWorkspace')}
         initial={store.workspaces.find(w => w.workspaceId === wsRenameId)?.title ?? ''}
-        confirmLabel="重命名"
+        confirmLabel={t('common.rename')}
         onCancel={() => setWsRenameId(null)}
         onConfirm={t => {
           if (wsRenameId !== null) {
@@ -342,13 +347,21 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
         <View style={styles.browserRoot}>
           <View style={styles.browserHeader}>
             <TouchableOpacity onPress={() => setBrowser(null)}>
-              <Text style={styles.headerButtonText}>关闭</Text>
+              <Text style={styles.headerButtonText}>{t('common.close')}</Text>
             </TouchableOpacity>
-            <Text style={styles.browserTitle} numberOfLines={1}>{listing?.path ?? '目录'}</Text>
+            <Text style={styles.browserTitle} numberOfLines={1}>{listing?.path ?? t('common.directory')}</Text>
             {listing !== null && (
-              <TouchableOpacity onPress={() => setFolderCreateOpen(true)}>
-                <Text style={styles.headerButtonText}>＋</Text>
-              </TouchableOpacity>
+              <View style={styles.browserActions}>
+                <TouchableOpacity onPress={() => copyPath(listing.path)}>
+                  <Text style={styles.headerButtonText}>{t('common.copy')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => sharePath(listing.path)}>
+                  <Text style={styles.headerButtonText}>{t('common.share')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setFolderCreateOpen(true)}>
+                  <Text style={styles.headerButtonText}>＋</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
           {listing !== null && (
@@ -358,6 +371,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
                   key={crumb.path}
                   style={[styles.wsChip, crumb.path === listing.path && styles.wsChipActive]}
                   onPress={() => setBrowser({ path: crumb.path })}
+                  onLongPress={() => copyPath(crumb.path)}
                 >
                   <Text style={styles.wsChipText}>{crumb.name}</Text>
                 </TouchableOpacity>
@@ -368,20 +382,29 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
           <FlatList
             data={listing?.entries ?? []}
             keyExtractor={item => item.path}
-            ListEmptyComponent={<Text style={styles.empty}>{browserError === '' ? '没有子目录。' : ''}</Text>}
+            ListEmptyComponent={<Text style={styles.empty}>{browserError === '' ? t('session.noSubdirectories') : ''}</Text>}
             renderItem={({ item }) => (
-              <TouchableOpacity style={styles.row} onPress={() => setBrowser({ path: item.path })}>
-                <Text style={styles.rowTitle} numberOfLines={1}>{item.name}</Text>
-              </TouchableOpacity>
+              <View style={styles.row}>
+                <TouchableOpacity style={styles.rowText} onPress={() => setBrowser({ path: item.path })}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{item.name}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.rowAction}
+                  onPress={() => copyPath(item.path)}
+                  onLongPress={() => sharePath(item.path)}
+                >
+                  <Text style={styles.rowActionText}>{t('common.copy')}</Text>
+                </TouchableOpacity>
+              </View>
             )}
           />
         </View>
       </Modal>
       <PromptModal
         visible={folderCreateOpen}
-        title="新建目录"
+        title={t('session.newDirectory')}
         initial=""
-        confirmLabel="创建"
+        confirmLabel={t('common.create')}
         onCancel={() => setFolderCreateOpen(false)}
         onConfirm={name => { void createFolder(name) }}
       />
@@ -396,6 +419,7 @@ function SessionRow({ manager, item, onOpen, onMove, onArchive }: {
   onMove: (direction: -1 | 1) => void
   onArchive: (sessionId: string) => void
 }): React.JSX.Element {
+  const { locale, t } = useI18n()
   const title = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
   const pending = manager.store.sessions.get(item.sessionId)
   const needsAttention = (pending?.pendingApprovals.size ?? 0) + (pending?.pendingQuestions.size ?? 0) > 0
@@ -405,21 +429,21 @@ function SessionRow({ manager, item, onOpen, onMove, onArchive }: {
       style={styles.row}
       onPress={() => onOpen(item.sessionId)}
       onLongPress={() => {
-        Alert.alert('会话操作', title, [
-          { text: '取消', style: 'cancel' },
-          { text: '上移', onPress: () => onMove(-1) },
-          { text: '下移', onPress: () => onMove(1) },
-          { text: '归档', style: 'destructive', onPress: () => onArchive(item.sessionId) },
+        Alert.alert(t('session.actions'), title, [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('session.moveUp'), onPress: () => onMove(-1) },
+          { text: t('session.moveDown'), onPress: () => onMove(1) },
+          { text: t('common.archive'), style: 'destructive', onPress: () => onArchive(item.sessionId) },
         ])
       }}
     >
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
-        <Text style={styles.rowSub}>{new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })}</Text>
+        <Text style={styles.rowSub}>{new Date(item.updatedAt).toLocaleString(locale, { hour12: false })}</Text>
       </View>
-      {needsAttention && <View style={[styles.badge, { backgroundColor: colors.warning }]}><Text style={styles.badgeText}>待处理</Text></View>}
-      {liveJobs > 0 && <View style={[styles.badge, { backgroundColor: colors.success }]}><Text style={styles.badgeText}>任务×{liveJobs}</Text></View>}
-      {item.running && <View style={[styles.badge, { backgroundColor: colors.running }]}><Text style={styles.badgeText}>运行中</Text></View>}
+      {needsAttention && <View style={[styles.badge, { backgroundColor: colors.warning }]}><Text style={styles.badgeText}>{t('session.pending')}</Text></View>}
+      {liveJobs > 0 && <View style={[styles.badge, { backgroundColor: colors.success }]}><Text style={styles.badgeText}>{t('session.jobs', { count: liveJobs })}</Text></View>}
+      {item.running && <View style={[styles.badge, { backgroundColor: colors.running }]}><Text style={styles.badgeText}>{t('session.running')}</Text></View>}
     </TouchableOpacity>
   )
 }
@@ -491,6 +515,8 @@ const styles = StyleSheet.create({
     gap: spacing(2),
   },
   rowText: { flex: 1 },
+  rowAction: { paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
+  rowActionText: { color: colors.accent, fontSize: fontSize.small },
   rowTitle: { color: colors.text, fontSize: fontSize.body },
   rowSub: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 2 },
   badge: { borderRadius: radius.card, paddingHorizontal: spacing(2), paddingVertical: 2 },
@@ -504,6 +530,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing(2),
   },
   browserTitle: { flex: 1, color: colors.text, fontSize: fontSize.small, textAlign: 'center' },
+  browserActions: { flexDirection: 'row', gap: spacing(3) },
   browserError: {
     color: colors.danger,
     fontSize: fontSize.small,

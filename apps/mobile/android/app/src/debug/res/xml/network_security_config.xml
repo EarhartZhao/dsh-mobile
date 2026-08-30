@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only loopback for Metro and fake hosts; release uses the secure base config. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+  <domain-config>
+    <domain includeSubdomains="false">115.159.57.137</domain>
+    <trust-anchors>
+      <certificates src="@raw/dsh_root_ca" />
+    </trust-anchors>
+  </domain-config>
+</network-security-config>

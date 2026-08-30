@@ -5,6 +5,7 @@ import { deriveConversation, type ConnectionManager, type ConversationItem, type
 import type { HistoryEntry, SubagentCatalog, SubagentListEntry } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { toolDisplayName } from '../ui-labels'
+import { useI18n, type TranslationKey } from '../i18n'
 
 const HISTORY_PAGE = 40
 
@@ -27,18 +28,20 @@ function stateFromEvents(sessionId: string, events: HistoryEntry[]): SessionStat
   }
 }
 
-function entryTitle(entry: SubagentListEntry): string {
-  if (entry.kind === 'diagnostic') return `诊断 · ${entry.id.slice(0, 8)}`
+type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
+
+function entryTitle(entry: SubagentListEntry, t: Translate): string {
+  if (entry.kind === 'diagnostic') return t('subagent.diagnostic', { id: entry.id.slice(0, 8) })
   return entry.label ?? entry.id.slice(0, 8)
 }
 
-function statusText(entry: SubagentListEntry): string {
+function statusText(entry: SubagentListEntry, t: Translate): string {
   if (entry.kind === 'diagnostic') {
-    if (entry.reason === 'corrupt') return '损坏'
-    if (entry.reason === 'unsupported') return '不支持'
-    return '不可用'
+    if (entry.reason === 'corrupt') return t('subagent.corrupt')
+    if (entry.reason === 'unsupported') return t('subagent.unsupported')
+    return t('subagent.unavailable')
   }
-  return entry.activity === 'running' ? '运行中' : '空闲'
+  return entry.activity === 'running' ? t('subagent.running') : t('subagent.idle')
 }
 
 function statusColor(entry: SubagentListEntry): string {
@@ -47,23 +50,24 @@ function statusColor(entry: SubagentListEntry): string {
 }
 
 function TranscriptRow({ item }: { item: ConversationItem }): React.JSX.Element {
+  const { t } = useI18n()
   const base = item.kind === 'tool'
     ? {
-        title: `工具 · ${toolDisplayName(item.name)}`,
+        title: t('subagent.tool', { name: toolDisplayName(item.name, t) }),
         body: item.status === 'error'
-          ? `失败：${item.resultPreview || item.args}`
+          ? t('subagent.failed', { message: item.resultPreview || item.args })
           : item.resultPreview !== '' ? item.resultPreview : item.args,
       }
     : item.kind === 'user'
-      ? { title: '用户', body: item.text }
+      ? { title: t('subagent.user'), body: item.text }
       : item.kind === 'assistant' || item.kind === 'stream'
-        ? { title: item.kind === 'stream' ? '助手（流式）' : '助手', body: item.text || item.reasoning }
-        : { title: '上下文压缩', body: item.summary }
+        ? { title: item.kind === 'stream' ? t('subagent.assistantStreaming') : t('subagent.assistant'), body: item.text || item.reasoning }
+        : { title: t('subagent.compaction'), body: item.summary }
   if (base.body === '') {
     return (
       <View style={styles.message}>
         <Text style={styles.messageRole}>{base.title}</Text>
-        <Text style={styles.messageBody}>{item.kind === 'tool' ? '（无输出）' : '（空消息）'}</Text>
+        <Text style={styles.messageBody}>{item.kind === 'tool' ? t('subagent.noOutput') : t('subagent.emptyMessage')}</Text>
       </View>
     )
   }
@@ -82,6 +86,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   onClose: () => void
   onOpenSession: (sessionId: string) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const [selected, setSelected] = useState<SubagentListEntry | null>(null)
   const [events, setEvents] = useState<HistoryEntry[]>([])
   const [hasMore, setHasMore] = useState(false)
@@ -95,7 +100,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
     if (entry.kind === 'diagnostic') {
       setEvents([])
       setHasMore(false)
-      setError('该子代理记录无法读取。')
+      setError(t('subagent.readFailed'))
       return
     }
     setLoading(true)
@@ -109,7 +114,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
         ...(beforeSeq === undefined ? {} : { beforeSeq }),
       } as never)
       if (result?.result.ok !== true) {
-        setError(result?.result.ok === false ? `读取失败：${result.result.error.message}` : '读取失败：连接不可用。')
+        setError(result?.result.ok === false ? t('subagent.historyFailed', { message: result.result.error.message }) : t('subagent.historyConnection'))
         return
       }
       const page = result.result.value.events
@@ -120,7 +125,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
     } finally {
       setLoading(false)
     }
-  }, [manager, parentSessionId])
+  }, [manager, parentSessionId, t])
 
   useEffect(() => {
     if (selected !== null) void loadHistory(selected)
@@ -129,14 +134,14 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   const refreshCatalog = useCallback(async (): Promise<void> => {
     const result = await manager.client?.subagents.list({ parentSessionId } as never).catch(() => null)
     if (result?.result.ok !== true) {
-      setError(result?.result.ok === false ? `刷新失败：${result.result.error.message}` : '刷新失败：连接不可用。')
+      setError(result?.result.ok === false ? t('subagent.refreshFailed', { message: result.result.error.message }) : t('subagent.refreshConnection'))
       return
     }
     const fresh = result.result.value.entries
     if (selected === null) return
     const current = fresh.find(entry => entry.id === selected.id)
     if (current !== undefined) setSelected(current)
-  }, [manager, parentSessionId, selected])
+  }, [manager, parentSessionId, selected, t])
 
   const sendPrompt = async (): Promise<void> => {
     const text = prompt.trim()
@@ -155,7 +160,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
         ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
       } as never)
       if (result?.result.ok !== true) {
-        setError(result?.result.ok === false ? `发送失败：${result.result.error.message}` : '发送失败：连接不可用。')
+        setError(result?.result.ok === false ? t('subagent.sendFailed', { message: result.result.error.message }) : t('subagent.sendConnection'))
         return
       }
       setPrompt('')
@@ -179,7 +184,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
         mode: 'continuable',
       } as never)
       if (result?.result.ok !== true) {
-        setError(result?.result.ok === false ? `打断失败：${result.result.error.message}` : '打断失败：连接不可用。')
+        setError(result?.result.ok === false ? t('subagent.interruptFailed', { message: result.result.error.message }) : t('subagent.interruptConnection'))
         return
       }
       await Promise.all([refreshCatalog(), loadHistory(entry)])
@@ -204,21 +209,21 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
       <View style={styles.detailCard}>
         <View style={styles.detailHeader}>
           <TouchableOpacity onPress={() => { setSelected(null); setEvents([]); setPrompt('') }}>
-            <Text style={styles.link}>返回列表</Text>
+            <Text style={styles.link}>{t('subagent.backToList')}</Text>
           </TouchableOpacity>
-          <Text style={styles.detailTitle} numberOfLines={1}>{entryTitle(selected)}</Text>
+          <Text style={styles.detailTitle} numberOfLines={1}>{entryTitle(selected, t)}</Text>
           <TouchableOpacity onPress={() => onOpenSession(selected.id)}>
-            <Text style={styles.link}>打开</Text>
+            <Text style={styles.link}>{t('subagent.open')}</Text>
           </TouchableOpacity>
         </View>
         <Text style={styles.detailMeta}>
-          {statusText(selected)}{selected.kind === 'child' && selected.hasChildren ? ' · 有子级' : ''}
-          {selected.kind === 'child' && selected.mode === 'continuable' ? ' · 可续' : selected.kind === 'child' ? ' · 一次性' : ''}
+          {statusText(selected, t)}{selected.kind === 'child' && selected.hasChildren ? t('subagent.hasChildren') : ''}
+          {selected.kind === 'child' && selected.mode === 'continuable' ? t('subagent.continuable') : selected.kind === 'child' ? t('subagent.oneShot') : ''}
         </Text>
         {error !== '' && <Text style={styles.error}>{error}</Text>}
-        {loading && events.length === 0 && <Text style={styles.meta}>正在读取历史…</Text>}
+        {loading && events.length === 0 && <Text style={styles.meta}>{t('subagent.loadingHistory')}</Text>}
         {!loading && events.length === 0 && error === '' && (
-          <Text style={styles.meta}>这个子代理还没有可见记录。</Text>
+          <Text style={styles.meta}>{t('subagent.emptyHistory')}</Text>
         )}
         <FlatList
           style={styles.history}
@@ -236,7 +241,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
               if (typeof firstSeq === 'number') void loadHistory(selected, firstSeq)
             }}
           >
-            <Text style={styles.link}>{loading ? '加载中…' : '加载更早记录'}</Text>
+            <Text style={styles.link}>{loading ? t('common.loading') : t('subagent.loadOlder')}</Text>
           </TouchableOpacity>
         )}
         {selected.kind === 'child' && selected.mode === 'continuable' && (
@@ -246,7 +251,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
               value={prompt}
               editable={!busy && catalog.parentAvailable}
               onChangeText={setPrompt}
-              placeholder={catalog.parentAvailable ? '继续向这个子代理发送…' : '父会话不可用，暂时无法继续。'}
+              placeholder={catalog.parentAvailable ? t('subagent.promptPlaceholder') : t('subagent.promptUnavailable')}
               placeholderTextColor={colors.textDim}
               multiline
             />
@@ -255,14 +260,14 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
               disabled={!canPrompt || prompt.trim() === '' || busy}
               onPress={() => void sendPrompt()}
             >
-              <Text style={styles.primaryText}>发送</Text>
+              <Text style={styles.primaryText}>{t('subagent.send')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.secondaryButton, (!canInterrupt || busy) && styles.disabled]}
               disabled={!canInterrupt || busy}
               onPress={() => void interrupt()}
             >
-              <Text style={styles.secondaryText}>打断</Text>
+              <Text style={styles.secondaryText}>{t('subagent.interrupt')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -272,27 +277,27 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
 
   return (
     <ScrollView style={styles.listCard}>
-      <Text style={styles.detailTitle}>子代理</Text>
+      <Text style={styles.detailTitle}>{t('subagent.title')}</Text>
       {!catalog.parentAvailable && (
-        <Text style={styles.meta}>父会话当前不可用；列表仍可查看。</Text>
+        <Text style={styles.meta}>{t('subagent.parentUnavailable')}</Text>
       )}
-      {catalog.entries.length === 0 && <Text style={styles.meta}>没有子代理会话。</Text>}
+      {catalog.entries.length === 0 && <Text style={styles.meta}>{t('subagent.noSessions')}</Text>}
       {catalog.entries.map(entry => (
         <TouchableOpacity key={entry.id} style={styles.entry} onPress={() => setSelected(entry)}>
           <View style={[styles.dot, { backgroundColor: statusColor(entry) }]} />
           <View style={styles.entryText}>
-            <Text style={styles.entryTitle} numberOfLines={1}>{entryTitle(entry)}</Text>
+            <Text style={styles.entryTitle} numberOfLines={1}>{entryTitle(entry, t)}</Text>
             <Text style={styles.entryMeta} numberOfLines={1}>
-              {statusText(entry)}
-              {entry.kind === 'child' ? ` · ${entry.mode === 'continuable' ? '可续' : '一次性'}` : ''}
-              {entry.kind === 'child' && entry.hasChildren ? ' · 有子级' : ''}
+              {statusText(entry, t)}
+              {entry.kind === 'child' ? (entry.mode === 'continuable' ? t('subagent.continuable') : t('subagent.oneShot')) : ''}
+              {entry.kind === 'child' && entry.hasChildren ? t('subagent.hasChildren') : ''}
             </Text>
           </View>
-          {entry.kind === 'child' && <Text style={styles.link}>查看</Text>}
+          {entry.kind === 'child' && <Text style={styles.link}>{t('subagent.view')}</Text>}
         </TouchableOpacity>
       ))}
       <TouchableOpacity style={[styles.secondaryButton, styles.closeButton]} onPress={onClose}>
-        <Text style={styles.secondaryText}>关闭</Text>
+        <Text style={styles.secondaryText}>{t('common.close')}</Text>
       </TouchableOpacity>
     </ScrollView>
   )
