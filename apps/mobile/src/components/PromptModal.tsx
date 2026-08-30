@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 export function PromptModal({ visible, title, initial, confirmLabel, onCancel, onConfirm }: {
   visible: boolean
@@ -12,6 +13,7 @@ export function PromptModal({ visible, title, initial, confirmLabel, onCancel, o
   onCancel: () => void
   onConfirm: (text: string) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const [text, setText] = useState(initial)
   useEffect(() => { if (visible) setText(initial) }, [visible, initial])
   return (
@@ -21,7 +23,7 @@ export function PromptModal({ visible, title, initial, confirmLabel, onCancel, o
           <Text style={styles.title}>{title}</Text>
           <TextInput style={styles.input} value={text} onChangeText={setText} autoFocus selectTextOnFocus />
           <View style={styles.row}>
-            <TouchableOpacity style={styles.button} onPress={onCancel}><Text style={styles.cancelText}>取消</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.button} onPress={onCancel}><Text style={styles.cancelText}>{t('modal.cancel')}</Text></TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.confirm, text.trim() === '' && styles.disabled]}
               disabled={text.trim() === ''}

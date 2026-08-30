@@ -90,6 +90,30 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 相册改为 `ACTION_OPEN_DOCUMENT`，修复系统返回多 URI 后的读取失败；`command.list`/`command.execute` 已加入插件白名单。
 > - 验证：插件 26/26、core 25/25、App typecheck/eslint 0 errors、协议 vendor 同步、Android `assembleDebug` 通过；模拟器实测版本门禁、`+` 四面板、`/compact` 执行和相册多选读取。
 
+> 进度（2026-08-30 第五轮）：**消息操作、工具卡细分、会话内搜索、路径操作、i18n 基础、诊断和 release 打包基础落地。**
+> - 消息长按支持复制/分享/从这里分叉（`session.fork` + `atSeq`）/重发到新会话；会话页新增当前会话搜索与消息跳转。
+> - 工具卡补齐 Diff、Search、Web 结果、Read、位置与子调用树展示；core 修正嵌套 `code-dispatch` 的更新语义，并新增子调用树/view 用例。
+> - 目录浏览器支持当前路径、面包屑和子目录路径复制/分享；设置页支持中英文/跟随系统切换（先覆盖根导航、设置、`+` 菜单、消息操作和会话内搜索）。
+> - 设置页新增连接诊断：状态、App/插件版本、mobileApi、feature 位、最近错误和脱敏诊断 JSON 复制。
+> - Android release 配置统一 App 版本为 0.1.0，启用 R8/资源收缩，支持通过 `DSH_RELEASE_*` 环境变量注入正式签名，未配置时暂用 debug 签名兜底；新增 Android 8+ 自适应图标。
+> - 验证：core typecheck + 28/28 测试、App typecheck、App lint 0 errors（旧 warning 保留）、`gradlew assembleRelease` 通过并产出 `app-release.apk`。
+
+> 进度（2026-08-30 第六轮）：**i18n 全面迁移、诊断补强和发布安全门禁落地。**
+> - 中文/English 切换覆盖配对、会话列表、聊天、设置、`+` 菜单、目标/统计条、工具卡、子代理和提问卡；固定标签也改为 locale-aware。
+> - 连接诊断增加最近连接状态事件；设置页展示状态、版本/能力、错误与连接事件，并复制脱敏 JSON。
+> - Android release：release 网络策略禁用明文、debug 源集保留本地回环；显式空备份/迁移规则；新增 `dshmobile://new-session` 深链接与“新会话”桌面快捷方式，连接未就绪时排队上线后自动创建。
+> - 签名支持 `DSH_RELEASE_*` 或 git-ignored `keystore.properties`；默认 release 无正式签名会失败，`-PallowDebugSignedRelease=true` 仅允许本机冒烟。正式 keystore 仍待用户提供/配置。
+> - 验证：App typecheck、lint 0 errors、core 28/28；`assembleRelease -PallowDebugSignedRelease=true` 通过；无签名 `verifyReleaseSigning` 按预期失败；模拟器实测深链接入口。
+
+> 进度（2026-08-30 第七轮）：**只读插件清单接入。**
+> - dsh-mobile-plugin 0.2 新增 `mobile.inventory`（设备 token 门控），桥接宿主 `pluginInventory.list()`，feature 清单上报 `plugin-inventory`。
+> - App 兼容范围扩展到 plugin 0.1.x/0.2.x；设置页改为可滚动，新增插件清单模块，展示模块名、启用状态和 Fiber 阶段，支持刷新。
+> - 验证：plugin typecheck + 27/27、core typecheck + 29/29、App typecheck/lint 0 errors、插件 build 通过。
+
+> 进度（2026-08-30 第八轮）：**正式 release 签名闭环。**
+> - 生成本地 PKCS12 release key（4096-bit RSA，10000 天），配置为 git-ignored `keystore.properties` + `release.keystore`；`storeFile` 支持相对 Android 工程根。
+> - `verifyReleaseSigning` 无签名默认失败，正式签名通过；`assembleRelease` 成功；`apksigner verify --print-certs` 确认 APK 为 release key 而非 debug key。
+
 > 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
 > - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。
 > - M2 命令面板：斜杠命令经 `session.prompt` 执行，返回的 `command` 槽以提示条展示；发送失败回填草稿并提示。注意：当前 harness 0.1.1-rc.2 的 apiproxy **没有** `command.list`/`command.execute` RPC（rpc-map 无此二法，插件白名单为前瞻占位）——命令发现列表待宿主版本补齐后接入。

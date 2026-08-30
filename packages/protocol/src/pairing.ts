@@ -41,7 +41,7 @@ async function callPlugin(
   conn: NatsConnLike,
   headersFactory: NatsHeadersFactory,
   instanceId: string,
-  method: 'pair' | 'hello' | 'mobile.info',
+  method: 'pair' | 'hello' | 'mobile.info' | 'mobile.inventory',
   payload: unknown,
   token: string | undefined,
   timeoutMs: number,
@@ -98,6 +98,18 @@ export interface MobilePluginInfo {
   features: string[]
 }
 
+/** Read-only Loader entry projection served by mobile.inventory on plugin 0.2+. */
+export interface MobileInventoryEntry {
+  entryId: string
+  moduleName: string
+  enabled: boolean
+  fiberPhase: 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
+}
+
+export interface MobileInventorySnapshot {
+  entries: MobileInventoryEntry[]
+}
+
 /**
  * Reads the plugin's compatibility manifest. Older plugins do not answer
  * `mobile.info`; callers treat that failure as "unknown / too old" rather
@@ -122,6 +134,23 @@ export async function fetchMobileInfo(
       mobileApi: candidate.mobileApi,
       features: candidate.features,
     }
+  } catch {
+    return null
+  }
+}
+
+/** Reads the optional read-only plugin inventory added by plugin 0.2+. */
+export async function fetchMobileInventory(
+  conn: NatsConnLike,
+  headersFactory: NatsHeadersFactory,
+  instanceId: string,
+  token: string,
+  timeoutMs = 5_000,
+): Promise<MobileInventorySnapshot | null> {
+  try {
+    const value = await callPlugin(conn, headersFactory, instanceId, 'mobile.inventory', {}, token, timeoutMs)
+    if (typeof value !== 'object' || value === null || !Array.isArray((value as { entries?: unknown }).entries)) return null
+    return value as MobileInventorySnapshot
   } catch {
     return null
   }

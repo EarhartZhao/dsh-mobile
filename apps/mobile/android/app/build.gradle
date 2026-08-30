@@ -2,11 +2,20 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// pnpm does not materialize RN's conventional sdks/hermesc directory, so
+// resolve the compiler package like Node does and select the platform binary.
+def hermesCompilerOutput = providers.exec {
+    commandLine "node", "-p", "require.resolve('hermes-compiler/package.json', {paths:[require.resolve('react-native/package.json')]})"
+}.standardOutput.asText.get().trim()
+def hermesCompilerDir = new File(hermesCompilerOutput).parentFile
+def hermesCompiler = new File(hermesCompilerDir, "hermesc/win64-bin/hermesc.exe")
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
+    hermesCommand = hermesCompiler.absolutePath
     /* Folders */
     //   The root of your project, i.e. where "package.json" lives. Default is '../..'
     // root = file("../../")
@@ -57,7 +66,25 @@ react {
 /**
  * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
  */
-def enableProguardInReleaseBuilds = false
+def enableProguardInReleaseBuilds = true
+def enableResourceShrinkingInReleaseBuilds = true
+def hasReleaseSigning = System.getenv("DSH_RELEASE_STORE_FILE") != null &&
+    System.getenv("DSH_RELEASE_STORE_PASSWORD") != null &&
+    System.getenv("DSH_RELEASE_KEY_ALIAS") != null &&
+    System.getenv("DSH_RELEASE_KEY_PASSWORD") != null
+
+// Also support a git-ignored signing file for local machines without env vars.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+def hasPropertySigning = keystorePropertiesFile.exists() &&
+    keystoreProperties.getProperty("storeFile") != null &&
+    keystoreProperties.getProperty("storePassword") != null &&
+    keystoreProperties.getProperty("keyAlias") != null &&
+    keystoreProperties.getProperty("keyPassword") != null
+def usesReleaseSigning = hasReleaseSigning || hasPropertySigning
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -83,7 +110,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "0.0.1"
+        versionName "0.1.0"
     }
     signingConfigs {
         debug {
@@ -92,19 +119,51 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (hasPropertySigning) {
+            release {
+                storeFile rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword keystoreProperties.getProperty("storePassword")
+                keyAlias keystoreProperties.getProperty("keyAlias")
+                keyPassword keystoreProperties.getProperty("keyPassword")
+            }
+        } else if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(System.getenv("DSH_RELEASE_STORE_FILE"))
+                storePassword System.getenv("DSH_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("DSH_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("DSH_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig usesReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
+            shrinkResources enableResourceShrinkingInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+}
+
+tasks.register("verifyReleaseSigning") {
+    group = "verification"
+    description = "Fails release builds that fall back to the debug signing key."
+    doLast {
+        if (!usesReleaseSigning) {
+            if (project.hasProperty("allowDebugSignedRelease") && project.property("allowDebugSignedRelease") == "true") {
+                logger.warn("This release APK is signed with the debug key; do not distribute it.")
+            } else {
+                throw new GradleException("Distributable release requires keystore.properties or DSH_RELEASE_* signing variables. Pass -PallowDebugSignedRelease=true only for local smoke builds.")
+            }
+        }
+    }
+}
+
+tasks.matching { it.name == "validateSigningRelease" }.configureEach {
+    dependsOn "verifyReleaseSigning"
 }
 
 dependencies {

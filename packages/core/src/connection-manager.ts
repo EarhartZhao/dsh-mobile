@@ -10,11 +10,13 @@ import {
   NatsApiClient,
   sendHello,
   fetchMobileInfo,
+  fetchMobileInventory,
   type HostFrame,
   type MuxFrame,
   type NatsConnLike,
   type NatsHeadersFactory,
   type RpcId,
+  type MobileInventorySnapshot,
 } from '@dsh-mobile/protocol'
 import { Emitter } from './emitter.ts'
 import { SessionStore } from './session-store.ts'
@@ -121,6 +123,14 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         summaries: sessions.result.value.items,
       })
     }
+  }
+
+  /** Loads the optional plugin inventory when the connected bridge advertises it. */
+  async loadInventory(): Promise<MobileInventorySnapshot | null> {
+    if (this.conn === null || this.state !== 'online') return null
+    const token = this.options.getToken()
+    if (token === undefined) return null
+    return fetchMobileInventory(this.conn, this.options.headers, this.options.instanceId, token)
   }
 
   /**

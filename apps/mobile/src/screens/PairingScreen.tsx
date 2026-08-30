@@ -10,33 +10,38 @@ import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { savePairing, type PairingRecord } from '../pairing-store'
+import { useI18n, type TranslationKey } from '../i18n'
 
 interface Props {
   onPaired: (record: PairingRecord) => void
 }
 
-function pairingErrorMessage(message: string): string {
+type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
+
+function pairingErrorMessage(message: string, t: Translate): string {
   const text = message.trim()
-  if (text === 'mobile-pair-failed') return '配对码核销失败，请重新生成二维码后重试。'
+  if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
-    return '网络连接失败，请检查网络和服务器地址。'
+    return t('pairing.networkFailed')
   }
-  if (text.startsWith('console /pair HTTP')) return `获取本地配对信息失败（HTTP ${text.split(' ').at(-1)}）。`
-  if (text === 'console /pair: no payload') return '本地配对信息为空，请在 dsh 控制台重新生成。'
-  return `配对失败：${text}`
+  if (text.startsWith('console /pair HTTP')) return t('pairing.httpFailed', { status: text.split(' ').at(-1) ?? '' })
+  if (text === 'console /pair: no payload') return t('pairing.noPayload')
+  if (text.startsWith('missing-field:')) return t('pairing.missingField', { field: text.slice('missing-field:'.length) })
+  return t('pairing.failed', { message: text })
 }
 
 function parseQr(text: string): PairingQrPayload {
   const parsed = JSON.parse(text) as Partial<PairingQrPayload>
   for (const key of ['hub', 'user', 'pass', 'instance', 'code'] as const) {
     if (typeof parsed[key] !== 'string' || parsed[key] === '') {
-      throw new Error(`二维码内容缺少字段：${key}`)
+      throw new Error(`missing-field:${key}`)
     }
   }
   return { caFp: '', ...parsed } as PairingQrPayload
 }
 
 export function PairingScreen({ onPaired }: Props): React.JSX.Element {
+  const { t } = useI18n()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +65,7 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       onPaired(record)
     } catch (cause) {
       console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
-      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause)))
+      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       setBusy(false)
       if (nc !== null) await nc.close().catch(() => undefined)
@@ -109,16 +114,16 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       await pairWith(body.payload)
     } catch (cause) {
       console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
-      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause)))
+      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
       setBusy(false)
     }
   }
 
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>连接到你的 dsh</Text>
+      <Text style={styles.title}>{t('pairing.title')}</Text>
       <Text style={styles.hint}>
-        在电脑上的 dsh 设置页打开「移动端」卡片，扫码配对；相机不可用时也可以粘贴二维码内容。
+        {t('pairing.hint')}
       </Text>
       {hasPermission && device !== undefined && device !== null ? (
         <View style={styles.scanBox}>
@@ -129,17 +134,17 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
             codeScanner={codeScanner}
           />
           <View pointerEvents="none" style={styles.scanOverlay}>
-            <Text style={styles.scanText}>对准 dsh 配对二维码</Text>
+            <Text style={styles.scanText}>{t('pairing.scanHint')}</Text>
           </View>
         </View>
       ) : (
         <View style={styles.scanFallback}>
           <Text style={styles.scanFallbackText}>
-            {hasPermission ? '未找到可用相机。' : '相机权限未开启。'}
+            {hasPermission ? t('pairing.noCamera') : t('pairing.cameraPermission')}
           </Text>
           {!hasPermission && (
             <TouchableOpacity style={styles.scanRetryButton} onPress={() => void requestPermission()}>
-              <Text style={styles.scanRetryText}>重新允许相机</Text>
+              <Text style={styles.scanRetryText}>{t('pairing.allowCamera')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -147,7 +152,7 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       <TextInput
         style={styles.input}
         multiline
-        placeholder='粘贴二维码内容（JSON 格式）'
+        placeholder={t('pairing.pastePlaceholder')}
         placeholderTextColor={colors.textDim}
         value={text}
         onChangeText={setText}
@@ -161,17 +166,17 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
         onPress={() => void pair()}
       >
         <Text style={[styles.buttonText, (busy || text.trim() === '') && styles.buttonTextDisabled]}>
-          {busy ? '配对中…' : '配对并连接'}
+          {busy ? t('pairing.pairing') : t('pairing.pairAndConnect')}
         </Text>
       </TouchableOpacity>
       {__DEV__ && (
         <TouchableOpacity style={[styles.button, styles.demoButton]} disabled={busy} onPress={() => void pairDemo()}>
-          <Text style={styles.demoButtonText}>本地演示（模拟主机）</Text>
+          <Text style={styles.demoButtonText}>{t('pairing.demo')}</Text>
         </TouchableOpacity>
       )}
       {__DEV__ && (
         <TouchableOpacity style={[styles.button, styles.demoButton]} disabled={busy} onPress={() => void pairRealDsh()}>
-          <Text style={styles.demoButtonText}>本地配对（真实 dsh）</Text>
+          <Text style={styles.demoButtonText}>{t('pairing.realLocal')}</Text>
         </TouchableOpacity>
       )}
     </View>

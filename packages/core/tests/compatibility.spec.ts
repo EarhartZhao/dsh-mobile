@@ -11,9 +11,15 @@ describe('mobile compatibility', () => {
     expect(result.missingFeatures).toEqual([])
   })
 
+  it('accepts the 0.2 plugin generation with optional inventory support', () => {
+    const result = checkMobileCompatibility({ ...manifest, pluginVersion: '0.2.0', features: [...REQUIRED_PLUGIN_FEATURES, 'plugin-inventory'] })
+    expect(result.status).toBe('compatible')
+    expect(result.features).toContain('plugin-inventory')
+  })
+
   it('rejects older, newer, and malformed plugin manifests', () => {
     expect(checkMobileCompatibility({ pluginVersion: '0.0.1', mobileApi: 1, features: [] }).status).toBe('incompatible')
-    expect(checkMobileCompatibility({ pluginVersion: '0.2.0', mobileApi: 1, features: [] }).status).toBe('incompatible')
+    expect(checkMobileCompatibility({ pluginVersion: '0.3.0', mobileApi: 1, features: [] }).status).toBe('incompatible')
     expect(checkMobileCompatibility({ pluginVersion: '0.1.0', mobileApi: 2, features: [] }).status).toBe('incompatible')
     expect(checkMobileCompatibility({ pluginVersion: 'not-semver', mobileApi: 1, features: [] }).status).toBe('incompatible')
   })

@@ -23,6 +23,8 @@ export type {
   SubagentListEntry,
   WorkspaceView,
   JobView,
+  ToolCallView,
+  ToolResultView,
   ApprovalResponsePayload,
   QuestionResponsePayload,
 } from './vendor/api/index.ts'

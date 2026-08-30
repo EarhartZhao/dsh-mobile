@@ -86,6 +86,27 @@ You've successfully run and modified your React Native App. :partying_face:
 
 If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
 
+## Release builds
+
+Android release builds enable R8 and resource shrinking. To produce a signed APK, set environment variables:
+
+```sh
+DSH_RELEASE_STORE_FILE=/absolute/path/to/release.keystore
+DSH_RELEASE_STORE_PASSWORD=...
+DSH_RELEASE_KEY_ALIAS=...
+DSH_RELEASE_KEY_PASSWORD=...
+```
+
+Then run `./gradlew assembleRelease` from `apps/mobile/android`.
+
+For a machine-local setup, copy `keystore.properties.example` to `apps/mobile/android/keystore.properties`, fill in the same values, and keep both that file and the keystore out of version control. `storeFile` may be an absolute path or a path relative to `apps/mobile/android`. A release build without either signing source fails by default; use `-PallowDebugSignedRelease=true` only for a local smoke build.
+
+Verify the APK signer before distribution with:
+
+```sh
+<Android SDK>/build-tools/<version>/apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+```
+
 # Learn More
 
 To learn more about React Native, take a look at the following resources:

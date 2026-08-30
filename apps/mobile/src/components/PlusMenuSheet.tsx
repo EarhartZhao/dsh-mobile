@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { ModalBackdrop } from './ModalBackdrop'
+import { useI18n } from '../i18n'
 
 export interface PlusCommand {
   name: string
@@ -70,12 +71,13 @@ function SectionHeader({ title, action, onAction }: { title: string; action?: st
 }
 
 function StatusLine({ status, error, onRetry }: { status: PlusMenuStatus; error: string; onRetry: () => void }): React.JSX.Element | null {
-  if (status === 'loading') return <Text style={styles.meta}>加载中…</Text>
+  const { t } = useI18n()
+  if (status === 'loading') return <Text style={styles.meta}>{t('common.loading')}</Text>
   if (status === 'failed') {
     return (
       <View style={styles.failedRow}>
-        <Text style={styles.error}>{error === '' ? '加载失败。' : error}</Text>
-        <TouchableOpacity onPress={onRetry}><Text style={styles.retry}>重试</Text></TouchableOpacity>
+        <Text style={styles.error}>{error === '' ? t('plus.loadFailed') : error}</Text>
+        <TouchableOpacity onPress={onRetry}><Text style={styles.retry}>{t('common.retry')}</Text></TouchableOpacity>
       </View>
     )
   }
@@ -83,6 +85,7 @@ function StatusLine({ status, error, onRetry }: { status: PlusMenuStatus; error:
 }
 
 export function PlusMenuSheet(props: Props): React.JSX.Element {
+  const { t } = useI18n()
   const [tab, setTab] = useState<'commands' | 'attachments' | 'references' | 'controls'>('commands')
   const [query, setQuery] = useState('')
   useEffect(() => {
@@ -102,8 +105,8 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
         <View style={styles.sheet}>
           <View style={styles.grabber} />
           <View style={styles.header}>
-            <Text style={styles.title}>添加</Text>
-            <TouchableOpacity onPress={props.onClose}><Text style={styles.close}>关闭</Text></TouchableOpacity>
+            <Text style={styles.title}>{t('plus.title')}</Text>
+            <TouchableOpacity onPress={props.onClose}><Text style={styles.close}>{t('common.close')}</Text></TouchableOpacity>
           </View>
           <View style={styles.tabs}>
             {(['commands', 'attachments', 'references', 'controls'] as const).map(value => (
@@ -113,7 +116,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                 onPress={() => setTab(value)}
               >
                 <Text style={[styles.tabText, tab === value && styles.tabTextActive]}>
-                  {value === 'commands' ? '命令' : value === 'attachments' ? '附件' : value === 'references' ? '引用' : '控制'}
+                  {value === 'commands' ? t('plus.tab.commands') : value === 'attachments' ? t('plus.tab.attachments') : value === 'references' ? t('plus.tab.references') : t('plus.tab.controls')}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -125,7 +128,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                   style={styles.search}
                   value={query}
                   onChangeText={setQuery}
-                  placeholder="搜索命令"
+                  placeholder={t('plus.searchCommands')}
                   placeholderTextColor={colors.textDim}
                 />
                 <StatusLine status={props.commandStatus} error={props.commandError} onRetry={() => props.onReloadCommands()} />
@@ -133,7 +136,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                   <Text style={styles.itemWarning}>{props.commandError}</Text>
                 )}
                 {props.commandStatus === 'ready' && filteredCommands.length === 0 && (
-                  <Text style={styles.meta}>没有匹配的命令。</Text>
+                  <Text style={styles.meta}>{t('plus.noCommands')}</Text>
                 )}
                 {filteredCommands.map(command => (
                   <TouchableOpacity
@@ -145,7 +148,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                     <Text style={styles.itemTitle}>/{command.name}</Text>
                     <Text style={styles.itemSubtitle} numberOfLines={2}>{command.description}</Text>
                     {props.pendingImageCount > 0 && command.images !== true && (
-                      <Text style={styles.itemWarning}>该命令不接受图片附件。</Text>
+                      <Text style={styles.itemWarning}>{t('plus.commandRejectsImages')}</Text>
                     )}
                   </TouchableOpacity>
                 ))}
@@ -154,23 +157,23 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
             {tab === 'attachments' && (
               <>
                 <TouchableOpacity style={styles.item} onPress={props.onCaptureImage}>
-                  <Text style={styles.itemTitle}>拍照</Text>
-                  <Text style={styles.itemSubtitle}>拍摄一张图片并添加到待发送区</Text>
+                  <Text style={styles.itemTitle}>{t('plus.capture')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.captureSubtitle')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onPickImages}>
-                  <Text style={styles.itemTitle}>从相册选择</Text>
-                  <Text style={styles.itemSubtitle}>支持一次选择多张图片</Text>
+                  <Text style={styles.itemTitle}>{t('plus.pickImages')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.pickImagesSubtitle')}</Text>
                 </TouchableOpacity>
                 {props.pendingImageCount > 0 && (
-                  <Text style={styles.meta}>已选 {props.pendingImageCount} 张图片。</Text>
+                  <Text style={styles.meta}>{t('plus.imagesSelected', { count: props.pendingImageCount })}</Text>
                 )}
               </>
             )}
             {tab === 'references' && (
               <>
-                <StatusLine status={props.referenceStatus} error={props.referenceStatus === 'failed' ? '引用数据加载失败。' : ''} onRetry={props.onReloadCommands} />
+                <StatusLine status={props.referenceStatus} error={props.referenceStatus === 'failed' ? t('plus.referencesFailed') : ''} onRetry={props.onReloadCommands} />
                 {filteredReferences.length === 0 && props.referenceStatus === 'ready' && (
-                  <Text style={styles.meta}>没有可用文件或会话。</Text>
+                  <Text style={styles.meta}>{t('plus.noReferences')}</Text>
                 )}
                 {filteredReferences.map(reference => (
                   <TouchableOpacity key={reference.key} style={styles.item} onPress={() => props.onInsertReference(reference)}>
@@ -183,28 +186,28 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
             {tab === 'controls' && (
               <>
                 <TouchableOpacity style={styles.item} onPress={props.onModel}>
-                  <Text style={styles.itemTitle}>切换模型</Text>
-                  <Text style={styles.itemSubtitle}>当前 {props.modelLabel}</Text>
+                  <Text style={styles.itemTitle}>{t('plus.model')}</Text>
+                  <Text style={styles.itemSubtitle}>{`${t('common.current')} ${props.modelLabel}`}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onTogglePlan}>
-                  <Text style={styles.itemTitle}>{props.planActive ? '关闭 Plan 模式' : '开启 Plan 模式'}</Text>
-                  <Text style={styles.itemSubtitle}>控制代理的执行规划状态</Text>
+                  <Text style={styles.itemTitle}>{props.planActive ? t('plus.planOff') : t('plus.planOn')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.planSubtitle')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onGoal}>
-                  <Text style={styles.itemTitle}>{props.hasGoal ? '编辑目标' : '设置目标'}</Text>
-                  <Text style={styles.itemSubtitle}>为长期任务维护目标</Text>
+                  <Text style={styles.itemTitle}>{props.hasGoal ? t('plus.goalEdit') : t('plus.goalCreate')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.goalSubtitle')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onPresets}>
-                  <Text style={styles.itemTitle}>选择 Agent preset</Text>
-                  <Text style={styles.itemSubtitle}>{props.presetLabel === undefined ? '未设置' : props.presetLabel}</Text>
+                  <Text style={styles.itemTitle}>{t('plus.agentPresets')}</Text>
+                  <Text style={styles.itemSubtitle}>{props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onSubagents}>
-                  <Text style={styles.itemTitle}>子代理</Text>
-                  <Text style={styles.itemSubtitle}>查看、继续或打断子代理会话</Text>
+                  <Text style={styles.itemTitle}>{t('plus.subagents')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.subagentsSubtitle')}</Text>
                 </TouchableOpacity>
                 {props.permissions.length > 0 && (
                   <>
-                    <SectionHeader title="权限预设" />
+                    <SectionHeader title={t('plus.permissionPresets')} />
                     {props.permissions.map(permission => {
                       const active = permission.value === props.permissionValue
                       const danger = permission.value === 'danger-full-access'
@@ -217,7 +220,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                         >
                           <Text style={[styles.itemTitle, danger && styles.danger]}>{permission.name}</Text>
                           {permission.description !== undefined && <Text style={styles.itemSubtitle}>{permission.description}</Text>}
-                          {active && <Text style={styles.meta}>当前</Text>}
+                          {active && <Text style={styles.meta}>{t('common.current')}</Text>}
                         </TouchableOpacity>
                       )
                     })}
