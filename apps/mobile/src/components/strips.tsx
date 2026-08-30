@@ -2,7 +2,7 @@
 import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { TodoItemView, UsageView } from '@dsh-mobile/core'
-import { colors, fontSize, radius, spacing } from '../theme'
+import { colors, fontSize, spacing } from '../theme'
 
 export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Element | null {
   if (todos.length === 0) return null

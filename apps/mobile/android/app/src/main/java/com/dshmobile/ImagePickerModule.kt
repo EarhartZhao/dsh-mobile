@@ -24,6 +24,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
 
   private var pending: Promise? = null
   private var pendingCaptureFile: File? = null
+  private var pendingMaxBytes: Int = DEFAULT_MAX_BYTES
 
   init {
     reactContext.addActivityEventListener(this)
@@ -43,6 +44,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
       promise.reject("NO_ACTIVITY", "当前没有可用的前台页面。")
       return
     }
+    pendingMaxBytes = maxBytes.toInt().coerceAtLeast(1)
     pending = promise
     val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
       type = "image/*"
@@ -70,6 +72,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     }
     val directory = File(reactContext.cacheDir, "captures").apply { mkdirs() }
     val captureFile = File.createTempFile("dsh-capture-", ".jpg", directory)
+    pendingMaxBytes = maxBytes.toInt().coerceAtLeast(1)
     pending = promise
     pendingCaptureFile = captureFile
     val outputUri = FileProvider.getUriForFile(
@@ -102,7 +105,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
           return
         }
         try {
-          promise.resolve(readImage(uri))
+          promise.resolve(readImage(uri, pendingMaxBytes))
         } catch (error: Exception) {
           promise.reject("READ_FAILED", "无法读取所选图片。", error)
         }
@@ -122,7 +125,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
             reactContext,
             "${reactContext.packageName}.fileprovider",
             captureFile,
-          ))
+          ), pendingMaxBytes)
           promise.resolve(result)
         } catch (error: Exception) {
           promise.reject("CAPTURE_READ_FAILED", "无法读取拍摄的照片。", error)
@@ -135,12 +138,12 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
 
   override fun onNewIntent(intent: Intent) = Unit
 
-  private fun readImage(uri: Uri): WritableNativeMap {
+  private fun readImage(uri: Uri, maxBytes: Int): WritableNativeMap {
     val resolver = reactContext.contentResolver
     val bytes = resolver.openInputStream(uri)?.use(InputStream::readBytes)
       ?: throw IllegalStateException("所选图片没有内容。")
-    if (bytes.size > MAX_BYTES) {
-      throw IllegalArgumentException("图片不能超过 20 MB。")
+    if (bytes.size > maxBytes) {
+      throw IllegalArgumentException("图片不能超过 ${maxBytes / 1024} KB。")
     }
     val mediaType = resolver.getType(uri) ?: "image/png"
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -178,9 +181,9 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
 
   companion object {
     const val NAME = "DshImagePicker"
+    private const val DEFAULT_MAX_BYTES = 20 * 1024 * 1024
     private const val REQUEST_CODE = 4711
     private const val CAPTURE_REQUEST_CODE = 4712
-    private const val MAX_BYTES = 20 * 1024 * 1024
     private const val INLINE_BYTES = 384 * 1024
     private const val MAX_DIMENSION = 1280
     private const val JPEG_QUALITY = 68

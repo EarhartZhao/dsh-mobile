@@ -1,3 +1,4 @@
+/* global globalThis */
 /**
  * Minimal UTF-8 TextDecoder polyfill for Hermes. RN ships a native
  * TextEncoder but no TextDecoder (verified on RN 0.87); nats.ws and the
