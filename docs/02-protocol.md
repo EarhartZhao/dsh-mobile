@@ -103,6 +103,10 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
 1. **NATS 层**：App 用 Hub 的 C 端受限账号连 broker（publish `svc.>` / subscribe `evt.>`）。这层是命名空间围墙——注意它**允许调用任何服务**，所以它不是业务安全的边界。
 2. **应用层**：每个 RPC/respond 请求携带设备 token（配对时签发），插件逐请求校验并执行方法白名单。这层防"拿到 NATS 账号的人直接操作 harness"，也是吊销设备的真实开关。
 
+## 版本兼容
+
+App 在建立会话基线前调用插件自有 `mobile.info`。响应必须携带 `pluginVersion`、`mobileApi` 和 `features`。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。App 0.1.x 只接受 `pluginVersion >=0.1.0 <0.2.0` 且 `mobileApi=1`；同一代插件必须声明 `plus-menu`、`multi-image`、`durable-attachment-order` 能力位，`command-directory` 是可选增强（宿主不支持时 App 使用常用命令回退）。响应缺失或字段不完整时按“插件版本未知/过旧”阻断，必备能力位缺失时按“插件功能不足”阻断，并让用户在 Web 设置页更新 mobile bridge。
+
 ## 客户端实现策略
 
 - 契约层 vendor：从 deepseek-harness（我们的 fork）复制 `packages/host/apiproxy/src/api/` 到 `packages/protocol/src/vendor/`，sync 脚本负责更新与 diff。

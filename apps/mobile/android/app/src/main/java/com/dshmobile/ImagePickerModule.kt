@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.provider.MediaStore
+import android.util.Log
 import android.util.Base64
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.ActivityEventListener
@@ -25,6 +26,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
   private var pending: Promise? = null
   private var pendingCaptureFile: File? = null
   private var pendingMaxBytes: Int = DEFAULT_MAX_BYTES
+  private var pendingImages: Promise? = null
 
   init {
     reactContext.addActivityEventListener(this)
@@ -46,9 +48,11 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     }
     pendingMaxBytes = maxBytes.toInt().coerceAtLeast(1)
     pending = promise
-    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
       type = "image/*"
+      putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*"))
       addCategory(Intent.CATEGORY_OPENABLE)
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     try {
       activity.startActivityForResult(Intent.createChooser(intent, "选择图片"), REQUEST_CODE)
@@ -94,6 +98,34 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  @ReactMethod
+  fun pickImages(maxBytes: Double, promise: Promise) {
+    if (pending != null || pendingImages != null) {
+      promise.reject("PICKER_BUSY", "另一个图片选择器正在运行。")
+      return
+    }
+    val activity = reactContext.currentActivity
+    if (activity == null) {
+      promise.reject("NO_ACTIVITY", "当前没有可用的前台页面。")
+      return
+    }
+    pendingImages = promise
+    pendingMaxBytes = maxBytes.toInt().coerceAtLeast(1)
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+      type = "image/*"
+      addCategory(Intent.CATEGORY_OPENABLE)
+      putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+      putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*"))
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    try {
+      activity.startActivityForResult(Intent.createChooser(intent, "选择图片"), IMAGES_REQUEST_CODE)
+    } catch (error: Exception) {
+      pendingImages = null
+      promise.reject("PICKER_FAILED", "无法打开图片选择器。", error)
+    }
+  }
+
   override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
     when (requestCode) {
       REQUEST_CODE -> {
@@ -107,6 +139,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
         try {
           promise.resolve(readImage(uri, pendingMaxBytes))
         } catch (error: Exception) {
+          Log.e(NAME, "Unable to read selected image", error)
           promise.reject("READ_FAILED", "无法读取所选图片。", error)
         }
       }
@@ -131,6 +164,28 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
           promise.reject("CAPTURE_READ_FAILED", "无法读取拍摄的照片。", error)
         } finally {
           captureFile.delete()
+        }
+      }
+      IMAGES_REQUEST_CODE -> {
+        val promise = pendingImages ?: return
+        pendingImages = null
+        val uris = mutableListOf<Uri>()
+        if (resultCode == Activity.RESULT_OK) {
+          data?.clipData?.let { clip ->
+            for (index in 0 until clip.itemCount) {
+              clip.getItemAt(index)?.uri?.let(uris::add)
+            }
+          }
+          if (uris.isEmpty()) data?.data?.let(uris::add)
+        }
+        if (uris.isEmpty()) {
+          promise.resolve(emptyList<Any>())
+          return
+        }
+        try {
+          promise.resolve(uris.map { uri -> readImage(uri, pendingMaxBytes) })
+        } catch (error: Exception) {
+          promise.reject("READ_FAILED", "无法读取所选图片。", error)
         }
       }
     }
@@ -184,6 +239,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     private const val DEFAULT_MAX_BYTES = 20 * 1024 * 1024
     private const val REQUEST_CODE = 4711
     private const val CAPTURE_REQUEST_CODE = 4712
+    private const val IMAGES_REQUEST_CODE = 4713
     private const val INLINE_BYTES = 384 * 1024
     private const val MAX_DIMENSION = 1280
     private const val JPEG_QUALITY = 68

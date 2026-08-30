@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import type { DirectoryListing, SessionSummary } from '@dsh-mobile/protocol'
+import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
 import { colors, fontSize, radius, spacing } from '../theme'
 
@@ -307,7 +308,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
         onConfirm={p => { setWsCreateOpen(false); wsCreate(p) }}
       />
       <Modal transparent visible={presetPick !== null} animationType="fade" onRequestClose={() => setPresetPick(null)}>
-        <View style={styles.backdrop}>
+        <ModalBackdrop onClose={() => setPresetPick(null)}>
           <View style={styles.menuCard}>
             <Text style={styles.wsChipText}>选择智能体预设</Text>
             {presetPick?.presets.map(p => (
@@ -320,7 +321,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </ModalBackdrop>
       </Modal>
       <PromptModal
         visible={wsRenameId !== null}

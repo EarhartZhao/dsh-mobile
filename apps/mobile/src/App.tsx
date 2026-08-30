@@ -6,6 +6,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { DevSettings, NativeModules, Modal, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
+import { APP_VERSION } from '@dsh-mobile/core'
+import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
 import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
@@ -24,6 +26,7 @@ function connectionStateLabel(state: ConnectionState): string {
     case 'online': return '在线'
     case 'reconnecting': return '重新连接中'
     case 'stopped': return '已停止'
+    case 'incompatible': return '版本不一致'
   }
 }
 
@@ -102,6 +105,13 @@ export default function App(): React.JSX.Element {
     setPairing(null)
   }, [])
 
+  const retryConnection = useCallback(async (): Promise<void> => {
+    const manager = managerRef.current
+    if (manager === null) return
+    await manager.stop()
+    await manager.start()
+  }, [])
+
   if (!booted) {
     return <View style={styles.root} />
   }
@@ -145,9 +155,18 @@ export default function App(): React.JSX.Element {
       )}
     </SafeAreaView>
       <Modal transparent visible={settingsOpen} animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
-        <View style={styles.backdrop}>
+        <ModalBackdrop onClose={() => setSettingsOpen(false)}>
           <View style={styles.settingsCard}>
             <Text style={styles.settingsTitle}>设置</Text>
+            <Text style={styles.settingsVersion}>
+              App {APP_VERSION} · Plugin {managerRef.current?.compatibility?.pluginVersion ?? '未知'}
+              {managerRef.current?.compatibility === null ? '' : ` · mobileApi ${managerRef.current?.compatibility?.mobileApi ?? 0}`}
+            </Text>
+            <Text style={styles.settingsFeatures}>
+              {managerRef.current?.compatibility?.features.length
+                ? managerRef.current.compatibility.features.join(' · ')
+                : '未上报插件功能'}
+            </Text>
             {(['light', 'dark', 'system'] as ThemeMode[]).map(mode => (
               <TouchableOpacity
                 key={mode}
@@ -161,8 +180,24 @@ export default function App(): React.JSX.Element {
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </ModalBackdrop>
       </Modal>
+      {connState === 'incompatible' && managerRef.current?.compatibility !== null && (
+        <Modal transparent visible animationType="fade" onRequestClose={() => undefined}>
+          <View style={styles.backdrop}>
+            <View style={styles.compatCard}>
+              <Text style={styles.compatTitle}>{managerRef.current?.compatibility?.title ?? '版本不一致'}</Text>
+              <Text style={styles.compatMessage}>{managerRef.current?.compatibility?.message}</Text>
+              <Text style={styles.compatMeta}>
+                App {managerRef.current?.compatibility?.appVersion ?? ''} · 支持插件 {managerRef.current?.compatibility?.supportedPluginRange ?? ''}
+              </Text>
+              <TouchableOpacity style={styles.compatRetry} onPress={() => void retryConnection()}>
+                <Text style={styles.compatRetryText}>更新后重试</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaProvider>
   )
 }
@@ -198,6 +233,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
+  settingsVersion: {
+    color: colors.textDim,
+    fontSize: 11,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  settingsFeatures: {
+    color: colors.textDim,
+    fontSize: 11,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -207,4 +254,22 @@ const styles = StyleSheet.create({
   },
   settingsText: { color: colors.text, fontSize: 15 },
   settingsCheck: { color: colors.accent, fontSize: 15 },
+  compatCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: 8,
+    marginHorizontal: 28,
+    padding: 20,
+    gap: 10,
+  },
+  compatTitle: { color: colors.danger, fontSize: 18, fontWeight: '700' },
+  compatMessage: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  compatMeta: { color: colors.textDim, fontSize: 12 },
+  compatRetry: {
+    marginTop: 6,
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  compatRetryText: { color: '#fff', fontSize: 15, fontWeight: '600' },
 })
