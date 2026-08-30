@@ -1,5 +1,7 @@
 export * from './emitter.ts'
+export * from './compatibility.ts'
 export * from './session-store.ts'
 export * from './connection-manager.ts'
 export * from './conversation.ts'
 export * from './queue.ts'
+export * from './stats.ts'

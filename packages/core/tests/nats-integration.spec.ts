@@ -10,6 +10,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { connect, headers as natsHeaders, type NatsConnection } from 'nats'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
+import { REQUIRED_PLUGIN_FEATURES } from '../src/compatibility.ts'
 import { ConnectionManager } from '../src/connection-manager.ts'
 
 const PORT = 16500 + Math.floor(Math.random() * 500)
@@ -67,6 +68,14 @@ beforeAll(async () => {
         // Reconnect hook: replay the pending approval set.
         pushMuxFrame({ type: 'approval/requested', sessionId: 's-live', approvalId: 'ap-1', toolName: 'bash', reason: 'needs ok' })
         msg.respond(replyOk(body.rpcId, { ok: true }))
+        continue
+      }
+      if (method === 'mobile.info') {
+        msg.respond(replyOk(body.rpcId, {
+          pluginVersion: '0.1.0',
+          mobileApi: 1,
+          features: [...REQUIRED_PLUGIN_FEATURES],
+        }))
         continue
       }
       switch (method) {

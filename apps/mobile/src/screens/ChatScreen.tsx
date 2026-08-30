@@ -22,15 +22,18 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, placementLabel, queuePreview, type ConnectionManager, type ConversationImage, type ConversationItem, type TodoItemView, type UsageView } from '@dsh-mobile/core'
+import { deriveConversation, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView } from '@dsh-mobile/core'
 import type { JobView, QueuedInboxItem, SubagentCatalog } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
-import { Circle, Path, Rect, Svg } from 'react-native-svg'
+import { Path, Svg } from 'react-native-svg'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
+import { ImageLightbox } from '../components/ImageLightbox'
+import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
+import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, type PlusReference } from '../components/PlusMenuSheet'
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
-import { GoalBar, PlanChip, TodoStrip, UsageBar, type GoalViewLite } from '../components/strips'
+import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
 
@@ -66,7 +69,7 @@ interface Props {
 export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
   const [items, setItems] = useState<ConversationItem[]>([])
   const [draft, setDraft] = useState('')
-  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null)
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [running, setRunning] = useState(false)
   const [queue, setQueue] = useState<QueuedInboxItem[]>([])
   const [jobs, setJobs] = useState<JobView[]>([])
@@ -74,7 +77,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [editingItem, setEditingItem] = useState<{ id: string } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [todos, setTodos] = useState<TodoItemView[]>([])
-  const [usage, setUsage] = useState<UsageView | null>(null)
+  const [statsView, setStatsView] = useState<SessionStatsView | null>(null)
   const [goal, setGoal] = useState<GoalViewLite | null>(null)
   const [goalPrompt, setGoalPrompt] = useState<'create' | 'edit' | null>(null)
   const [planMode, setPlanMode] = useState<string | undefined>(undefined)
@@ -83,6 +86,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
+  const [plusOpen, setPlusOpen] = useState(false)
+  const [commands, setCommands] = useState<PlusCommand[]>([])
+  const [commandStatus, setCommandStatus] = useState<PlusMenuStatus>('idle')
+  const [commandError, setCommandError] = useState('')
+  const [commandPrompt, setCommandPrompt] = useState<{ command: PlusCommand } | null>(null)
+  const [presets, setPresets] = useState<PlusPreset[]>([])
+  const [presetStatus, setPresetStatus] = useState<PlusMenuStatus>('idle')
+  const [presetError, setPresetError] = useState('')
+  const [references, setReferences] = useState<PlusReference[]>([])
+  const [referenceStatus, setReferenceStatus] = useState<PlusMenuStatus>('idle')
+  const [lightbox, setLightbox] = useState<{ source: string; name?: string } | null>(null)
   const [modelMenu, setModelMenu] = useState<{
     current: { provider: string; model: string; reasoningEffort?: string }
     groups: {
@@ -167,21 +181,25 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     setCandidates([])
   }
 
-  const chooseImage = async (): Promise<void> => {
-    const image = await callImagePicker('pickImage')
-    if (image !== null && image !== undefined) {
-      const invalid = validateImage(image)
-      if (invalid === null) setPendingImage(image)
-      else showNotice(invalid)
+  const chooseImages = async (): Promise<void> => {
+    try {
+      const picker = NativeModules.DshImagePicker as {
+        pickImages(maxBytes: number): Promise<PendingImage[]>
+      } | undefined
+      if (picker?.pickImages === undefined) throw new Error('当前 App 不支持多图选择。')
+      const images = await picker.pickImages(imageLimits?.maxImageBytes ?? 20 * 1024 * 1024)
+      for (const image of images) {
+        appendImage(image)
+      }
+    } catch (error) {
+      showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
   const captureImage = async (): Promise<void> => {
     const image = await callImagePicker('captureImage')
     if (image !== null && image !== undefined) {
-      const invalid = validateImage(image)
-      if (invalid === null) setPendingImage(image)
-      else showNotice(invalid)
+      appendImage(image)
     }
   }
 
@@ -209,6 +227,29 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     if (image.width * image.height > imageLimits.maxImagePixels) return '图片像素数超过上限。'
     return null
   }
+
+  const appendImage = (image: PendingImage): void => {
+    const invalid = validateImage(image)
+    if (invalid !== null) {
+      showNotice(invalid)
+      return
+    }
+    setPendingImages(current => {
+      const next = [...current, image]
+      if (imageLimits !== null && next.length > imageLimits.maxImagesPerMessage) {
+        showNotice(`一条消息最多添加 ${imageLimits.maxImagesPerMessage} 张图片。`)
+        return current
+      }
+      if (imageLimits !== null) {
+        const total = next.reduce((sum, item) => sum + Math.floor(item.data.length * 3 / 4), 0)
+        if (total > imageLimits.maxMessageImageBytes) {
+          showNotice(`图片总大小超过 ${formatBytes(imageLimits.maxMessageImageBytes)}。`)
+          return current
+        }
+      }
+      return next
+    })
+  }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<ConversationItem>>(null)
 
@@ -220,7 +261,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     setQueue([...session.queue])
     setJobs([...session.jobs])
     setTodos([...session.todos])
-    setUsage(session.usage)
+    setStatsView(sessionStatsView(session))
     const goalRaw = session.projections['goal']
     if (goalRaw !== null && goalRaw !== undefined && typeof goalRaw === 'object' && 'goal' in (goalRaw as object)) {
       const g = (goalRaw as { goal?: { id?: string; revision?: number; objective?: string; phase?: string } }).goal
@@ -322,6 +363,83 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     if (result?.result.ok) setModelLabel(result.result.value.current.model)
   }, [manager, sessionId])
 
+  const loadCommands = useCallback(async (force = false): Promise<void> => {
+    const client = manager.client
+    if (client === null || (!force && commandStatus === 'ready')) return
+    setCommandStatus('loading')
+    setCommandError('')
+    try {
+      const result = await client.commands.list({ sessionId })
+      const values = result.commands
+        .filter(command => typeof command.name === 'string')
+        .map(command => ({
+          name: command.name,
+          description: command.description,
+          hint: command.input?.hint,
+          images: command.input?.images,
+        }))
+      setCommands(values)
+      setCommandStatus('ready')
+    } catch {
+      setCommands([
+        { name: 'compact', description: '压缩当前会话上下文。' },
+        { name: 'goal', description: '设置或查看当前任务目标。', hint: '<objective>', images: true },
+        { name: 'permission', description: '切换权限预设。', hint: '<preset>' },
+        { name: 'plan', description: '进入或退出 Plan 模式。', hint: '[off|message]', images: true },
+      ])
+      setCommandStatus('ready')
+      setCommandError('动态命令目录不可用，已显示常用命令。')
+    }
+  }, [commandStatus, manager, sessionId])
+
+  const loadPresets = useCallback(async (force = false): Promise<void> => {
+    const client = manager.client
+    if (client === null || (!force && presetStatus === 'ready')) return
+    setPresetStatus('loading')
+    setPresetError('')
+    const result = await client.agentPresets.list({} as never).catch(() => null)
+    if (result?.result.ok !== true) {
+      setPresets([])
+      setPresetStatus('failed')
+      setPresetError(result?.result.ok === false ? `加载失败：${result.result.error.message}` : '加载失败：连接不可用。')
+      return
+    }
+    setPresets(result.result.value.presets.filter(preset => preset.broken === undefined))
+    setPresetStatus('ready')
+  }, [manager, presetStatus])
+
+  const loadReferences = useCallback(async (force = false): Promise<void> => {
+    const client = manager.client
+    if (client === null || (!force && referenceStatus === 'ready')) return
+    setReferenceStatus('loading')
+    const summary = manager.store.summaries.find(item => item.sessionId === sessionId)
+    const files: PlusReference[] = []
+    if (summary?.cwd !== undefined && summary.cwd !== '') {
+      const listing = await client.host.listDirectory({ path: summary.cwd } as never).catch(() => null)
+      if (listing?.result.ok) {
+        for (const entry of listing.result.value.entries) {
+          files.push({ key: `file:${entry.path}`, title: entry.name, subtitle: entry.path, insert: `@${entry.path} ` })
+        }
+      }
+    }
+    const sessions: PlusReference[] = manager.store.summaries
+      .filter(item => item.sessionId !== sessionId)
+      .slice(0, 20)
+      .map(item => {
+        const label = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(-8)
+        return { key: `session:${item.sessionId}`, title: label, subtitle: '会话', insert: `@${label} ` }
+      })
+    const skills: PlusReference[] = []
+    const skillResult = await client.skills.list({ sessionId } as never).catch(() => null)
+    if (skillResult?.result.ok) {
+      for (const skill of skillResult.result.value.skills) {
+        skills.push({ key: `skill:${skill.name}`, title: `/${skill.name}`, subtitle: skill.description, insert: `/${skill.name} ` })
+      }
+    }
+    setReferences([...skills.slice(0, 12), ...files.slice(0, 12), ...sessions])
+    setReferenceStatus('ready')
+  }, [manager, referenceStatus, sessionId])
+
   const openModels = async (): Promise<void> => {
     setMenuOpen(false)
     const client = manager.client
@@ -386,7 +504,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const send = async (): Promise<void> => {
     const client = manager.client
     const text = draft.trim()
-    if (client === null || (text === '' && pendingImage === null)) return
+    if (client === null || (text === '' && pendingImages.length === 0)) return
     setDraft('')
     // Edit mode: rewrite the queued item in place instead of a new prompt.
     if (editingItem !== null) {
@@ -412,12 +530,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         mode: 'queue',
         content: [
           ...(text !== '' ? [{ type: 'text', text }] : []),
-          ...(pendingImage === null ? [] : [{
+          ...pendingImages.map(image => ({
             type: 'image',
-            mediaType: pendingImage.mediaType,
-            data: pendingImage.data,
-            ...(pendingImage.name === null ? {} : { name: pendingImage.name }),
-          }]),
+            mediaType: image.mediaType,
+            data: image.data,
+            ...(image.name === null ? {} : { name: image.name }),
+          })),
         ],
         clientTimeZone,
       } as never)
@@ -430,7 +548,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       if (result !== null && !result.result.ok) showNotice(`发送失败：${result.result.error.message}`)
       return
     }
-    setPendingImage(null)
+    setPendingImages([])
     // Slash commands report their result in the command slot.
     const command = result.result.value.command
     if (command?.text !== undefined && command.text !== '') showNotice(command.text)
@@ -451,6 +569,63 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     } else if (result !== undefined && !result.ok) {
       showNotice(`命令失败：${result.error.message}`)
     }
+  }
+
+  const runMenuCommand = async (command: PlusCommand, argument?: string): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    showNotice(`执行中：/${command.name}`)
+    const text = argument === undefined || argument.trim() === ''
+      ? `/${command.name}`
+      : `/${command.name} ${argument.trim()}`
+    if (command.images === true && pendingImages.length > 0) {
+      try {
+        const result = await client.commands.execute({
+          sessionId,
+          line: text,
+          images: pendingImages.map(image => ({
+            type: 'image',
+            mediaType: image.mediaType,
+            data: image.data,
+            ...(image.name === null ? {} : { name: image.name }),
+          })),
+        })
+        if (result.result.kind === 'error') {
+          showNotice(`命令失败：${result.result.text}`)
+          return
+        }
+        setPendingImages([])
+        if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
+        return
+      } catch {
+        await runCommand(text)
+        return
+      }
+    }
+    if (command.images !== true && pendingImages.length > 0) {
+      showNotice(`/${command.name} 不接受图片附件。`)
+      return
+    }
+    try {
+      const result = await client.commands.execute({ sessionId, line: text })
+      if (result.result.kind === 'error') {
+        showNotice(`命令失败：${result.result.text}`)
+        return
+      }
+      if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
+    } catch {
+      await runCommand(text)
+    }
+  }
+
+  const pickMenuCommand = (command: PlusCommand): void => {
+    if (command.hint !== undefined && command.hint !== '') {
+      setPlusOpen(false)
+      setCommandPrompt({ command })
+      return
+    }
+    setPlusOpen(false)
+    void runMenuCommand(command)
   }
 
   const selectPermission = (value: string): void => {
@@ -588,37 +763,42 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         />
       )}
       <CandidateMenu items={candidates} onPick={pickCandidate} />
-      <UsageBar usage={usage} />
+      <SessionStatsBar view={statsView} />
       <View style={styles.composer}>
-        {pendingImage !== null && (
-          <View style={styles.pendingImageRow}>
-            <Image source={{ uri: `data:${pendingImage.mediaType};base64,${pendingImage.data}` }} style={styles.pendingImage} />
-            <TouchableOpacity onPress={() => setPendingImage(null)} hitSlop={8}>
-              <Text style={styles.editCancelText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-        )}
         {editingItem === null && (
-          <>
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => void captureImage()}
-              accessibilityRole="button"
-              accessibilityLabel="拍照"
-            >
-              <CameraGlyph color={colors.accent} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => void chooseImage()}
-              accessibilityRole="button"
-              accessibilityLabel="从相册选择图片"
-            >
-              <AlbumGlyph color={colors.accent} />
-            </TouchableOpacity>
-          </>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
+            accessibilityRole="button"
+            accessibilityLabel="添加命令、附件或控制项"
+          >
+            <PlusGlyph color={colors.accent} />
+          </TouchableOpacity>
         )}
-        {imageLimits !== null && pendingImage === null && editingItem === null && (
+        {pendingImages.length > 0 && editingItem === null && (
+          <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
+            {pendingImages.map((image, index) => (
+              <TouchableOpacity
+                key={`${image.name ?? 'image'}:${index}`}
+                style={styles.pendingImageCard}
+                onPress={() => setLightbox({ source: `data:${image.mediaType};base64,${image.data}`, name: image.name ?? undefined })}
+              >
+                <Image source={{ uri: `data:${image.mediaType};base64,${image.data}` }} style={styles.pendingImage} />
+                <TouchableOpacity
+                  style={styles.pendingImageRemove}
+                  hitSlop={8}
+                  onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
+                >
+                  <Text style={styles.pendingImageRemoveText}>✕</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+        {lightbox !== null && (
+          <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
+        )}
+        {imageLimits !== null && pendingImages.length === 0 && editingItem === null && (
           <View style={styles.imageLimitsBar}>
             <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits)}</Text>
           </View>
@@ -642,8 +822,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
               <Text style={styles.sendText}>停止</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.sendButton, draft.trim() === '' && pendingImage === null && editingItem === null && styles.disabled]}
-              disabled={draft.trim() === '' && pendingImage === null && editingItem === null}
+              style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
+              disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
               onPress={() => void send()}
             >
               <Text style={styles.sendText}>{editingItem !== null ? '保存' : '排队'}</Text>
@@ -651,8 +831,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           </View>
         ) : (
           <TouchableOpacity
-            style={[styles.sendButton, draft.trim() === '' && pendingImage === null && editingItem === null && styles.disabled]}
-            disabled={draft.trim() === '' && pendingImage === null && editingItem === null}
+            style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
+            disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
             onPress={() => void send()}
           >
             <Text style={styles.sendText}>{editingItem !== null ? '保存' : '发送'}</Text>
@@ -660,7 +840,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         )}
       </View>
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <View style={styles.backdrop}>
+        <ModalBackdrop onClose={() => setMenuOpen(false)}>
           <View style={styles.menuCard}>
             <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setRenameOpen(true) }}>
               <Text style={styles.menuText}>重命名</Text>
@@ -678,21 +858,23 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
               <Text style={styles.menuText}>{goal === null ? '设置目标' : '编辑目标'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </ModalBackdrop>
       </Modal>
       <Modal transparent visible={subOpen !== null} animationType="fade" onRequestClose={() => setSubOpen(null)}>
-        {subOpen !== null && (
-          <SubagentPanel
-            manager={manager}
-            parentSessionId={sessionId}
-            catalog={subOpen}
-            onClose={() => setSubOpen(null)}
-            onOpenSession={id => { setSubOpen(null); onOpenSession?.(id) }}
-          />
-        )}
+        <ModalBackdrop onClose={() => setSubOpen(null)}>
+          {subOpen !== null && (
+            <SubagentPanel
+              manager={manager}
+              parentSessionId={sessionId}
+              catalog={subOpen}
+              onClose={() => setSubOpen(null)}
+              onOpenSession={id => { setSubOpen(null); onOpenSession?.(id) }}
+            />
+          )}
+        </ModalBackdrop>
       </Modal>
       <Modal transparent visible={modelMenu !== null} animationType="fade" onRequestClose={() => setModelMenu(null)}>
-        <View style={styles.backdrop}>
+        <ModalBackdrop onClose={() => setModelMenu(null)}>
           <ScrollView style={styles.modelCard}>
             {modelMenu?.groups.map(group => (
               <View key={group.id}>
@@ -733,8 +915,62 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
               <Text style={[styles.menuText, { color: colors.textDim }]}>关闭</Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </ModalBackdrop>
       </Modal>
+      <PlusMenuSheet
+        visible={plusOpen}
+        commands={commands}
+        commandStatus={commandStatus}
+        commandError={commandError}
+        onReloadCommands={() => { void loadCommands(true) }}
+        presets={presets}
+        presetStatus={presetStatus}
+        presetError={presetError}
+        references={references}
+        referenceStatus={referenceStatus}
+        permissions={permissions?.options ?? []}
+        permissionValue={permissions?.currentValue}
+        planActive={planMode !== undefined && planMode !== 'off'}
+        hasGoal={goal !== null}
+        modelLabel={modelLabel}
+        presetLabel={manager.store.summaries.find(item => item.sessionId === sessionId)?.agentPreset}
+        pendingImageCount={pendingImages.length}
+        onClose={() => setPlusOpen(false)}
+        onPickCommand={pickMenuCommand}
+        onCaptureImage={() => { setPlusOpen(false); void captureImage() }}
+        onPickImages={() => { setPlusOpen(false); void chooseImages() }}
+        onInsertReference={reference => { setPlusOpen(false); setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`) }}
+        onPermission={value => { setPlusOpen(false); selectPermission(value) }}
+        onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: '切换 Plan 模式', images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
+        onGoal={() => { setPlusOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}
+        onModel={() => { setPlusOpen(false); void openModels() }}
+        onPresets={() => { void loadPresets(true) }}
+        onSelectPreset={preset => {
+          setPlusOpen(false)
+          void manager.client?.agentPresets.select({ sessionId, agentPreset: preset.id } as never)
+            .then(result => {
+              if (!result.result.ok) showNotice(`切换失败：${result.result.error.message}`)
+              else {
+                void manager.refreshBaseline()
+                void loadCommands(true)
+              }
+            })
+            .catch(() => showNotice('切换失败：连接不可用。'))
+        }}
+        onSubagents={() => { setPlusOpen(false); void openSubagents() }}
+      />
+      <PromptModal
+        visible={commandPrompt !== null}
+        title={commandPrompt === null ? '' : `/${commandPrompt.command.name}`}
+        initial=""
+        confirmLabel="执行"
+        onCancel={() => setCommandPrompt(null)}
+        onConfirm={argument => {
+          const command = commandPrompt?.command
+          setCommandPrompt(null)
+          if (command !== undefined) void runMenuCommand(command, argument)
+        }}
+      />
       <PromptModal
         visible={renameOpen}
         title="重命名会话"
@@ -769,21 +1005,10 @@ function imageLimitsSummary(limits: ImageLimitsView): string {
   return `图片限制：单张≤${formatBytes(limits.maxImageBytes)} · 每条${limits.maxImagesPerMessage}张 · ${mediaTypes}`
 }
 
-function CameraGlyph({ color }: { color: string }): React.JSX.Element {
+function PlusGlyph({ color }: { color: string }): React.JSX.Element {
   return (
-    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
-      <Circle cx="12" cy="13" r="3" />
-    </Svg>
-  )
-}
-
-function AlbumGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Rect width={18} height={18} x={3} y={3} rx={2} ry={2} />
-      <Circle cx={9} cy={9} r={2} />
-      <Path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 5v14M5 12h14" />
     </Svg>
   )
 }
@@ -950,6 +1175,7 @@ function MessageImage({ image, manager, sessionId }: {
 }): React.JSX.Element {
   const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
   const [aspect, setAspect] = useState(4 / 3)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   useEffect(() => {
     if (image.kind !== 'attachment') return
@@ -969,7 +1195,14 @@ function MessageImage({ image, manager, sessionId }: {
   }, [image, manager, sessionId])
 
   if (source === null) return <Text style={styles.imageFallback}>图片加载中…</Text>
-  return <Image source={{ uri: source }} style={[styles.messageImage, { aspectRatio: aspect }]} />
+  return (
+    <>
+      <TouchableOpacity onPress={() => setLightboxOpen(true)}>
+        <Image source={{ uri: source }} style={[styles.messageImage, { aspectRatio: aspect }]} />
+      </TouchableOpacity>
+      <ImageLightbox visible={lightboxOpen} source={source} name={image.name} onClose={() => setLightboxOpen(false)} />
+    </>
+  )
 }
 
 function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): React.JSX.Element {
@@ -1139,7 +1372,22 @@ const styles = StyleSheet.create({
     paddingTop: spacing(2),
   },
   imageLimitsText: { color: colors.textDim, fontSize: fontSize.tiny },
+  pendingImagesRow: { alignSelf: 'stretch', flexGrow: 0, paddingVertical: spacing(1) },
+  pendingImagesContent: { gap: spacing(2), paddingHorizontal: spacing(1), paddingRight: spacing(3) },
+  pendingImageCard: { width: 68, height: 68 },
   pendingImage: { width: 64, height: 64, borderRadius: radius.card },
+  pendingImageRemove: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingImageRemoveText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   iconButton: {
     minWidth: 40,
     paddingHorizontal: spacing(1.5),

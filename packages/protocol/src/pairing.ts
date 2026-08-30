@@ -41,7 +41,7 @@ async function callPlugin(
   conn: NatsConnLike,
   headersFactory: NatsHeadersFactory,
   instanceId: string,
-  method: 'pair' | 'hello',
+  method: 'pair' | 'hello' | 'mobile.info',
   payload: unknown,
   token: string | undefined,
   timeoutMs: number,
@@ -89,4 +89,40 @@ export async function sendHello(
   timeoutMs = 10_000,
 ): Promise<void> {
   await callPlugin(conn, headersFactory, instanceId, 'hello', {}, token, timeoutMs)
+}
+
+/** Self-description returned by dsh-mobile-plugin v0.1 and newer. */
+export interface MobilePluginInfo {
+  pluginVersion: string
+  mobileApi: number
+  features: string[]
+}
+
+/**
+ * Reads the plugin's compatibility manifest. Older plugins do not answer
+ * `mobile.info`; callers treat that failure as "unknown / too old" rather
+ * than trying to infer the plugin version from host.describe.
+ */
+export async function fetchMobileInfo(
+  conn: NatsConnLike,
+  headersFactory: NatsHeadersFactory,
+  instanceId: string,
+  token: string,
+  timeoutMs = 5_000,
+): Promise<MobilePluginInfo | null> {
+  try {
+    const value = await callPlugin(conn, headersFactory, instanceId, 'mobile.info', {}, token, timeoutMs)
+    if (typeof value !== 'object' || value === null) return null
+    const candidate = value as Partial<MobilePluginInfo>
+    if (typeof candidate.pluginVersion !== 'string' || candidate.pluginVersion === '') return null
+    if (typeof candidate.mobileApi !== 'number' || !Number.isInteger(candidate.mobileApi)) return null
+    if (!Array.isArray(candidate.features) || !candidate.features.every(item => typeof item === 'string')) return null
+    return {
+      pluginVersion: candidate.pluginVersion,
+      mobileApi: candidate.mobileApi,
+      features: candidate.features,
+    }
+  } catch {
+    return null
+  }
 }

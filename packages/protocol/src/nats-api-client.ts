@@ -14,6 +14,7 @@ import { serverRequestSchema } from './vendor/api/rpc.schema.ts'
 import { hostFrameSchema, muxFrameSchema } from './vendor/api/events.schema.ts'
 import { evtSubject, svcSubject, TOKEN_HEADER } from './subjects.ts'
 import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
+import { createMobileCommands } from './mobile-commands.ts'
 
 export interface NatsApiClientOptions {
   conn: NatsConnLike
@@ -30,6 +31,7 @@ export class NatsApiClient extends AbstractApiClient {
   private readonly instanceId: string
   private readonly getToken: () => string | undefined
   private readonly headersFactory: NatsHeadersFactory
+  readonly commands: ReturnType<typeof createMobileCommands>
 
   constructor(options: NatsApiClientOptions) {
     super(options.timeoutMs)
@@ -37,6 +39,7 @@ export class NatsApiClient extends AbstractApiClient {
     this.instanceId = options.instanceId
     this.getToken = options.getToken
     this.headersFactory = options.headers
+    this.commands = createMobileCommands(options.conn, options.headers, options.instanceId, options.getToken)
   }
 
   /**

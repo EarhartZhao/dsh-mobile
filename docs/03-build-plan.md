@@ -84,6 +84,12 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 会话列表支持 workspace 和会话长按排序，持久化顺序驱动「全部」列表；代码块支持复制与分享；主题设置支持亮色/暗色/跟随系统，选择后保存原生模式并重载 JS 以立即生效。
 > - 验证：`packages/core` 21/21、App `tsc --noEmit` 清洁、包含 VisionCamera 的 Android `gradlew assembleDebug` 通过。拍照、主题和扫码的真机/模拟器活体验证待下一次部署后确认。
 
+> 进度（2026-08-30 第四轮）：**Web 端 `+` 菜单对齐与插件版本/能力协商完成。**
+> - 插件新增 `mobile.info`；App 在 describe 前读取版本、mobileApi 和 feature 清单，版本或必备能力不符时阻断并提供“更新后重试”。
+> - 输入框相机/相册双按钮合并为 `+`；新增命令、附件、引用、控制四类面板，支持动态命令目录与常用命令回退、带参命令、相册多选、待发送多图、灯箱、preset/权限/Plan/Goal/模型/子代理入口。
+> - 相册改为 `ACTION_OPEN_DOCUMENT`，修复系统返回多 URI 后的读取失败；`command.list`/`command.execute` 已加入插件白名单。
+> - 验证：插件 26/26、core 25/25、App typecheck/eslint 0 errors、协议 vendor 同步、Android `assembleDebug` 通过；模拟器实测版本门禁、`+` 四面板、`/compact` 执行和相册多选读取。
+
 > 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
 > - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。
 > - M2 命令面板：斜杠命令经 `session.prompt` 执行，返回的 `command` 槽以提示条展示；发送失败回填草稿并提示。注意：当前 harness 0.1.1-rc.2 的 apiproxy **没有** `command.list`/`command.execute` RPC（rpc-map 无此二法，插件白名单为前瞻占位）——命令发现列表待宿主版本补齐后接入。

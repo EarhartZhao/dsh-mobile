@@ -9,6 +9,7 @@
 import {
   NatsApiClient,
   sendHello,
+  fetchMobileInfo,
   type HostFrame,
   type MuxFrame,
   type NatsConnLike,
@@ -17,8 +18,9 @@ import {
 } from '@dsh-mobile/protocol'
 import { Emitter } from './emitter.ts'
 import { SessionStore } from './session-store.ts'
+import { checkMobileCompatibility, type CompatibilityResult } from './compatibility.ts'
 
-export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped'
+export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped' | 'incompatible'
 
 /** Optional status stream both nats flavors expose (`conn.status()`). */
 interface StatusfulConn extends NatsConnLike {
@@ -32,6 +34,7 @@ function hasStatus(conn: NatsConnLike): conn is StatusfulConn {
 type ManagerEvents = {
   state: { state: ConnectionState }
   hostInfo: { info: unknown }
+  compatibility: { result: import('./compatibility.ts').CompatibilityResult }
   error: { message: string }
 }
 
@@ -49,6 +52,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   state: ConnectionState = 'idle'
   client: NatsApiClient | null = null
   hostInfo: unknown = null
+  compatibility: CompatibilityResult | null = null
 
   private conn: NatsConnLike | null = null
   private generation = 0
@@ -128,6 +132,14 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     const client = this.client
     const token = this.options.getToken()
     if (client === null || token === undefined) throw new Error('connection not ready')
+
+    const mobileInfo = await fetchMobileInfo(this.conn!, this.options.headers, this.options.instanceId, token)
+    this.compatibility = checkMobileCompatibility(mobileInfo)
+    this.emit('compatibility', { result: this.compatibility })
+    if (this.compatibility.status !== 'compatible') {
+      this.setState('incompatible')
+      return
+    }
 
     const describe = await client.host.describe({})
     if (!describe.result.ok) throw new Error(`host.describe failed: ${describe.result.error.message}`)
