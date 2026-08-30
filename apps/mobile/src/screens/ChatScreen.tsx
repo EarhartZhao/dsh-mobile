@@ -23,11 +23,13 @@ import {
   View,
 } from 'react-native'
 import { deriveConversation, placementLabel, queuePreview, type ConnectionManager, type ConversationImage, type ConversationItem, type TodoItemView, type UsageView } from '@dsh-mobile/core'
-import type { JobView, QueuedInboxItem } from '@dsh-mobile/protocol'
+import type { JobView, QueuedInboxItem, SubagentCatalog } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
 import { Circle, Path, Rect, Svg } from 'react-native-svg'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { PromptModal } from '../components/PromptModal'
+import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
+import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, TodoStrip, UsageBar, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
@@ -43,6 +45,15 @@ interface PendingImage {
   width: number
   height: number
   name?: string | null
+}
+
+interface ImageLimitsView {
+  maxImageBytes: number
+  maxImagesPerMessage: number
+  maxMessageImageBytes: number
+  maxImagePixels: number
+  maxImageDimension: number
+  mediaTypes: string[]
 }
 
 interface Props {
@@ -70,7 +81,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [permissions, setPermissions] = useState<PermissionSelectView | undefined>(undefined)
   const [menuOpen, setMenuOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
-  const [subOpen, setSubOpen] = useState<{ parentAvailable: boolean; entries: { id: string; activity: 'running' | 'inactive'; mode: string; label?: string }[] } | null>(null)
+  const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
+  const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
   const [modelMenu, setModelMenu] = useState<{
     current: { provider: string; model: string; reasoningEffort?: string }
     groups: {
@@ -157,12 +169,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
 
   const chooseImage = async (): Promise<void> => {
     const image = await callImagePicker('pickImage')
-    if (image !== null && image !== undefined) setPendingImage(image)
+    if (image !== null && image !== undefined) {
+      const invalid = validateImage(image)
+      if (invalid === null) setPendingImage(image)
+      else showNotice(invalid)
+    }
   }
 
   const captureImage = async (): Promise<void> => {
     const image = await callImagePicker('captureImage')
-    if (image !== null && image !== undefined) setPendingImage(image)
+    if (image !== null && image !== undefined) {
+      const invalid = validateImage(image)
+      if (invalid === null) setPendingImage(image)
+      else showNotice(invalid)
+    }
   }
 
   const callImagePicker = async (method: 'pickImage' | 'captureImage'): Promise<PendingImage | null | undefined> => {
@@ -171,11 +191,23 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         pickImage(maxBytes: number): Promise<PendingImage | null>
         captureImage(maxBytes: number): Promise<PendingImage | null>
       } | undefined
-      return await picker?.[method](20 * 1024 * 1024)
+      return await picker?.[method](imageLimits?.maxImageBytes ?? 20 * 1024 * 1024)
     } catch (error) {
       showNotice(`选择图片失败：${error instanceof Error ? error.message : String(error)}`)
       return null
     }
+  }
+
+  const validateImage = (image: PendingImage): string | null => {
+    if (imageLimits === null) return null
+    const bytes = Math.floor(image.data.length * 3 / 4)
+    if (!imageLimits.mediaTypes.includes(image.mediaType)) return '不支持的图片格式。'
+    if (bytes > imageLimits.maxImageBytes) return `图片超过单张大小上限 ${formatBytes(imageLimits.maxImageBytes)}。`
+    if (image.width > imageLimits.maxImageDimension || image.height > imageLimits.maxImageDimension) {
+      return `图片超过最大边长 ${imageLimits.maxImageDimension}px。`
+    }
+    if (image.width * image.height > imageLimits.maxImagePixels) return '图片像素数超过上限。'
+    return null
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<ConversationItem>>(null)
@@ -214,6 +246,31 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         setPermissions({ options, currentValue: raw.currentValue })
       } else setPermissions(undefined)
     } else setPermissions(undefined)
+    const imageRaw = session.projections['imageLimits']
+    if (imageRaw !== null && imageRaw !== undefined && typeof imageRaw === 'object') {
+      const raw = imageRaw as Record<string, unknown>
+      const number = (key: string): number | null =>
+        typeof raw[key] === 'number' && raw[key] > 0 ? raw[key] as number : null
+      const maxImageBytes = number('maxImageBytes')
+      const maxImagesPerMessage = number('maxImagesPerMessage')
+      const maxMessageImageBytes = number('maxMessageImageBytes')
+      const maxImagePixels = number('maxImagePixels')
+      const maxImageDimension = number('maxImageDimension')
+      const mediaTypes = Array.isArray(raw.mediaTypes)
+        ? raw.mediaTypes.filter((value): value is string => typeof value === 'string')
+        : []
+      if (maxImageBytes !== null && maxImagesPerMessage !== null && maxMessageImageBytes !== null &&
+        maxImagePixels !== null && maxImageDimension !== null && mediaTypes.length > 0) {
+        setImageLimits({
+          maxImageBytes,
+          maxImagesPerMessage,
+          maxMessageImageBytes,
+          maxImagePixels,
+          maxImageDimension,
+          mediaTypes,
+        })
+      } else setImageLimits(null)
+    } else setImageLimits(null)
   }, [manager, sessionId])
 
   const goalAction = async (verb: 'pause' | 'resume' | 'complete' | 'clear'): Promise<void> => {
@@ -257,6 +314,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     if (result?.result.ok) onBack()
     void manager.refreshBaseline()
   }
+
+  const loadModels = useCallback(async (): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const result = await client.sessions.models({ sessionId } as never).catch(() => null)
+    if (result?.result.ok) setModelLabel(result.result.value.current.model)
+  }, [manager, sessionId])
 
   const openModels = async (): Promise<void> => {
     setMenuOpen(false)
@@ -317,6 +381,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     refresh()
     return off
   }, [manager, sessionId, refresh])
+  useEffect(() => { void loadModels() }, [loadModels])
 
   const send = async (): Promise<void> => {
     const client = manager.client
@@ -413,6 +478,25 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     setDraft(queuePreview(item))
   }
 
+  const answerQuestion = useCallback(async (rpcId: string, answer: QuestionAnswerPayload): Promise<void> => {
+    await manager.client?.respond({
+      type: 'client-response',
+      rpcId: rpcId as never,
+      result: { ok: true, value: { sessionId, answer } },
+    })
+  }, [manager, sessionId])
+
+  const cancelQuestion = useCallback(async (rpcId: string): Promise<void> => {
+    await manager.client?.respond({
+      type: 'client-response',
+      rpcId: rpcId as never,
+      result: {
+        ok: false,
+        error: { code: 'cancelled', message: '用户关闭了这组提问', details: {} },
+      },
+    })
+  }, [manager])
+
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
   const questions = [...(session?.pendingQuestions.values() ?? [])]
@@ -425,17 +509,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
         <TouchableOpacity style={styles.back} onPress={() => setMenuOpen(true)}><Text style={styles.back}>⋯</Text></TouchableOpacity>
       </View>
-      <TouchableOpacity style={styles.modelChip} onPress={() => void openModels()}>
-        <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
-      </TouchableOpacity>
       {(() => {
         const s = manager.store.summaries.find(x => x.sessionId === sessionId)
-        if (s === undefined) return null
-        const bits: string[] = []
-        if (s.cwd !== undefined) bits.push(s.cwd)
-        if (s.agentPreset !== undefined) bits.push(`预设 ${s.agentPreset}`)
-        if (bits.length === 0) return null
-        return <Text style={styles.metaLine} numberOfLines={1}>{bits.join(' · ')}</Text>
+        return (
+          <View style={styles.metaHeader}>
+            <View style={styles.metaText}>
+              {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>目录 {s.cwd}</Text>}
+              {s?.agentPreset !== undefined && <Text style={styles.metaLine} numberOfLines={1}>预设 {s.agentPreset}</Text>}
+              {s?.parentSessionId !== undefined && <Text style={styles.metaLine} numberOfLines={1}>父会话 {s.parentSessionId.slice(0, 8)}</Text>}
+              <Text style={styles.metaLine} numberOfLines={1}>
+                更新 {new Date(s?.updatedAt ?? Date.now()).toLocaleString('zh-CN', { hour12: false })}
+                {s?.origin === 'subagent' ? ' · 子代理' : ''}
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.modelChip} onPress={() => void openModels()}>
+              <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        )
       })()}
       {permissions !== undefined && (
         <ScrollView horizontal style={styles.permissionBar} contentContainerStyle={styles.permissionContent} showsHorizontalScrollIndicator={false}>
@@ -489,7 +580,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         />
       )}
       {(approvals.length > 0 || questions.length > 0) && (
-        <ActionBar manager={manager} sessionId={sessionId} />
+        <ActionBar
+          manager={manager}
+          sessionId={sessionId}
+          onAnswerQuestion={answerQuestion}
+          onCancelQuestion={cancelQuestion}
+        />
       )}
       <CandidateMenu items={candidates} onPick={pickCandidate} />
       <UsageBar usage={usage} />
@@ -521,6 +617,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
               <AlbumGlyph color={colors.accent} />
             </TouchableOpacity>
           </>
+        )}
+        {imageLimits !== null && pendingImage === null && editingItem === null && (
+          <View style={styles.imageLimitsBar}>
+            <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits)}</Text>
+          </View>
         )}
         {editingItem !== null && (
           <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
@@ -580,27 +681,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         </View>
       </Modal>
       <Modal transparent visible={subOpen !== null} animationType="fade" onRequestClose={() => setSubOpen(null)}>
-        <View style={styles.backdrop}>
-          <View style={styles.menuCard}>
-            {(subOpen?.entries.length ?? 0) === 0 && (
-              <Text style={[styles.menuText, { color: colors.textDim, paddingHorizontal: spacing(4) }]}>没有子代理会话。</Text>
-            )}
-            {subOpen?.entries.map(entry => (
-              <TouchableOpacity
-                key={entry.id}
-                style={styles.menuRow}
-                onPress={() => { setSubOpen(null); onOpenSession?.(entry.id) }}
-              >
-                <View style={styles.subRow}>
-                  <View style={[styles.jobDot, { backgroundColor: entry.activity === 'running' ? colors.running : colors.textDim }]} />
-                  <Text style={styles.menuText} numberOfLines={1}>
-                    {entry.label ?? entry.id.slice(0, 8)}（{entry.mode === 'continuable' ? '可续' : '一次性'}）
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        {subOpen !== null && (
+          <SubagentPanel
+            manager={manager}
+            parentSessionId={sessionId}
+            catalog={subOpen}
+            onClose={() => setSubOpen(null)}
+            onOpenSession={id => { setSubOpen(null); onOpenSession?.(id) }}
+          />
+        )}
       </Modal>
       <Modal transparent visible={modelMenu !== null} animationType="fade" onRequestClose={() => setModelMenu(null)}>
         <View style={styles.backdrop}>
@@ -664,6 +753,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       />
     </KeyboardAvoidingView>
   )
+}
+
+function formatBytes(size: number): string {
+  if (size >= 1024 * 1024) return `${Math.round(size / (1024 * 1024) * 10) / 10}MB`
+  return `${Math.round(size / 1024)}KB`
+}
+
+function imageLimitsSummary(limits: ImageLimitsView): string {
+  const mediaTypes = limits.mediaTypes
+    .map(type => type.replace('image/', '').toUpperCase())
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 4)
+    .join('/')
+  return `图片限制：单张≤${formatBytes(limits.maxImageBytes)} · 每条${limits.maxImagesPerMessage}张 · ${mediaTypes}`
 }
 
 function CameraGlyph({ color }: { color: string }): React.JSX.Element {
@@ -899,26 +1002,21 @@ function ToolCard({ item }: { item: ConversationItem & { kind: 'tool' } }): Reac
   )
 }
 
-function ActionBar({ manager, sessionId }: { manager: ConnectionManager; sessionId: string }): React.JSX.Element {
+function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion }: {
+  manager: ConnectionManager
+  sessionId: string
+  onAnswerQuestion: (rpcId: string, answer: QuestionAnswerPayload) => Promise<void>
+  onCancelQuestion: (rpcId: string) => Promise<void>
+}): React.JSX.Element {
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
   const questions = [...(session?.pendingQuestions.values() ?? [])]
-  const [selected, setSelected] = useState<Record<string, string>>({})
 
   const answerApproval = async (rpcId: string, approvalId: string, outcome: 'allowed-once' | 'rejected'): Promise<void> => {
     await manager.client?.respond({
       type: 'client-response',
       rpcId: rpcId as never,
       result: { ok: true, value: { sessionId, approvalId, outcome } },
-    }).catch(() => undefined)
-  }
-
-  const answerQuestion = async (rpcId: string, items: { id: string }[]): Promise<void> => {
-    const answers = items.map(q => ({ id: q.id, selected: selected[q.id] === undefined ? [] : [selected[q.id]] }))
-    await manager.client?.respond({
-      type: 'client-response',
-      rpcId: rpcId as never,
-      result: { ok: true, value: { sessionId, answer: { answers } } },
     }).catch(() => undefined)
   }
 
@@ -942,30 +1040,13 @@ function ActionBar({ manager, sessionId }: { manager: ConnectionManager; session
         </View>
       ))}
       {questions.map(question => {
-        const items = question.questions as { id: string; question: string; options?: { label: string }[] }[]
         return (
-          <View key={question.rpcId} style={styles.actionRow}>
-            {items.map(q => (
-              <View key={q.id}>
-                <Text style={styles.actionText}>{q.question}</Text>
-                <View style={styles.chips}>
-                  {(q.options ?? []).map(option => (
-                    <TouchableOpacity
-                      key={option.label}
-                      style={[styles.chip, selected[q.id] === option.label && styles.chipActive]}
-                      onPress={() => setSelected(s => ({ ...s, [q.id]: option.label }))}
-                    >
-                      <Text style={styles.chipText}>{option.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            ))}
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.accent }]}
-              onPress={() => void answerQuestion(question.rpcId, items)}>
-              <Text style={styles.actionButtonText}>提交回答</Text>
-            </TouchableOpacity>
-          </View>
+          <QuestionCard
+            key={question.rpcId}
+            pending={question}
+            onSubmit={answer => onAnswerQuestion(question.rpcId, answer)}
+            onCancel={() => onCancelQuestion(question.rpcId)}
+          />
         )
       })}
     </View>
@@ -986,6 +1067,14 @@ const styles = StyleSheet.create({
   back: { color: colors.accent, fontSize: fontSize.body, width: 56 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { padding: spacing(3), gap: spacing(2) },
+  metaHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing(3),
+    paddingHorizontal: spacing(4),
+    paddingBottom: spacing(1),
+  },
+  metaText: { flex: 1, gap: 2 },
   modelChip: { alignSelf: 'flex-end', marginRight: spacing(3), marginVertical: spacing(1) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), marginBottom: spacing(1) },
@@ -1044,6 +1133,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
   },
+  imageLimitsBar: {
+    alignSelf: 'stretch',
+    paddingHorizontal: spacing(3),
+    paddingTop: spacing(2),
+  },
+  imageLimitsText: { color: colors.textDim, fontSize: fontSize.tiny },
   pendingImage: { width: 64, height: 64, borderRadius: radius.card },
   iconButton: {
     minWidth: 40,

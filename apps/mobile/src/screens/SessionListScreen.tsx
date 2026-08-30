@@ -3,7 +3,7 @@
  * Data comes from the store's baseline + host frames; list rows re-render on
  * store 'changed' (throttled).
  */
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import type { DirectoryListing, SessionSummary } from '@dsh-mobile/protocol'
@@ -112,7 +112,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
     } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
   }
 
-  const loadDirectory = async (path?: string): Promise<void> => {
+  const loadDirectory = useCallback(async (path?: string): Promise<void> => {
     const client = manager.client
     if (client === null) return
     const result = await client.host.listDirectory(path === undefined ? {} : { path } as never).catch(() => null)
@@ -124,12 +124,12 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
       setListing(null)
       setBrowserError(rpc.error.message)
     }
-  }
+  }, [manager])
 
   useEffect(() => {
     if (browser === null) return
     void loadDirectory(browser.path)
-  }, [browser, manager])
+  }, [browser, loadDirectory])
 
   const createFolder = async (name: string): Promise<void> => {
     const client = manager.client

@@ -18,6 +18,8 @@ export type {
   RpcReceipt,
   SessionSummary,
   SessionProjectionsBlock,
+  SubagentCatalog,
+  SubagentListEntry,
   WorkspaceView,
   JobView,
   ApprovalResponsePayload,
