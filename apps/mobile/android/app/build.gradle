@@ -8,7 +8,10 @@ def hermesCompilerOutput = providers.exec {
     commandLine "node", "-p", "require.resolve('hermes-compiler/package.json', {paths:[require.resolve('react-native/package.json')]})"
 }.standardOutput.asText.get().trim()
 def hermesCompilerDir = new File(hermesCompilerOutput).parentFile
-def hermesCompiler = new File(hermesCompilerDir, "hermesc/win64-bin/hermesc.exe")
+def hermesBinaryName = org.gradle.internal.os.OperatingSystem.current().isWindows()
+    ? "hermesc/win64-bin/hermesc.exe"
+    : "hermesc/linux64-bin/hermesc"
+def hermesCompiler = new File(hermesCompilerDir, hermesBinaryName)
 
 /**
  * This is the configuration block to customize your React Native Android app.

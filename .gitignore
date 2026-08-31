@@ -11,3 +11,7 @@ apps/mobile/android/.gradle/
 apps/mobile/android/build/
 apps/mobile/android/app/build/
 apps/mobile/android/app/.cxx/
+
+certs/*.key
+apps/mobile/android/*.keystore
+apps/mobile/android/keystore.properties
