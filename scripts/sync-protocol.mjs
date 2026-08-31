@@ -74,6 +74,9 @@ if (!existsSync(sourceRoot)) {
 
   console.error(`[sync-protocol] harness source not found: ${sourceRoot}`)
   console.error('  set DSH_REPO to the deepseek-harness checkout if it lives elsewhere')
+  console.error('  if dsh restructured the API layer (e.g. apiproxy -> packages/api),')
+  console.error('  update sourceRoot and the MAPPING below, then re-run.')
+  console.error('  see skills/dsh-sync-check/SKILL.md for the full workflow')
   process.exit(1)
 }
 

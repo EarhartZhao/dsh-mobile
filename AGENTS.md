@@ -57,6 +57,10 @@ pnpm --config.verify-deps-before-run=false run lint
 3. `skills/github-release/SKILL.md`：GitHub Actions、secrets 与 Release 发布。
 4. `skills/ci-verify/SKILL.md`：只验证、不发布时的标准路径。
 
+dsh（deepseek-harness）上游发版后按以下 skill 检查兼容性：
+
+1. `skills/dsh-sync-check/SKILL.md`：确认上游变更范围、同步协议 vendor、更新版本兼容区间。
+
 ## 工程习惯
 
 - 保持仓库现有模块边界：UI 不直接写协议细节，连接/推导逻辑优先放进 `packages/core` 并补测试。
