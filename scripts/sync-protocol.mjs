@@ -20,9 +20,58 @@ const sourceRepo = process.env.DSH_REPO
   : resolve(root, '..', 'deepseek-harness')
 const sourceRoot = join(sourceRepo, 'packages/host/apiproxy/src')
 const vendorRoot = join(root, 'packages/protocol/src/vendor')
+const metaPath = join(vendorRoot, 'SYNCED.json')
 const checkOnly = process.argv.includes('--check')
 
+const toPosix = value => value.replace(/\\/g, '/')
+
 if (!existsSync(sourceRoot)) {
+  if (checkOnly) {
+    if (!existsSync(vendorRoot) || !existsSync(metaPath)) {
+      console.error(`[sync-protocol] standalone vendor check failed: ${vendorRoot} is missing`)
+      process.exit(1)
+    }
+
+    let meta
+    try {
+      meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+    } catch (error) {
+      console.error('[sync-protocol] standalone vendor check failed: invalid SYNCED.json')
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exit(1)
+    }
+
+    const mirrored = listFiles(vendorRoot)
+      .map(file => toPosix(relative(vendorRoot, file)))
+      .filter(rel => rel !== 'SYNCED.json')
+
+    if (!Array.isArray(meta.manifest)) {
+      if (mirrored.length !== meta.files) {
+        console.error(`[sync-protocol] standalone vendor check failed: expected ${meta.files} files, found ${mirrored.length}`)
+        process.exit(1)
+      }
+      console.log(`[sync-protocol] vendor tree present (${mirrored.length} files); legacy metadata has no hash manifest, source diff skipped`)
+      process.exit(0)
+    }
+
+    const expected = new Map(meta.manifest.map(entry => [entry.path, entry.sha256]))
+    const actual = new Map(mirrored.map(rel => [rel, digest(join(vendorRoot, rel))]))
+    const missing = [...expected.keys()].filter(path => !actual.has(path))
+    const extra = [...actual.keys()].filter(path => !expected.has(path))
+    const changed = [...expected.keys()].filter(path => actual.has(path) && actual.get(path) !== expected.get(path))
+
+    if (missing.length > 0 || extra.length > 0 || changed.length > 0) {
+      console.error('[sync-protocol] standalone vendor check failed:')
+      for (const rel of missing) console.error(`  missing: ${rel}`)
+      for (const rel of extra) console.error(`  extra:   ${rel}`)
+      for (const rel of changed) console.error(`  changed: ${rel}`)
+      process.exit(1)
+    }
+
+    console.log(`[sync-protocol] vendor tree matches committed manifest (${actual.size} files)`)
+    process.exit(0)
+  }
+
   console.error(`[sync-protocol] harness source not found: ${sourceRoot}`)
   console.error('  set DSH_REPO to the deepseek-harness checkout if it lives elsewhere')
   process.exit(1)
@@ -97,6 +146,10 @@ const meta = {
   syncedAt: new Date().toISOString(),
   sourceRepo,
   files: sources.length,
+  manifest: sources.map(({ from, to }) => ({
+    path: toPosix(to),
+    sha256: digest(from),
+  })),
 }
 writeFileSync(join(vendorRoot, 'SYNCED.json'), JSON.stringify(meta, null, 2) + '\n')
 console.log(`[sync-protocol] vendored ${sources.length} files from ${sourceRepo}`)
