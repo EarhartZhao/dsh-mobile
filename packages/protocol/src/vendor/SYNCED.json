@@ -1,5 +1,151 @@
 {
-  "syncedAt": "2026-08-26T10:14:20.135Z",
+  "syncedAt": "2026-08-31T08:13:18.261Z",
   "sourceRepo": "C:\\code\\deepseek\\deepseek-harness",
-  "files": 36
+  "files": 36,
+  "manifest": [
+    {
+      "path": "api/agent-presets.schema.ts",
+      "sha256": "a3df0339d0fb1a4914ee3234564dad2367148a21f2479670423dd75f00c67a11"
+    },
+    {
+      "path": "api/agent-presets.ts",
+      "sha256": "5fff10de50a64b653546397d28351439293929ad9bc840c20d206b512b3ed816"
+    },
+    {
+      "path": "api/approvals.schema.ts",
+      "sha256": "66a29858aef6e90b7277af9c373ce2f2ce31eaeff1075b14c29319eeeca6c697"
+    },
+    {
+      "path": "api/approvals.ts",
+      "sha256": "53cecd0ea11342fb0b42fd641908c7cfe2cae88e66ab714f8e628c2fdee949ea"
+    },
+    {
+      "path": "api/credentials.schema.ts",
+      "sha256": "ead70aedafdba3f515abe8a34398cef221b6ea99950396f44681c625083e4c17"
+    },
+    {
+      "path": "api/credentials.ts",
+      "sha256": "c8889f34a2fed603c4494ff441e33b8a43406c21b2f2a5bdd9d96c0977523ed2"
+    },
+    {
+      "path": "api/downloads.schema.ts",
+      "sha256": "98e75370c4be946870453568f01067caae7787281b81a2316cf4fa28f7b26d23"
+    },
+    {
+      "path": "api/downloads.ts",
+      "sha256": "7dcecf2af60b213b68cf39fd8bdfdd62d9e6709ac94323d43f9d7a8874107460"
+    },
+    {
+      "path": "api/events.schema.ts",
+      "sha256": "3a032bb8e0668974ade12028db0a7b44305fc0da1ddb2b02eb2fb50b6382dc2f"
+    },
+    {
+      "path": "api/events.ts",
+      "sha256": "1d65133b2948958c80722ffec9fc03fcf37cce0232bb75bf9cf0d38d4b25ca35"
+    },
+    {
+      "path": "api/goals.schema.ts",
+      "sha256": "299b05384453c8d88e028bdf88525f154e571afaacbfe0ee6ad0fab757983dbe"
+    },
+    {
+      "path": "api/goals.ts",
+      "sha256": "a2e47a4fcd3ec5789aefc83714344a94abff268b985f69f9169e4070c5fcd2fd"
+    },
+    {
+      "path": "api/host.schema.ts",
+      "sha256": "1b533d725b22629fc3c784a0898c11223a1306ff1ba8fe9e21a8ea4e258f759c"
+    },
+    {
+      "path": "api/host.ts",
+      "sha256": "e917aa5a11e4d0f99b77c91401051b93683dd643f2a0b6fbddc775d2588be2a2"
+    },
+    {
+      "path": "api/index.ts",
+      "sha256": "9f080ebe10a3f8fb6a9355a867b03d2a8f1a580356136252dc9c95adb6ecf9bb"
+    },
+    {
+      "path": "api/jobs.schema.ts",
+      "sha256": "f5ba8928624f23de9e0afa37cae1d51aadf28e3cc49ec89a1d0e1e4d682255bd"
+    },
+    {
+      "path": "api/jobs.ts",
+      "sha256": "0d1693fabcbecb44fb4a40d58acd39663972246db0649c8284c6b7035b166058"
+    },
+    {
+      "path": "api/llm.schema.ts",
+      "sha256": "54cbed4003c2b1cbd24ab43bc8fac05f839f468c53bb751bd1cc1d9b80f8e4d4"
+    },
+    {
+      "path": "api/llm.ts",
+      "sha256": "b3413614dfee4412978ffaa2c1971ecdd706676d44400ce28298252b7239f1de"
+    },
+    {
+      "path": "api/questions.schema.ts",
+      "sha256": "369a2ecff45f64a59296c36590db26f7c67df911807f881617556ca7076687c5"
+    },
+    {
+      "path": "api/questions.ts",
+      "sha256": "df69df20fd3626108fb2bb64949657a6e5dc62bcba23cd6e72591cf8e3f1abe3"
+    },
+    {
+      "path": "api/rpc-map.ts",
+      "sha256": "1d2bf6b00b3dadeb098a37fbcdb3119b50b101a45bdc0840c287649413fd938f"
+    },
+    {
+      "path": "api/rpc.schema.ts",
+      "sha256": "436ef87a2a951ae592adf812e3a03642adcdf1255aa2aff6830cf269754c85ea"
+    },
+    {
+      "path": "api/rpc.ts",
+      "sha256": "f131b89aa688f23c595ea03ff9e3b92a5fc6e29da282461fbb4337e2ccae4b58"
+    },
+    {
+      "path": "api/session-search.ts",
+      "sha256": "56a3a21880435a96d1ab4cf4e7f93749196c9fc12cdeccf46f67175a5cf17a99"
+    },
+    {
+      "path": "api/sessions.schema.ts",
+      "sha256": "546043414a63db814f45922d3263314304e05eb0bb69b42b85c1841889384107"
+    },
+    {
+      "path": "api/sessions.ts",
+      "sha256": "7515dfdd8ca20c275946ccd32dfd17fb8fd613e6f7bbeb71992230e9d9bdb23e"
+    },
+    {
+      "path": "api/settings.schema.ts",
+      "sha256": "32950e0e0026c696d977b3600cd950a4614b0f1d2bbbd2478f347d7c0f29cb64"
+    },
+    {
+      "path": "api/settings.ts",
+      "sha256": "6c6dd27f994f0cb1d8dfcd1fb05bd82c31c0b9b9e8b93917abae8f39aa9bf732"
+    },
+    {
+      "path": "api/skills.schema.ts",
+      "sha256": "d2a38e1bb22bae361d60dafac1b67ca15b458bb031b66bd0b05e8e0752a72332"
+    },
+    {
+      "path": "api/skills.ts",
+      "sha256": "59f4c61184f744ae7b76d3fb4e9506ff9776866b027def66a1e9813620dc24b8"
+    },
+    {
+      "path": "api/subagents.schema.ts",
+      "sha256": "f104c950c808da57be50c9d31c395373616504399e800558f2afd669f3d12045"
+    },
+    {
+      "path": "api/subagents.ts",
+      "sha256": "5c9502515d7d9f9efca6be31fd921bb3db9672be6f313057769ed09ef7423127"
+    },
+    {
+      "path": "api/workspace.schema.ts",
+      "sha256": "0d4ffe97c6c039462cfbb2b2d9b7047f6143b6836af2a34ac3a127f74d79bf39"
+    },
+    {
+      "path": "api/workspace.ts",
+      "sha256": "de4fbddcdfd65ab3a8ce8a3c03b59031fce7ca47475553204c46bb16a0fc0ae6"
+    },
+    {
+      "path": "fetch/client.ts",
+      "sha256": "13f72d84f390cbdf630e360e9c79f25b24008041d0b40a67a5f4afe2a1f01bac"
+    }
+  ]
 }
