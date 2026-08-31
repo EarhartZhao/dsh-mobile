@@ -7,6 +7,7 @@
  * live harness.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { connect, headers as natsHeaders, type NatsConnection } from 'nats'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
@@ -17,6 +18,8 @@ const PORT = 16500 + Math.floor(Math.random() * 500)
 const URL = `nats://127.0.0.1:${PORT}`
 const INSTANCE = 'test-pc'
 const VALID_TOKEN = 'test-token-123'
+const NATS_SERVER_BIN = process.env.NATS_SERVER_BIN ?? 'C:\\nats-server\\nats-server.exe'
+const describeNats = existsSync(NATS_SERVER_BIN) ? describe : describe.skip
 
 let server: ChildProcess
 let pluginSide: NatsConnection
@@ -43,7 +46,7 @@ function pushMuxFrame(frame: unknown): void {
 }
 
 beforeAll(async () => {
-  server = spawn('C:\\nats-server\\nats-server.exe', ['-p', String(PORT)], { stdio: 'ignore' })
+  server = spawn(NATS_SERVER_BIN, ['-p', String(PORT)], { stdio: 'ignore' })
   await new Promise(r => setTimeout(r, 1500))
   pluginSide = await connect({ servers: URL })
 
@@ -108,7 +111,7 @@ async function appConn(): Promise<NatsConnection> {
   return connect({ servers: URL })
 }
 
-describe('NatsApiClient over real NATS', () => {
+describeNats('NatsApiClient over real NATS', () => {
   it('redeems a pairing code and rejects a bad one', async () => {
     const nc = await appConn()
     const device = await redeemPairingCode(nc, natsHeaders, INSTANCE, 'GOOD-CODE', 'vitest')
