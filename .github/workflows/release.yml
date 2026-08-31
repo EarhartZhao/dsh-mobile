@@ -75,7 +75,8 @@ jobs:
         working-directory: apps/mobile/android
         run: ./gradlew assembleRelease
       - name: Verify APK signature
-        run: "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+        run: |
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk
       - name: Resolve release version
         id: release
         run: |
