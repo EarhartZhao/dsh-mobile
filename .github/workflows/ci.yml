@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false'
+      NATS_SERVER_BIN: /usr/local/bin/nats-server
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -26,6 +27,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install NATS server
+        run: |
+          set -euo pipefail
+          version=2.14.6
+          work="$RUNNER_TEMP/nats-server"
+          mkdir -p "$work"
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${version}/nats-server-v${version}-linux-amd64.tar.gz" | tar -xz -C "$work" --strip-components=1
+          sudo install -m 0755 "$work/nats-server" /usr/local/bin/nats-server
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Check vendored protocol
