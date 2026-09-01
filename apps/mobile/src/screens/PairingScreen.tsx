@@ -111,7 +111,12 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       if (!res.ok) throw new Error(`console /pair HTTP ${res.status}`)
       const body = await res.json() as { payload?: PairingQrPayload }
       if (body.payload === undefined) throw new Error('console /pair: no payload')
-      await pairWith(body.payload)
+      // In React-Native dev builds the emulator cannot reach a host loopback
+      // listener or the production TLS Hub address. Use the host-mapped local
+      // NATS WebSocket while retaining the Hub payload for release builds.
+      await pairWith(__DEV__
+        ? { ...body.payload, hub: 'ws://10.0.2.2:8443', caFp: '' }
+        : body.payload)
     } catch (cause) {
       console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
       setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
