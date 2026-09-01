@@ -711,7 +711,7 @@ function format(template: string, values?: Record<string, string | number>): str
 }
 
 export function I18nProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
-  const [language, setLanguageState] = useState<Language>('system')
+  const [language, setLanguageState] = useState<Language>('zh')
 
   useEffect(() => {
     void AsyncStorage.getItem(STORAGE_KEY)
