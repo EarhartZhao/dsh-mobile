@@ -58,6 +58,32 @@ function locationLines(item: ConversationItem & { kind: 'tool' }): string[] {
     .filter(path => path !== '')
 }
 
+function shortText(value: string, limit = 140): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (compact.length <= limit) return compact
+  return `${compact.slice(0, limit - 1)}…`
+}
+
+function summaryOf(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
+  const view = activeView(item)
+  if (view !== null) {
+    if (view['card'] === 'read' && Array.isArray(view['lines'])) return t('tools.lines', { count: view.lines.length })
+    if (view['card'] === 'diff' && Array.isArray(view['diffs'])) return t('tools.files', { count: view.diffs.length })
+    if (view['card'] === 'web' && Array.isArray(view['sources'])) return t('tools.sources', { count: view.sources.length })
+    if (view['card'] === 'search') {
+      if (view['shape'] === 'paths' && Array.isArray(view['paths'])) return t('tools.paths', { count: view.paths.length })
+      if (Array.isArray(view['files'])) {
+        const total = view.files.reduce((sum, file) => sum + (isRecord(file) && Array.isArray(file['matches']) ? file.matches.length : 0), 0)
+        return t('tools.matches', { count: total })
+      }
+    }
+  }
+  if (item.resultText !== '') return shortText(item.resultText)
+  if (item.args !== '') return shortText(item.args)
+  if (item.subCalls.length > 0) return t('tools.subCallsCount', { count: item.subCalls.length })
+  return t('tools.tapToExpand')
+}
+
 function copy(value: string): void { Clipboard.setString(value) }
 function share(value: string): void { void Share.share({ message: value }).catch(() => undefined) }
 
@@ -200,6 +226,7 @@ export function ToolCard({ item, onLongPress }: { item: ConversationItem & { kin
   const statusText = item.status === 'running' ? t('tools.statusRunning') : item.status === 'error' ? t('tools.statusError') : t('tools.statusDone')
   const view = activeView(item)
   const locations = locationLines(item)
+  const summary = summaryOf(item, t)
   return (
     <View style={styles.card}>
       <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={styles.header}>
@@ -208,6 +235,7 @@ export function ToolCard({ item, onLongPress }: { item: ConversationItem & { kin
           {metaOf(item, t).length > 0 && (
             <Text style={styles.meta} numberOfLines={1}>{metaOf(item, t).join(' · ')}</Text>
           )}
+          <Text style={styles.summary} numberOfLines={2}>{summary}</Text>
         </View>
         <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
       </TouchableOpacity>
@@ -244,16 +272,17 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.card,
     backgroundColor: colors.bgElevated,
-    marginHorizontal: spacing(3),
-    marginVertical: spacing(1),
+    marginHorizontal: spacing(1),
+    marginVertical: spacing(0.5),
     overflow: 'hidden',
   },
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), paddingHorizontal: spacing(3), paddingVertical: spacing(2) },
+  header: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5), paddingHorizontal: spacing(2), paddingVertical: spacing(1.5) },
   titleArea: { flex: 1 },
   title: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
   meta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 2 },
+  summary: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 3, lineHeight: 15 },
   status: { color: colors.success, fontSize: fontSize.tiny },
-  body: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, padding: spacing(3), gap: spacing(2) },
+  body: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, padding: spacing(2), gap: spacing(1.5) },
   monoScroll: { maxHeight: 180, borderWidth: 1, borderColor: colors.border, borderRadius: radius.card },
   readScroll: { maxHeight: 280 },
   mono: { color: colors.text, fontSize: 12, fontFamily: 'monospace', padding: spacing(2) },

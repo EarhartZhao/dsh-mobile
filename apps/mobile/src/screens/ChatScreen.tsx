@@ -879,16 +879,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       <CandidateMenu items={candidates} onPick={pickCandidate} />
       <SessionStatsBar view={statsView} />
       <View style={styles.composer}>
-        {editingItem === null && (
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
-            accessibilityRole="button"
-            accessibilityLabel={t('chat.add')}
-          >
-            <PlusGlyph color={colors.accent} />
-          </TouchableOpacity>
-        )}
         {pendingImages.length > 0 && editingItem === null && (
           <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
             {pendingImages.map((image, index) => (
@@ -917,41 +907,53 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits, t)}</Text>
           </View>
         )}
-        {editingItem !== null && (
-          <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
-            <Text style={styles.editCancelText}>✕</Text>
-          </TouchableOpacity>
-        )}
-        <TextInput
-          style={styles.input}
-          value={draft}
-          onChangeText={onDraftChange}
-          placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
-          placeholderTextColor={colors.textDim}
-          multiline
-        />
-        {running ? (
-          <View style={styles.runningButtons}>
-            <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
-              <Text style={styles.sendText}>{t('chat.stop')}</Text>
+        <View style={styles.composerRow}>
+          {editingItem === null && (
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
+              accessibilityRole="button"
+              accessibilityLabel={t('chat.add')}
+            >
+              <PlusGlyph color={colors.accent} />
             </TouchableOpacity>
+          )}
+          {editingItem !== null && (
+            <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
+              <Text style={styles.editCancelText}>✕</Text>
+            </TouchableOpacity>
+          )}
+          <TextInput
+            style={styles.input}
+            value={draft}
+            onChangeText={onDraftChange}
+            placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
+            placeholderTextColor={colors.textDim}
+            multiline
+          />
+          {running ? (
+            <View style={styles.runningButtons}>
+              <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
+                <Text style={styles.sendText}>{t('chat.stop')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
+                disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
+                onPress={() => void send()}
+              >
+                <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.queue')}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
             <TouchableOpacity
               style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
               disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
               onPress={() => void send()}
             >
-              <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.queue')}</Text>
+              <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.send')}</Text>
             </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
-            disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
-            onPress={() => void send()}
-          >
-            <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.send')}</Text>
-          </TouchableOpacity>
-        )}
+          )}
+        </View>
       </View>
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <ModalBackdrop onClose={() => setMenuOpen(false)}>
@@ -1229,6 +1231,20 @@ function jobStatusLabel(status: JobView['status'], t: (key: TranslationKey, valu
   }
 }
 
+function ReasoningBlock({ text }: { text: string }): React.JSX.Element {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  return (
+    <View style={styles.reasoningBlock}>
+      <TouchableOpacity style={styles.reasoningHeader} onPress={() => setOpen(value => !value)}>
+        <Text style={styles.reasoningLabel}>{t('chat.reasoningSummary', { count: text.trim().length })}</Text>
+        <Text style={styles.reasoningChevron}>{open ? '▾' : '▸'}</Text>
+      </TouchableOpacity>
+      {open && <Text selectable style={styles.reasoning}>{text}</Text>}
+    </View>
+  )
+}
+
 function Bubble({ item, manager, sessionId, onLongPress }: {
   item: ConversationItem
   manager: ConnectionManager
@@ -1260,7 +1276,7 @@ function Bubble({ item, manager, sessionId, onLongPress }: {
           style={[styles.bubble, styles.bubbleAssistant]}
           onLongPress={onLongPress}
         >
-          {item.reasoning !== '' && <Text style={styles.reasoning}>{item.reasoning}</Text>}
+          {item.reasoning !== '' && <ReasoningBlock text={item.reasoning} />}
           <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
@@ -1418,20 +1434,20 @@ const styles = StyleSheet.create({
   back: { color: colors.accent, fontSize: fontSize.body, width: 56 },
   headerAction: { width: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
-  listContent: { padding: spacing(3), gap: spacing(2) },
+  listContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(1.5), gap: spacing(1.5) },
   metaHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: spacing(3),
-    paddingHorizontal: spacing(4),
-    paddingBottom: spacing(1),
+    gap: spacing(2),
+    paddingHorizontal: spacing(2),
+    paddingBottom: spacing(0.5),
   },
   metaText: { flex: 1, gap: 2 },
-  modelChip: { alignSelf: 'flex-end', marginRight: spacing(3), marginVertical: spacing(1) },
+  modelChip: { alignSelf: 'flex-end', marginRight: spacing(1), marginVertical: spacing(0.5) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
-  metaLine: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), marginBottom: spacing(1) },
-  permissionBar: { flexGrow: 0, height: 56, marginBottom: spacing(1) },
-  permissionContent: { paddingHorizontal: spacing(3), paddingVertical: spacing(1), gap: spacing(2), alignItems: 'center' },
+  metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
+  permissionBar: { flexGrow: 0, height: 46, marginBottom: spacing(0.5) },
+  permissionContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(0.5), gap: spacing(1.5), alignItems: 'center' },
   permissionDanger: { borderColor: colors.danger },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
   menuCard: {
@@ -1452,11 +1468,15 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
   },
   modelGroup: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), paddingTop: spacing(3), paddingBottom: spacing(1) },
-  bubble: { maxWidth: '88%', borderRadius: radius.bubble, padding: spacing(3) },
+  bubble: { maxWidth: '92%', borderRadius: radius.bubble, padding: spacing(2) },
   bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser },
   bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: colors.bgBubbleAssistant },
   bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
-  reasoning: { color: colors.textDim, fontSize: fontSize.small, fontStyle: 'italic', marginBottom: spacing(1) },
+  reasoningBlock: { marginBottom: spacing(1), borderRadius: radius.card, backgroundColor: colors.bgElevated, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
+  reasoningHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
+  reasoningLabel: { color: colors.textDim, fontSize: fontSize.tiny },
+  reasoningChevron: { color: colors.textDim, fontSize: fontSize.tiny },
+  reasoning: { color: colors.textDim, fontSize: fontSize.small, fontStyle: 'italic', paddingHorizontal: spacing(1.5), paddingBottom: spacing(1.5) },
   compactionRow: {
     alignSelf: 'stretch',
     borderWidth: StyleSheet.hairlineWidth,
@@ -1558,35 +1578,45 @@ const styles = StyleSheet.create({
   chipActive: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
   chipText: { color: colors.text, fontSize: fontSize.small },
   composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: spacing(3),
-    gap: spacing(2),
+    paddingHorizontal: spacing(2),
+    paddingTop: spacing(1),
+    paddingBottom: spacing(1.5),
+    gap: spacing(1),
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: spacing(1),
+    minWidth: 0,
+  },
   input: {
     flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
     maxHeight: 120,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.bubble,
     color: colors.text,
-    paddingHorizontal: spacing(3),
-    paddingVertical: spacing(2),
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1.5),
     fontSize: fontSize.body,
     backgroundColor: colors.bgElevated,
   },
   sendButton: {
     backgroundColor: colors.accent,
     borderRadius: radius.bubble,
-    paddingHorizontal: spacing(4),
-    paddingVertical: spacing(2.5),
+    paddingHorizontal: spacing(2.5),
+    paddingVertical: spacing(1.5),
+    minWidth: 64,
+    alignItems: 'center',
   },
   disabled: { opacity: 0.5 },
   sendText: { color: '#fff', fontSize: fontSize.body, fontWeight: '600' },
-  runningButtons: { flexDirection: 'column', gap: spacing(1.5) },
-  editCancel: { alignSelf: 'center', padding: spacing(1) },
+  runningButtons: { flexDirection: 'row', gap: spacing(1), flexShrink: 0 },
+  editCancel: { alignSelf: 'center', padding: spacing(0.5), flexShrink: 0 },
   editCancelText: { color: colors.textDim, fontSize: fontSize.body },
   notice: {
     marginHorizontal: spacing(3),
