@@ -4,7 +4,7 @@
  * M1 spike; the manual paste path is the always-available fallback.
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
 import { Camera, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
@@ -23,6 +23,9 @@ function pairingErrorMessage(message: string, t: Translate): string {
   if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
     return t('pairing.networkFailed')
+  }
+  if (text === '' || message.includes('NatsError') || message.includes('WebSocket')) {
+    return t('pairing.natsFailed')
   }
   if (text.startsWith('console /pair HTTP')) return t('pairing.httpFailed', { status: text.split(' ').at(-1) ?? '' })
   if (text === 'console /pair: no payload') return t('pairing.noPayload')
@@ -73,7 +76,15 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
   }
 
   const pair = async (): Promise<void> => {
-    await pairWith(parseQr(text.trim()))
+    try {
+      // Keep the pasted payload authoritative. Public deployments use the
+      // wss Hub address from the backend; only the explicit local-dev button
+      // rewrites the route for an emulator.
+      await pairWith(parseQr(text.trim()))
+    } catch (cause) {
+      console.error('[pairing-parse]', cause instanceof Error ? cause.stack : cause)
+      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
+    }
   }
 
   const codeScanner = useCodeScanner({
@@ -125,7 +136,8 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
   }
 
   return (
-    <View style={styles.root}>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={styles.root}>
       <Text style={styles.title}>{t('pairing.title')}</Text>
       <Text style={styles.hint}>
         {t('pairing.hint')}
@@ -154,16 +166,29 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
           )}
         </View>
       )}
-      <TextInput
-        style={styles.input}
-        multiline
-        placeholder={t('pairing.pastePlaceholder')}
-        placeholderTextColor={colors.textDim}
-        value={text}
-        onChangeText={setText}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
+      <View style={styles.inputWrap}>
+        <TextInput
+          style={styles.input}
+          multiline
+          placeholder={t('pairing.pastePlaceholder')}
+          placeholderTextColor={colors.textDim}
+          value={text}
+          onChangeText={value => { setText(value); if (error !== null) setError(null) }}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {text !== '' && (
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={() => { setText(''); setError(null) }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.clear')}
+            hitSlop={8}
+          >
+            <Text style={styles.clearButtonText}>×</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       {error !== null && <Text style={styles.error}>{error}</Text>}
       <TouchableOpacity
         style={[styles.button, (busy || text.trim() === '') && styles.buttonDisabled]}
@@ -184,7 +209,8 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
           <Text style={styles.demoButtonText}>{t('pairing.realLocal')}</Text>
         </TouchableOpacity>
       )}
-    </View>
+      </View>
+    </TouchableWithoutFeedback>
   )
 }
 
@@ -250,6 +276,19 @@ const styles = StyleSheet.create({
     padding: spacing(3),
     textAlignVertical: 'top',
   },
+  inputWrap: { position: 'relative' },
+  clearButton: {
+    position: 'absolute',
+    top: spacing(1),
+    right: spacing(1),
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearButtonText: { color: colors.textDim, fontSize: 24, lineHeight: 26 },
   error: { color: colors.danger, fontSize: fontSize.small, marginTop: spacing(2) },
   button: {
     marginTop: spacing(4),

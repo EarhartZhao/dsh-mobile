@@ -14,6 +14,8 @@ import {
   NativeModules,
   Platform,
   Modal,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
   ScrollView,
   Share,
   StyleSheet,
@@ -259,6 +261,44 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<ConversationItem>>(null)
+  const backHandled = useRef(false)
+  const mountedRef = useRef(true)
+  const listAtBottom = useRef(true)
+
+  const handleBack = useCallback((): void => {
+    // The header can receive both a touch-up and an accessibility/keyboard
+    // activation.  Make navigation idempotent so an expensive unmount is not
+    // scheduled twice while a large conversation is being released.
+    if (backHandled.current) return
+    backHandled.current = true
+    onBack()
+  }, [onBack])
+
+  const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
+    const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
+    // A small tolerance prevents minor layout rounding from disabling the
+    // normal follow-tail behavior, while any deliberate upward scroll opts out.
+    listAtBottom.current = distanceFromBottom <= 48
+  }, [])
+
+  const onListScrollBeginDrag = useCallback((): void => {
+    // Opt out before the first scroll sample arrives, otherwise a concurrent
+    // row measurement could win the race and move the list back to the tail.
+    listAtBottom.current = false
+  }, [])
+
+  const onListContentSizeChange = useCallback((): void => {
+    // Only follow new streamed content when the user was already at the tail.
+    // Unconditionally calling scrollToEnd here was pulling every upward swipe
+    // back to the bottom as soon as a row remeasured.
+    if (!listAtBottom.current) return
+    requestAnimationFrame(() => {
+      if (mountedRef.current && listAtBottom.current) {
+        listRef.current?.scrollToEnd({ animated: false })
+      }
+    })
+  }, [])
 
   const refresh = useCallback(() => {
     const session = manager.store.sessions.get(sessionId)
@@ -359,7 +399,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const result = await client.sessions.fork({ sessionId } as never).catch(() => null)
     setMenuOpen(false)
     // New forked session: navigation lands on the list, where it now exists.
-    if (result?.result.ok) onBack()
+    if (result?.result.ok) handleBack()
     void manager.refreshBaseline()
   }
 
@@ -367,7 +407,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const client = manager.client
     if (client === null) return
     const result = await client.sessions.models({ sessionId } as never).catch(() => null)
-    if (result?.result.ok) setModelLabel(result.result.value.current.model)
+    if (mountedRef.current && result?.result.ok) setModelLabel(result.result.value.current.model)
   }, [manager, sessionId])
 
   const loadCommands = useCallback(async (force = false): Promise<void> => {
@@ -481,10 +521,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
 
   useEffect(() => {
     // Baseline: tail page (with projections watermark), then live frames take over.
+    let alive = true
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
     const client = manager.client
     if (client !== null) {
       void client.sessions.history({ sessionId, maxMessages: 120 } as never).then(result => {
-        if (result.result.ok) {
+        if (alive && result.result.ok) {
           manager.store.applyHistory(
             sessionId,
             result.result.value.events,
@@ -498,15 +540,26 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       if (changed !== undefined && changed !== sessionId) return
       if (pending) return
       pending = true
-      setTimeout(() => {
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        if (!alive) return
         pending = false
         refresh()
       }, 50)
     })
-    refresh()
-    return off
+    if (alive) refresh()
+    return () => {
+      alive = false
+      off()
+      if (refreshTimer !== null) clearTimeout(refreshTimer)
+    }
   }, [manager, sessionId, refresh])
+  useEffect(() => () => { mountedRef.current = false }, [])
   useEffect(() => { void loadModels() }, [loadModels])
+
+  useEffect(() => () => {
+    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
+  }, [])
 
   const send = async (): Promise<void> => {
     const client = manager.client
@@ -784,12 +837,22 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.back}>{t('chat.back')}</Text></TouchableOpacity>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBack}
+          accessibilityRole="button"
+          accessibilityLabel={t('chat.back')}
+        >
+          <BackGlyph color={colors.accent} />
+          <Text style={styles.backLabel}>{t('chat.back').replace(/^[‹<]\s*/, '')}</Text>
+        </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
         <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
           <SearchGlyph color={colors.accent} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.back} onPress={() => setMenuOpen(true)}><Text style={styles.back}>⋯</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.headerMenu} onPress={() => setMenuOpen(true)} accessibilityLabel={t('chat.more')}>
+          <Text style={styles.headerMenuText}>⋯</Text>
+        </TouchableOpacity>
       </View>
       {(() => {
         const s = manager.store.summaries.find(x => x.sessionId === sessionId)
@@ -833,7 +896,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         data={items}
         keyExtractor={item => item.key}
         contentContainerStyle={styles.listContent}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        keyboardShouldPersistTaps="always"
+        onScroll={onListScroll}
+        onScrollBeginDrag={onListScrollBeginDrag}
+        scrollEventThrottle={16}
+        onContentSizeChange={onListContentSizeChange}
         renderItem={({ item }) => (
           <Bubble
             item={item}
@@ -1142,6 +1209,14 @@ function PlusGlyph({ color }: { color: string }): React.JSX.Element {
   )
 }
 
+function BackGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="m15 5-7 7 7 7" />
+    </Svg>
+  )
+}
+
 function SearchGlyph({ color }: { color: string }): React.JSX.Element {
   return (
     <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1245,6 +1320,49 @@ function ReasoningBlock({ text }: { text: string }): React.JSX.Element {
   )
 }
 
+const LONG_REPLY_LIMIT = 6000
+const REPLY_PREVIEW_LIMIT = 1200
+
+function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
+  const { t } = useI18n()
+  const collapsible = text.length > LONG_REPLY_LIMIT
+  const [expanded, setExpanded] = useState(!collapsible)
+  const previousLength = useRef(text.length)
+
+  useEffect(() => {
+    // A streaming reply can cross the limit after the component mounts.  Fold
+    // it at that transition so an unbounded Markdown tree is never kept open.
+    if (text.length > LONG_REPLY_LIMIT && previousLength.current <= LONG_REPLY_LIMIT) {
+      setExpanded(false)
+    }
+    previousLength.current = text.length
+  }, [text.length])
+
+  // Keep the initial render cheap for very large model replies.  Rendering a
+  // long Markdown document creates a large native Spannable tree and can block
+  // Android's main thread while the screen is being left.
+  if (!collapsible || expanded) {
+    return (
+      <>
+        {collapsible && (
+          <TouchableOpacity style={styles.replyToggle} onPress={() => setExpanded(false)}>
+            <Text style={styles.replyToggleText}>{t('chat.replyCollapse')}</Text>
+          </TouchableOpacity>
+        )}
+        <Markdown style={markdownStyles} rules={markdownRules}>{text}</Markdown>
+      </>
+    )
+  }
+
+  const preview = text.slice(0, REPLY_PREVIEW_LIMIT).trimEnd()
+  return (
+    <TouchableOpacity style={styles.replyPreview} onPress={() => setExpanded(true)} accessibilityRole="button">
+      <Text style={styles.replyPreviewText} numberOfLines={12}>{preview}{preview.length < text.length ? '…' : ''}</Text>
+      <Text style={styles.replyToggleText}>{t('chat.replyExpand', { count: text.length })}</Text>
+    </TouchableOpacity>
+  )
+}
+
 function Bubble({ item, manager, sessionId, onLongPress }: {
   item: ConversationItem
   manager: ConnectionManager
@@ -1259,7 +1377,7 @@ function Bubble({ item, manager, sessionId, onLongPress }: {
           {item.images.map(image => (
             <MessageImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
           ))}
-          <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
+          <CollapsibleMarkdown text={item.text} />
         </TouchableOpacity>
       )
     case 'compaction':
@@ -1277,7 +1395,7 @@ function Bubble({ item, manager, sessionId, onLongPress }: {
           onLongPress={onLongPress}
         >
           {item.reasoning !== '' && <ReasoningBlock text={item.reasoning} />}
-          <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
+          <CollapsibleMarkdown text={item.text} />
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
               {item.producedFiles.map(path => (
@@ -1431,8 +1549,11 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     gap: spacing(2),
   },
-  back: { color: colors.accent, fontSize: fontSize.body, width: 56 },
+  backButton: { flexDirection: 'row', alignItems: 'center', minWidth: 88, gap: 2 },
+  backLabel: { color: colors.accent, fontSize: fontSize.body },
   headerAction: { width: 36, alignItems: 'center', justifyContent: 'center' },
+  headerMenu: { width: 36, alignItems: 'center', justifyContent: 'center' },
+  headerMenuText: { color: colors.accent, fontSize: 26, lineHeight: 28 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(1.5), gap: spacing(1.5) },
   metaHeader: {
@@ -1469,7 +1590,7 @@ const styles = StyleSheet.create({
   },
   modelGroup: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), paddingTop: spacing(3), paddingBottom: spacing(1) },
   bubble: { maxWidth: '92%', borderRadius: radius.bubble, padding: spacing(2) },
-  bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser },
+  bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser, paddingVertical: spacing(1) },
   bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: colors.bgBubbleAssistant },
   bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
   reasoningBlock: { marginBottom: spacing(1), borderRadius: radius.card, backgroundColor: colors.bgElevated, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
@@ -1477,6 +1598,10 @@ const styles = StyleSheet.create({
   reasoningLabel: { color: colors.textDim, fontSize: fontSize.tiny },
   reasoningChevron: { color: colors.textDim, fontSize: fontSize.tiny },
   reasoning: { color: colors.textDim, fontSize: fontSize.small, fontStyle: 'italic', paddingHorizontal: spacing(1.5), paddingBottom: spacing(1.5) },
+  replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
+  replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
+  replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },
+  replyToggleText: { color: colors.accent, fontSize: fontSize.tiny },
   compactionRow: {
     alignSelf: 'stretch',
     borderWidth: StyleSheet.hairlineWidth,
@@ -1531,7 +1656,8 @@ const styles = StyleSheet.create({
     minWidth: 40,
     paddingHorizontal: spacing(1.5),
     width: 40,
-    height: 44,
+    minHeight: 44,
+    alignSelf: 'stretch',
     borderRadius: radius.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1579,15 +1705,15 @@ const styles = StyleSheet.create({
   chipText: { color: colors.text, fontSize: fontSize.small },
   composer: {
     paddingHorizontal: spacing(2),
-    paddingTop: spacing(1),
-    paddingBottom: spacing(1.5),
-    gap: spacing(1),
+    paddingTop: spacing(0.5),
+    paddingBottom: spacing(0.5),
+    gap: spacing(0.5),
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
   composerRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'stretch',
     gap: spacing(1),
     minWidth: 0,
   },
@@ -1596,12 +1722,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
     flexShrink: 1,
     maxHeight: 120,
+    minHeight: 44,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.bubble,
     color: colors.text,
     paddingHorizontal: spacing(2),
-    paddingVertical: spacing(1.5),
+    paddingVertical: spacing(0.5),
     fontSize: fontSize.body,
     backgroundColor: colors.bgElevated,
   },
@@ -1609,13 +1736,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: radius.bubble,
     paddingHorizontal: spacing(2.5),
-    paddingVertical: spacing(1.5),
+    minHeight: 44,
+    paddingVertical: 0,
     minWidth: 64,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   disabled: { opacity: 0.5 },
   sendText: { color: '#fff', fontSize: fontSize.body, fontWeight: '600' },
-  runningButtons: { flexDirection: 'row', gap: spacing(1), flexShrink: 0 },
+  runningButtons: { flexDirection: 'row', alignSelf: 'stretch', gap: spacing(1), flexShrink: 0 },
   editCancel: { alignSelf: 'center', padding: spacing(0.5), flexShrink: 0 },
   editCancelText: { color: colors.textDim, fontSize: fontSize.body },
   notice: {
