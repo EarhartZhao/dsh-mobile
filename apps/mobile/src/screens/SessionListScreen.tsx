@@ -200,8 +200,13 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
             <Text style={[styles.headerButtonText, { color: colors.danger }]}>{t('session.unpair')}</Text>
           </TouchableOpacity>
           {onOpenSettings !== undefined && (
-            <TouchableOpacity onPress={onOpenSettings} style={styles.headerButton}>
-              <Text style={styles.headerButtonText}>{t('app.settings')}</Text>
+            <TouchableOpacity
+              onPress={onOpenSettings}
+              style={styles.settingsButton}
+              accessibilityRole="button"
+              accessibilityLabel={t('app.settings')}
+            >
+              <Text style={styles.settingsIcon}>⚙</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -460,9 +465,11 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerTitle: { color: colors.text, fontSize: fontSize.title, fontWeight: '600' },
-  headerActions: { flexDirection: 'row', gap: spacing(3) },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing(3), marginLeft: 'auto' },
   headerButton: { paddingVertical: spacing(1) },
   headerButtonText: { color: colors.accent, fontSize: fontSize.small },
+  settingsButton: { minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+  settingsIcon: { color: colors.accent, fontSize: 24, lineHeight: 28 },
   wsBar: { flexGrow: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   wsBarContent: { paddingHorizontal: spacing(4), paddingVertical: spacing(2), gap: spacing(2) },
   wsChip: {
