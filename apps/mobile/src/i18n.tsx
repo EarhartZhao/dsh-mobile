@@ -46,7 +46,7 @@ const zh = {
   'connection.retryAfterUpdate': '更新后重试',
   'connection.supportedPlugins': '支持插件 {range}',
   'compat.unknownTitle': '插件版本未知',
-  'compat.unknownMessage': '当前 dsh-mobile-plugin 未提供 mobile.info。App 0.1.x 需要 dsh-mobile-plugin 0.1.x，请在 Web 设置页更新并重启移动端桥后重试。',
+  'compat.unknownMessage': '当前 dsh-mobile-plugin 拒绝 mobile.info，可能是旧版插件。App {app} 支持插件 {range}，请更新插件并重启移动端桥后重试。',
   'compat.featuresTitle': '插件功能不足',
   'compat.featuresMessage': 'App {app} 需要插件提供：{features}。当前插件 {plugin} 缺少这些能力，请更新 dsh-mobile-plugin 后重试。',
   'compat.versionTitle': '版本不一致',

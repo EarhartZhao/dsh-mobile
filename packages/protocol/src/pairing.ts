@@ -111,9 +111,11 @@ export interface MobileInventorySnapshot {
 }
 
 /**
- * Reads the plugin's compatibility manifest. Older plugins do not answer
- * `mobile.info`; callers treat that failure as "unknown / too old" rather
- * than trying to infer the plugin version from host.describe.
+ * Reads the plugin's compatibility manifest. Older bridges explicitly reject
+ * `mobile.info`; callers treat that response as "unknown / too old" rather
+ * than trying to infer the plugin version from host.describe. Transport and
+ * authentication failures remain connection failures so an offline bridge is
+ * never reported as an unknown plugin version.
  */
 export async function fetchMobileInfo(
   conn: NatsConnLike,
@@ -134,8 +136,9 @@ export async function fetchMobileInfo(
       mobileApi: candidate.mobileApi,
       features: candidate.features,
     }
-  } catch {
-    return null
+  } catch (error) {
+    if (error instanceof PairingError && error.message === 'mobile-forbidden') return null
+    throw error
   }
 }
 

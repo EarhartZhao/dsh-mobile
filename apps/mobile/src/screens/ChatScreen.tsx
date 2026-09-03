@@ -72,6 +72,18 @@ interface Props {
   onOpenSession?: (sessionId: string) => void
 }
 
+function conversationTailSignature(items: ConversationItem[]): string {
+  const tail = items.at(-1)
+  if (tail === undefined) return 'empty'
+  switch (tail.kind) {
+    case 'user': return `${items.length}:${tail.key}:user:${tail.text.length}:${tail.images.length}`
+    case 'assistant': return `${items.length}:${tail.key}:assistant:${tail.text.length}:${tail.reasoning.length}:${tail.interrupted ? 1 : 0}`
+    case 'stream': return `${items.length}:${tail.key}:stream:${tail.text.length}:${tail.reasoning.length}`
+    case 'tool': return `${items.length}:${tail.key}:tool:${tail.status}:${tail.args.length}:${tail.resultText.length}:${tail.subCalls.length}`
+    case 'compaction': return `${items.length}:${tail.key}:compaction:${tail.summary.length}`
+  }
+}
+
 export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
   const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
@@ -264,6 +276,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const backHandled = useRef(false)
   const mountedRef = useRef(true)
   const listAtBottom = useRef(true)
+  const listInteractionActive = useRef(false)
+  const listDistanceFromBottom = useRef(0)
+  const listInteractionEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const conversationSignature = useRef<string | null>(null)
+  const followTailOnNextLayout = useRef(false)
 
   const handleBack = useCallback((): void => {
     // The header can receive both a touch-up and an accessibility/keyboard
@@ -277,24 +294,61 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
     const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
+    listDistanceFromBottom.current = distanceFromBottom
     // A small tolerance prevents minor layout rounding from disabling the
-    // normal follow-tail behavior, while any deliberate upward scroll opts out.
-    listAtBottom.current = distanceFromBottom <= 48
+    // normal follow-tail behavior. Never re-enable it while a finger drag or
+    // momentum scroll is active, because content measurement events may race
+    // with the gesture and move the list in the opposite direction.
+    if (!listInteractionActive.current) listAtBottom.current = distanceFromBottom <= 48
   }, [])
 
   const onListScrollBeginDrag = useCallback((): void => {
     // Opt out before the first scroll sample arrives, otherwise a concurrent
     // row measurement could win the race and move the list back to the tail.
+    if (listInteractionEndTimer.current !== null) {
+      clearTimeout(listInteractionEndTimer.current)
+      listInteractionEndTimer.current = null
+    }
+    listInteractionActive.current = true
     listAtBottom.current = false
+    followTailOnNextLayout.current = false
   }, [])
+
+  const finishListInteraction = useCallback((): void => {
+    listInteractionActive.current = false
+    listAtBottom.current = listDistanceFromBottom.current <= 48
+  }, [])
+
+  const onListScrollEndDrag = useCallback((): void => {
+    // Momentum begins on a later native event. Delay the unlock briefly so
+    // there is no gap in which a content-size change can steal the scroll.
+    if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
+    listInteractionEndTimer.current = setTimeout(() => {
+      listInteractionEndTimer.current = null
+      finishListInteraction()
+    }, 120)
+  }, [finishListInteraction])
+
+  const onListMomentumScrollBegin = useCallback((): void => {
+    if (listInteractionEndTimer.current !== null) {
+      clearTimeout(listInteractionEndTimer.current)
+      listInteractionEndTimer.current = null
+    }
+    listInteractionActive.current = true
+  }, [])
+
+  const onListMomentumScrollEnd = useCallback((): void => {
+    finishListInteraction()
+  }, [finishListInteraction])
 
   const onListContentSizeChange = useCallback((): void => {
     // Only follow new streamed content when the user was already at the tail.
     // Unconditionally calling scrollToEnd here was pulling every upward swipe
     // back to the bottom as soon as a row remeasured.
-    if (!listAtBottom.current) return
+    if (!followTailOnNextLayout.current || listInteractionActive.current || !listAtBottom.current) return
+    followTailOnNextLayout.current = false
     requestAnimationFrame(() => {
-      if (mountedRef.current && listAtBottom.current) {
+      if (mountedRef.current && !listInteractionActive.current && listAtBottom.current) {
         listRef.current?.scrollToEnd({ animated: false })
       }
     })
@@ -303,7 +357,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const refresh = useCallback(() => {
     const session = manager.store.sessions.get(sessionId)
     if (session === undefined) return
-    setItems(deriveConversation(session))
+    const nextItems = deriveConversation(session)
+    const nextSignature = conversationTailSignature(nextItems)
+    if (nextSignature !== conversationSignature.current) {
+      conversationSignature.current = nextSignature
+      followTailOnNextLayout.current = !listInteractionActive.current && listAtBottom.current
+    }
+    setItems(nextItems)
     setRunning(session.running)
     setQueue([...session.queue])
     setJobs([...session.jobs])
@@ -554,7 +614,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       if (refreshTimer !== null) clearTimeout(refreshTimer)
     }
   }, [manager, sessionId, refresh])
-  useEffect(() => () => { mountedRef.current = false }, [])
+  useEffect(() => () => {
+    mountedRef.current = false
+    if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
+  }, [])
   useEffect(() => { void loadModels() }, [loadModels])
 
   useEffect(() => () => {
@@ -899,6 +962,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         keyboardShouldPersistTaps="always"
         onScroll={onListScroll}
         onScrollBeginDrag={onListScrollBeginDrag}
+        onScrollEndDrag={onListScrollEndDrag}
+        onMomentumScrollBegin={onListMomentumScrollBegin}
+        onMomentumScrollEnd={onListMomentumScrollEnd}
         scrollEventThrottle={16}
         onContentSizeChange={onListContentSizeChange}
         renderItem={({ item }) => (
