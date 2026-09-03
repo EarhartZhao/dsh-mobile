@@ -54,7 +54,7 @@ export function checkMobileCompatibility(info: MobilePluginInfo | null): Compati
     return {
       status: 'unknown',
       title: '插件版本未知',
-      message: '当前 dsh-mobile-plugin 未提供 mobile.info。App 0.1.x 需要 dsh-mobile-plugin 0.1.x，请在 Web 设置页更新并重启移动端桥后重试。',
+       message: `当前 dsh-mobile-plugin 拒绝 mobile.info，可能是旧版插件。App ${APP_VERSION} 支持插件 ${SUPPORTED_PLUGIN_RANGE}，请更新插件并重启移动端桥后重试。`,
       pluginVersion: '未知',
       mobileApi: 0,
       features: [],

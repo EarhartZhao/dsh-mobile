@@ -49,7 +49,12 @@ function compatibilityTitle(result: CompatibilityResult | null, t: (key: Transla
 }
 
 function compatibilityMessage(result: CompatibilityResult | null, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
-  if (result?.status === 'unknown') return t('compat.unknownMessage')
+  if (result?.status === 'unknown') {
+    return t('compat.unknownMessage', {
+      app: result.appVersion,
+      range: result.supportedPluginRange,
+    })
+  }
   if (result?.status === 'incompatible') {
     if (result.missingFeatures.length > 0) {
       return t('compat.featuresMessage', { app: result.appVersion, features: result.missingFeatures.join(', '), plugin: result.pluginVersion })

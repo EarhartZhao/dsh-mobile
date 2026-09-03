@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { connect, headers as natsHeaders, type NatsConnection } from 'nats'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
+import { fetchMobileInfo, NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
 import { REQUIRED_PLUGIN_FEATURES } from '../src/compatibility.ts'
 import { ConnectionManager } from '../src/connection-manager.ts'
 
@@ -157,6 +157,28 @@ describeNats('NatsApiClient over real NATS', () => {
     await reader
     abort.abort()
     expect(frames[0]).toMatchObject({ type: 'session/subscribed', sessionId: 's-live' })
+    await nc.close()
+  })
+
+  it('does not misreport an offline bridge as an unknown plugin version', async () => {
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'offline-pc', VALID_TOKEN, 200)).rejects.toThrow()
+    await nc.close()
+  })
+
+  it('treats an explicit mobile.info rejection as a legacy plugin', async () => {
+    const sub = pluginSide.subscribe('svc.dsh.legacy-pc.mobile.info', { max: 1 })
+    const responder = (async () => {
+      for await (const msg of sub) {
+        const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
+        msg.respond(replyErr(body.rpcId, 'mobile-forbidden'))
+      }
+    })()
+    await pluginSide.flush()
+
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'legacy-pc', VALID_TOKEN, 1_000)).resolves.toBeNull()
+    await responder
     await nc.close()
   })
 })
