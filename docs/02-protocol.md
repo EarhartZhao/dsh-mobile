@@ -105,7 +105,9 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
 
 ## 版本兼容
 
-App 在建立会话基线前调用插件自有 `mobile.info`。响应必须携带 `pluginVersion`、`mobileApi` 和 `features`。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。App 0.1.x 只接受 `pluginVersion >=0.1.0 <0.2.0` 且 `mobileApi=1`；同一代插件必须声明 `plus-menu`、`multi-image`、`durable-attachment-order` 能力位，`command-directory` 是可选增强（宿主不支持时 App 使用常用命令回退）。响应缺失或字段不完整时按“插件版本未知/过旧”阻断，必备能力位缺失时按“插件功能不足”阻断，并让用户在 Web 设置页更新 mobile bridge。
+App 在建立会话基线前调用插件自有 `mobile.info`。响应必须携带 `pluginVersion`、`mobileApi` 和 `features`。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。App 0.1.x 接受 `pluginVersion >=0.1.0 <0.3.0` 且 `mobileApi=1`；同一代插件必须声明 `plus-menu`、`multi-image`、`durable-attachment-order` 能力位，`command-directory` 是可选增强（宿主不支持时 App 使用常用命令回退）。插件明确以 `mobile-forbidden` 拒绝该方法时按“插件版本未知/过旧”阻断；超时、无响应者、鉴权失败和格式错误仍是连接错误，不能误报为版本问题。必备能力位缺失时按“插件功能不足”阻断，并让用户在 Web 设置页更新 mobile bridge。
+
+插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 
 ## 客户端实现策略
 

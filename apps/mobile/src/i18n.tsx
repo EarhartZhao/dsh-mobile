@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 export type Language = 'system' | 'zh' | 'en'
 
 const STORAGE_KEY = 'dsh-mobile.language'
+const DEFAULT_LANGUAGE_VERSION_KEY = 'dsh-mobile.language-default-v1'
 
 const zh = {
   'common.close': '关闭',
@@ -28,11 +29,14 @@ const zh = {
   'app.theme.light': '亮色',
   'app.theme.dark': '暗色',
   'app.theme.system': '跟随系统',
+  'app.theme.chooseHint': '点击选择主题',
   'app.language': '语言',
   'app.language.system': '跟随系统',
   'app.language.zh': '中文',
   'app.language.en': 'English',
   'app.pluginFeaturesMissing': '未上报插件功能',
+  'app.pluginSettings': '插件设置',
+  'app.connectionSettings': '连接设置',
   'app.mobileApi': 'mobileApi',
   'app.plugin': 'Plugin',
   'connection.connecting': '连接中…',
@@ -52,6 +56,35 @@ const zh = {
   'compat.versionTitle': '版本不一致',
   'compat.versionMessage': 'App {app} 需要插件 {range}（mobileApi {apis}）。当前插件 {plugin}（mobileApi {api}）。请更新 dsh-mobile-plugin 后重试。',
   'diagnostics.state': '状态',
+  'diagnostics.title': '连接诊断',
+  'diagnostics.open': '打开连接诊断',
+  'diagnostics.hub': 'NATS 地址',
+  'diagnostics.instance': '实例 ID',
+  'diagnostics.pluginVersion': '插件版本',
+  'diagnostics.health': '桥健康状态',
+  'diagnostics.healthy': '正常',
+  'diagnostics.unavailable': '当前桥不提供健康检查',
+  'diagnostics.latency': '健康检查延迟',
+  'diagnostics.buildId': '构建 ID',
+  'diagnostics.loadedFrom': '实际加载路径',
+  'diagnostics.startedAt': '桥启动时间',
+  'diagnostics.lastConnectedAt': '最近连接 NATS',
+  'diagnostics.lastReconnectAt': '最近重连 NATS',
+  'diagnostics.lastOnlineAt': 'App 最近上线',
+  'diagnostics.devices': '已配对设备数',
+  'diagnostics.features': '插件功能',
+  'diagnostics.never': '暂无',
+  'diagnostics.none': '无',
+  'diagnostics.test': '测试连接',
+  'diagnostics.testing': '测试中…',
+  'diagnostics.testPassed': '移动端桥健康检查通过。',
+  'diagnostics.testFailed': '连接测试失败：{message}',
+  'diagnostics.failure.bridge-unavailable': '桥未启动或实例无响应',
+  'diagnostics.failure.authentication': '设备授权失败',
+  'diagnostics.failure.tls': 'TLS 或证书错误',
+  'diagnostics.failure.network': '网络连接错误',
+  'diagnostics.failure.protocol': '插件响应格式错误',
+  'diagnostics.failure.unknown': '未分类错误',
   'diagnostics.recentErrors': '最近错误',
   'diagnostics.recentEvents': '最近连接事件',
   'diagnostics.copy': '复制诊断',
@@ -379,11 +412,14 @@ const en: Partial<Record<keyof typeof zh, string>> = {
   'app.theme.light': 'Light',
   'app.theme.dark': 'Dark',
   'app.theme.system': 'Follow system',
+  'app.theme.chooseHint': 'Tap to choose a theme',
   'app.language': 'Language',
   'app.language.system': 'Follow system',
   'app.language.zh': '中文',
   'app.language.en': 'English',
   'app.pluginFeaturesMissing': 'No plugin features reported',
+  'app.pluginSettings': 'Plugin settings',
+  'app.connectionSettings': 'Connection settings',
   'app.mobileApi': 'mobileApi',
   'app.plugin': 'Plugin',
   'connection.connecting': 'Connecting…',
@@ -403,6 +439,35 @@ const en: Partial<Record<keyof typeof zh, string>> = {
   'compat.versionTitle': 'Version mismatch',
   'compat.versionMessage': 'App {app} requires plugin {range} (mobileApi {apis}). Current plugin is {plugin} (mobileApi {api}). Update dsh-mobile-plugin and retry.',
   'diagnostics.state': 'State',
+  'diagnostics.title': 'Connection diagnostics',
+  'diagnostics.open': 'Open connection diagnostics',
+  'diagnostics.hub': 'NATS address',
+  'diagnostics.instance': 'Instance ID',
+  'diagnostics.pluginVersion': 'Plugin version',
+  'diagnostics.health': 'Bridge health',
+  'diagnostics.healthy': 'Healthy',
+  'diagnostics.unavailable': 'This bridge does not provide health checks',
+  'diagnostics.latency': 'Health-check latency',
+  'diagnostics.buildId': 'Build ID',
+  'diagnostics.loadedFrom': 'Loaded from',
+  'diagnostics.startedAt': 'Bridge started',
+  'diagnostics.lastConnectedAt': 'Last NATS connection',
+  'diagnostics.lastReconnectAt': 'Last NATS reconnect',
+  'diagnostics.lastOnlineAt': 'App last online',
+  'diagnostics.devices': 'Paired devices',
+  'diagnostics.features': 'Plugin features',
+  'diagnostics.never': 'Never',
+  'diagnostics.none': 'None',
+  'diagnostics.test': 'Test connection',
+  'diagnostics.testing': 'Testing…',
+  'diagnostics.testPassed': 'Mobile bridge health check passed.',
+  'diagnostics.testFailed': 'Connection test failed: {message}',
+  'diagnostics.failure.bridge-unavailable': 'Bridge stopped or instance not responding',
+  'diagnostics.failure.authentication': 'Device authorization failed',
+  'diagnostics.failure.tls': 'TLS or certificate error',
+  'diagnostics.failure.network': 'Network connection error',
+  'diagnostics.failure.protocol': 'Invalid plugin response',
+  'diagnostics.failure.unknown': 'Unclassified error',
   'diagnostics.recentErrors': 'Recent errors',
   'diagnostics.recentEvents': 'Recent connection events',
   'diagnostics.copy': 'Copy diagnostics',
@@ -730,8 +795,19 @@ export function I18nProvider({ children }: { children: React.ReactNode }): React
   const [language, setLanguageState] = useState<Language>('zh')
 
   useEffect(() => {
-    void AsyncStorage.getItem(STORAGE_KEY)
-      .then(value => { if (value === 'system' || value === 'zh' || value === 'en') setLanguageState(value) })
+    void AsyncStorage.getItem(DEFAULT_LANGUAGE_VERSION_KEY)
+      .then(async initialized => {
+        // The first release defaulted to the device language in some builds.
+        // Normalize existing installs once; future explicit choices persist.
+        if (initialized !== '1') {
+          await AsyncStorage.setItem(STORAGE_KEY, 'zh')
+          await AsyncStorage.setItem(DEFAULT_LANGUAGE_VERSION_KEY, '1')
+          setLanguageState('zh')
+          return
+        }
+        const value = await AsyncStorage.getItem(STORAGE_KEY)
+        if (value === 'system' || value === 'zh' || value === 'en') setLanguageState(value)
+      })
       .catch(() => undefined)
   }, [])
 

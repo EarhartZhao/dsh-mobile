@@ -5,10 +5,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Clipboard, DevSettings, Linking, Modal, NativeModules, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
-import type { CompatibilityResult, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
+import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { APP_VERSION } from '@dsh-mobile/core'
-import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
-import { I18nProvider, useI18n, type Language, type TranslationKey } from './i18n'
+import type { MobileHealthSnapshot, MobileInventorySnapshot } from '@dsh-mobile/protocol'
+import { I18nProvider, useI18n, type TranslationKey } from './i18n'
 import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
@@ -17,13 +17,29 @@ import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
 import { ChatScreen } from './screens/ChatScreen'
+import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
 
-type Route = { name: 'list' } | { name: 'chat'; sessionId: string }
-type ThemeMode = 'light' | 'dark' | 'system'
+type Route = { name: 'list' } | { name: 'chat'; sessionId: string } | { name: 'settings' }
 
 interface DiagnosticError {
   at: string
   message: string
+  kind: ConnectionFailureKind
+}
+
+interface HealthReport {
+  snapshot: MobileHealthSnapshot | null
+  latencyMs: number | null
+  error: string | null
+}
+
+function DiagnosticRow({ label, value }: { label: string, value: string }): React.JSX.Element {
+  return (
+    <View style={styles.diagnosticRow}>
+      <Text style={styles.diagnosticLabel}>{label}</Text>
+      <Text style={styles.diagnosticValue} selectable>{value}</Text>
+    </View>
+  )
 }
 
 interface DiagnosticEvent {
@@ -40,6 +56,10 @@ function connectionStateKey(state: ConnectionState): TranslationKey {
     case 'stopped': return 'connection.stopped'
     case 'incompatible': return 'connection.incompatible'
   }
+}
+
+function connectionFailureKey(kind: ConnectionFailureKind): TranslationKey {
+  return `diagnostics.failure.${kind}` as TranslationKey
 }
 
 function compatibilityTitle(result: CompatibilityResult | null, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
@@ -77,13 +97,15 @@ function AppContent(): React.JSX.Element {
   const [route, setRoute] = useState<Route>({ name: 'list' })
   const [connState, setConnState] = useState<ConnectionState>('idle')
   const [alert, setAlert] = useState<string | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [themeMode, setThemeMode] = useState<ThemeMode>('system')
   const [errors, setErrors] = useState<DiagnosticError[]>([])
   const [events, setEvents] = useState<DiagnosticEvent[]>([])
   const [pendingNewSession, setPendingNewSession] = useState(false)
   const [inventory, setInventory] = useState<MobileInventorySnapshot | null | undefined>(undefined)
   const [inventoryLoading, setInventoryLoading] = useState(false)
+  const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
+  const [healthLoading, setHealthLoading] = useState(false)
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -93,9 +115,13 @@ function AppContent(): React.JSX.Element {
     alertTimer.current = setTimeout(() => setAlert(null), 5000)
   }, [])
 
-  const recordError = useCallback((message: string) => {
-    setErrors(current => [...current.slice(-4), { at: new Date().toISOString(), message }])
+  const recordError = useCallback((message: string, kind: ConnectionFailureKind = 'unknown') => {
+    setErrors(current => [...current.slice(-7), { at: new Date().toISOString(), message, kind }])
   }, [])
+
+  const diagnosticTime = useCallback((value: string | null | undefined): string => value === null || value === undefined
+    ? t('diagnostics.never')
+    : new Date(value).toLocaleString(locale, { hour12: false }), [locale, t])
 
   useEffect(() => {
     void loadPairing().then(record => {
@@ -134,7 +160,8 @@ function AppContent(): React.JSX.Element {
     })
     setErrors([])
     setEvents([])
-    const offManagerError = manager.on('error', ({ message }) => recordError(message))
+    const offManagerError = manager.on('error', ({ message, kind }) => recordError(message, kind))
+    const offHealth = manager.on('health', report => setHealthReport(report))
     const offStoreError = manager.store.on('error', ({ message }) => recordError(message))
     // Foreground alerts: task settlement + answerable frames (M3 scope: no
     // system push, foreground banner only).
@@ -155,6 +182,7 @@ function AppContent(): React.JSX.Element {
       offSettled()
       offAttention()
       offManagerError()
+      offHealth()
       offStoreError()
       void manager.stop()
       managerRef.current = null
@@ -209,6 +237,20 @@ function AppContent(): React.JSX.Element {
       .finally(() => setInventoryLoading(false))
   }, [connState])
 
+  const refreshHealth = useCallback(() => {
+    const manager = managerRef.current
+    if (manager === null) return
+    setHealthLoading(true)
+    void manager.probeHealth()
+      .then(snapshot => {
+        showAlert(snapshot === null ? t('diagnostics.unavailable') : t('diagnostics.testPassed'))
+      })
+      .catch(cause => {
+        showAlert(t('diagnostics.testFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+      })
+      .finally(() => setHealthLoading(false))
+  }, [showAlert, t])
+
   const copyDiagnostics = useCallback(() => {
     const compatibility = managerRef.current?.compatibility
     const record = pairing
@@ -225,9 +267,11 @@ function AppContent(): React.JSX.Element {
       },
       recentErrors: errors,
       recentConnectionEvents: events,
+      lastOnlineAt: managerRef.current?.lastOnlineAt ?? null,
+      health: healthReport,
     }
     Clipboard.setString(JSON.stringify(payload, null, 2))
-  }, [connState, errors, events, pairing])
+  }, [connState, errors, events, healthReport, pairing])
 
   const openDeepLink = useCallback(async (url: string): Promise<void> => {
     const path = url.replace(/^dshmobile:\/\//, '').split(/[?#]/)[0]?.replace(/^\/+/, '')
@@ -300,7 +344,24 @@ function AppContent(): React.JSX.Element {
               manager={managerRef.current}
               onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
               onUnpair={onUnpair}
-              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenSettings={() => setRoute({ name: 'settings' })}
+            />
+          ) : route.name === 'settings' ? (
+            <SettingsScreen
+              manager={managerRef.current}
+              connState={connState}
+              errors={errors}
+              events={events}
+              inventory={inventory}
+              inventoryLoading={inventoryLoading}
+              refreshInventory={refreshInventory}
+              themeMode={themeMode}
+              setTheme={setTheme}
+              language={language}
+              setLanguage={setLanguage}
+              onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+              onBack={() => setRoute({ name: 'list' })}
+              appVersion={APP_VERSION}
             />
           ) : (
             <ChatScreen
@@ -313,89 +374,56 @@ function AppContent(): React.JSX.Element {
         </>
       )}
     </SafeAreaView>
-      <Modal transparent visible={settingsOpen} animationType="fade" onRequestClose={() => setSettingsOpen(false)}>
-        <ModalBackdrop onClose={() => setSettingsOpen(false)}>
-          <View style={styles.settingsCard}>
-            <ScrollView style={styles.settingsScroll} contentContainerStyle={styles.settingsScrollContent} showsVerticalScrollIndicator={false}>
-              <Text style={styles.settingsTitle}>{t('app.settings')}</Text>
-            <Text style={styles.settingsVersion}>
-              App {APP_VERSION} · {t('app.plugin')} {managerRef.current?.compatibility?.pluginVersion ?? t('common.unknown')}
-              {managerRef.current?.compatibility === null ? '' : ` · ${t('app.mobileApi')} ${managerRef.current?.compatibility?.mobileApi ?? 0}`}
-            </Text>
-            <Text style={styles.settingsFeatures}>
-              {managerRef.current?.compatibility?.features.length
-                ? managerRef.current.compatibility.features.join(' · ')
-                : t('app.pluginFeaturesMissing')}
-            </Text>
-            <View style={styles.inventoryBlock}>
-              <View style={styles.inventoryHeader}>
-                <Text style={styles.inventoryTitle}>{t('inventory.title')}</Text>
-                {inventory !== null && (
-                  <TouchableOpacity onPress={refreshInventory} disabled={inventoryLoading}>
-                    <Text style={styles.inventoryRefresh}>{t('inventory.refresh')}</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              {inventory === undefined ? (
-                <Text style={styles.settingsMeta}>{t('inventory.loading')}</Text>
-              ) : inventory === null ? (
-                <Text style={styles.settingsMeta}>{t('inventory.unavailable')}</Text>
-              ) : inventory.entries.length === 0 ? (
-                <Text style={styles.settingsMeta}>{t('inventory.empty')}</Text>
-              ) : inventory.entries.map(entry => (
-                <View key={entry.entryId} style={styles.inventoryRow}>
-                  <Text style={styles.inventoryName} numberOfLines={1}>{entry.moduleName}</Text>
-                  <Text style={styles.inventoryMeta} numberOfLines={1}>
-                    {entry.enabled ? t('inventory.enabled') : t('inventory.disabled')}
-                    {' · '}
-                    {t(`inventory.phase.${entry.fiberPhase ?? 'none'}` as TranslationKey)}
-                  </Text>
-                </View>
-              ))}
+      <Modal transparent visible={diagnosticsOpen} animationType="fade" onRequestClose={() => setDiagnosticsOpen(false)}>
+        <ModalBackdrop onClose={() => setDiagnosticsOpen(false)}>
+          <View style={styles.diagnosticCard}>
+            <View style={styles.diagnosticHeader}>
+              <Text style={styles.diagnosticTitle}>{t('diagnostics.title')}</Text>
+              <TouchableOpacity onPress={() => setDiagnosticsOpen(false)}>
+                <Text style={styles.diagnosticClose}>{t('common.close')}</Text>
+              </TouchableOpacity>
             </View>
-            <View style={styles.diagnosticsBlock}>
-              <Text style={styles.settingsMeta}>{t('diagnostics.state')}: {t(connectionStateKey(connState))}</Text>
-              <Text style={styles.settingsMeta}>{t('diagnostics.recentErrors')}: {errors.length}</Text>
-              <Text style={styles.settingsMeta}>{t('diagnostics.recentEvents')}: {events.length}</Text>
-              {events.slice(-4).reverse().map((event, index) => (
-                <Text key={`${event.at}:event:${index}`} style={styles.settingsMeta} numberOfLines={1}>
-                  {new Date(event.at).toLocaleString(locale, { hour12: false })} · {t(connectionStateKey(event.state))}
+            <ScrollView style={styles.diagnosticScroll} showsVerticalScrollIndicator={false}>
+              <DiagnosticRow label={t('diagnostics.state')} value={t(connectionStateKey(connState))} />
+              <DiagnosticRow label={t('diagnostics.hub')} value={pairing?.hub ?? t('common.unknown')} />
+              <DiagnosticRow label={t('diagnostics.instance')} value={pairing?.instance ?? t('common.unknown')} />
+              <DiagnosticRow label={t('diagnostics.pluginVersion')} value={healthReport?.snapshot?.pluginVersion ?? managerRef.current?.compatibility?.pluginVersion ?? t('common.unknown')} />
+              <DiagnosticRow label={t('app.mobileApi')} value={String(healthReport?.snapshot?.mobileApi ?? managerRef.current?.compatibility?.mobileApi ?? 0)} />
+              <DiagnosticRow label={t('diagnostics.health')} value={healthReport?.error ?? (healthReport?.snapshot === null || healthReport === null ? t('diagnostics.unavailable') : t('diagnostics.healthy'))} />
+              <DiagnosticRow label={t('diagnostics.latency')} value={healthReport?.latencyMs === null || healthReport?.latencyMs === undefined ? '—' : `${healthReport.latencyMs} ms`} />
+              <DiagnosticRow label={t('diagnostics.buildId')} value={healthReport?.snapshot?.buildId ?? '—'} />
+              <DiagnosticRow label={t('diagnostics.loadedFrom')} value={healthReport?.snapshot?.loadedFrom ?? '—'} />
+              <DiagnosticRow label={t('diagnostics.startedAt')} value={diagnosticTime(healthReport?.snapshot?.startedAt)} />
+              <DiagnosticRow label={t('diagnostics.lastConnectedAt')} value={diagnosticTime(healthReport?.snapshot?.lastConnectedAt)} />
+              <DiagnosticRow label={t('diagnostics.lastReconnectAt')} value={diagnosticTime(healthReport?.snapshot?.lastReconnectAt)} />
+              <DiagnosticRow label={t('diagnostics.lastOnlineAt')} value={diagnosticTime(managerRef.current?.lastOnlineAt)} />
+              <DiagnosticRow label={t('diagnostics.devices')} value={healthReport?.snapshot === null || healthReport?.snapshot === undefined ? '—' : String(healthReport.snapshot.devices)} />
+              <DiagnosticRow label={t('diagnostics.features')} value={managerRef.current?.compatibility?.features.join(' · ') || '—'} />
+
+              <Text style={styles.diagnosticSectionTitle}>{t('diagnostics.recentEvents')}</Text>
+              {events.length === 0 ? <Text style={styles.settingsMeta}>{t('diagnostics.none')}</Text> : events.slice(-8).reverse().map((event, index) => (
+                <Text key={`${event.at}:event:${index}`} style={styles.diagnosticLog}>
+                  {diagnosticTime(event.at)} · {t(connectionStateKey(event.state))}
                 </Text>
               ))}
-              {errors.map((error, index) => (
-                <Text key={`${error.at}:${index}`} style={styles.diagnosticError} numberOfLines={3}>
-                  {new Date(error.at).toLocaleString(locale, { hour12: false })} · {error.message}
+              <Text style={styles.diagnosticSectionTitle}>{t('diagnostics.recentErrors')}</Text>
+              {errors.length === 0 ? <Text style={styles.settingsMeta}>{t('diagnostics.none')}</Text> : errors.slice().reverse().map((error, index) => (
+                <Text key={`${error.at}:${index}`} style={styles.diagnosticError}>
+                  {diagnosticTime(error.at)} · {t(connectionFailureKey(error.kind))}{'\n'}{error.message}
                 </Text>
               ))}
+            </ScrollView>
+            <View style={styles.diagnosticActions}>
+              <TouchableOpacity style={styles.diagnosticButton} disabled={healthLoading} onPress={refreshHealth}>
+                <Text style={styles.diagnosticButtonText}>{healthLoading ? t('diagnostics.testing') : t('diagnostics.test')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.diagnosticButton} onPress={() => void retryConnection()}>
+                <Text style={styles.diagnosticButtonText}>{t('common.retry')}</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.diagnosticButton} onPress={copyDiagnostics}>
                 <Text style={styles.diagnosticButtonText}>{t('diagnostics.copy')}</Text>
               </TouchableOpacity>
             </View>
-            {(['light', 'dark', 'system'] as ThemeMode[]).map(mode => (
-              <TouchableOpacity
-                key={mode}
-                style={styles.settingsRow}
-                onPress={() => { setTheme(mode); setSettingsOpen(false) }}
-              >
-                <Text style={styles.settingsText}>
-                  {mode === 'light' ? t('app.theme.light') : mode === 'dark' ? t('app.theme.dark') : t('app.theme.system')}
-                </Text>
-                <Text style={[styles.settingsCheck, themeMode !== mode && { opacity: 0 }]}>✓</Text>
-              </TouchableOpacity>
-            ))}
-            {(['system', 'zh', 'en'] as Language[]).map(mode => (
-              <TouchableOpacity
-                key={mode}
-                style={styles.settingsRow}
-                onPress={() => setLanguage(mode)}
-              >
-                <Text style={styles.settingsText}>
-                  {mode === 'system' ? t('app.language.system') : mode === 'zh' ? t('app.language.zh') : t('app.language.en')}
-                </Text>
-                <Text style={[styles.settingsCheck, language !== mode && { opacity: 0 }]}>✓</Text>
-              </TouchableOpacity>
-            ))}
-            </ScrollView>
           </View>
         </ModalBackdrop>
       </Modal>
@@ -446,56 +474,30 @@ const styles = StyleSheet.create({
   },
   alertText: { color: colors.text, fontSize: fontSize.small },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
-  settingsCard: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: 8,
-    marginHorizontal: 40,
-    paddingVertical: 8,
-  },
-  settingsTitle: {
-    color: colors.textDim,
-    fontSize: 11,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  settingsVersion: {
-    color: colors.textDim,
-    fontSize: 11,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
-  },
-  settingsFeatures: {
-    color: colors.textDim,
-    fontSize: 11,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
-  },
-  settingsScroll: { maxHeight: 440 },
-  settingsScrollContent: { paddingBottom: 8 },
-  inventoryBlock: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    marginTop: 6,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
-  },
-  inventoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  inventoryTitle: { color: colors.text, fontSize: 12, fontWeight: '600' },
-  inventoryRefresh: { color: colors.accent, fontSize: 11 },
-  inventoryRow: { marginTop: 6, gap: 1 },
-  inventoryName: { color: colors.text, fontSize: 11 },
-  inventoryMeta: { color: colors.textDim, fontSize: 10 },
-  diagnosticsBlock: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    marginTop: 6,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 12,
-  },
   settingsMeta: { color: colors.textDim, fontSize: 11 },
   diagnosticError: { color: colors.warning, fontSize: 11, marginTop: 4 },
+  diagnosticCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: 12,
+    marginHorizontal: 18,
+    maxHeight: '86%',
+    padding: 16,
+  },
+  diagnosticHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  diagnosticTitle: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  diagnosticClose: { color: colors.accent, fontSize: 14, padding: 6 },
+  diagnosticScroll: { flexGrow: 0 },
+  diagnosticRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    paddingVertical: 7,
+    gap: 3,
+  },
+  diagnosticLabel: { color: colors.textDim, fontSize: 11 },
+  diagnosticValue: { color: colors.text, fontSize: 12, lineHeight: 17 },
+  diagnosticSectionTitle: { color: colors.text, fontSize: 13, fontWeight: '600', marginTop: 14, marginBottom: 4 },
+  diagnosticLog: { color: colors.textDim, fontSize: 11, marginTop: 3 },
+  diagnosticActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 10 },
   diagnosticButton: {
     alignSelf: 'flex-start',
     marginTop: 8,

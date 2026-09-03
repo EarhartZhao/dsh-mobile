@@ -77,7 +77,17 @@ beforeAll(async () => {
         msg.respond(replyOk(body.rpcId, {
           pluginVersion: '0.1.0',
           mobileApi: 1,
-          features: [...REQUIRED_PLUGIN_FEATURES],
+          features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+        }))
+        continue
+      }
+      if (method === 'mobile.health') {
+        msg.respond(replyOk(body.rpcId, {
+          status: 'ok', connection: 'connected', devices: 1,
+          pluginVersion: '0.2.0', mobileApi: 1, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+          buildId: 'test-build', loadedFrom: 'C:\\test\\bridge.js', instanceId: INSTANCE,
+          startedAt: new Date(0).toISOString(), uptimeMs: 1000,
+          lastConnectedAt: new Date(0).toISOString(), lastReconnectAt: null, lastError: null,
         }))
         continue
       }
@@ -181,6 +191,22 @@ describeNats('NatsApiClient over real NATS', () => {
     await responder
     await nc.close()
   })
+
+  it('keeps a malformed mobile.info response as a protocol error', async () => {
+    const sub = pluginSide.subscribe('svc.dsh.malformed-pc.mobile.info', { max: 1 })
+    const responder = (async () => {
+      for await (const msg of sub) {
+        const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
+        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.0' }))
+      }
+    })()
+    await pluginSide.flush()
+
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'malformed-pc', VALID_TOKEN, 1_000)).rejects.toThrow('mobile-info-invalid')
+    await responder
+    await nc.close()
+  })
 })
 
 describe('ConnectionManager', () => {
@@ -194,6 +220,8 @@ describe('ConnectionManager', () => {
     await manager.start()
     expect(manager.state).toBe('online')
     expect(manager.hostInfo).toMatchObject({ version: '0.1.1' })
+    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.0', instanceId: INSTANCE })
+    expect(manager.healthLatencyMs).toEqual(expect.any(Number))
     // hello replay delivered the pending approval into the store.
     await new Promise(r => setTimeout(r, 300))
     expect(manager.store.sessions.get('s-live')?.pendingApprovals.size).toBe(1)
