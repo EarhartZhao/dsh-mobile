@@ -10,6 +10,7 @@ import {
   NatsApiClient,
   sendHello,
   fetchMobileInfo,
+  fetchMobileHealth,
   fetchMobileInventory,
   type HostFrame,
   type MuxFrame,
@@ -17,12 +18,25 @@ import {
   type NatsHeadersFactory,
   type RpcId,
   type MobileInventorySnapshot,
+  type MobileHealthSnapshot,
 } from '@dsh-mobile/protocol'
 import { Emitter } from './emitter.ts'
 import { SessionStore } from './session-store.ts'
 import { checkMobileCompatibility, type CompatibilityResult } from './compatibility.ts'
 
 export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped' | 'incompatible'
+export type ConnectionFailureKind = 'bridge-unavailable' | 'authentication' | 'tls' | 'network' | 'protocol' | 'unknown'
+
+/** Classifies transport/RPC text without coupling the core package to UI copy. */
+export function classifyConnectionFailure(message: string): ConnectionFailureKind {
+  const text = message.toLowerCase()
+  if (text.includes('mobile-unauthenticated') || text.includes('authorization') || text.includes('authentication')) return 'authentication'
+  if (text.includes('certificate') || text.includes('tls') || text.includes('ssl')) return 'tls'
+  if (text.includes('no responders') || text.includes('503') || text.includes('timeout')) return 'bridge-unavailable'
+  if (text.includes('mobile-info-invalid') || text.includes('mobile-health-invalid') || text.includes('parse') || text.includes('json') || text.includes('zod')) return 'protocol'
+  if (text.includes('network') || text.includes('socket') || text.includes('connection refused') || text.includes('dns')) return 'network'
+  return 'unknown'
+}
 
 /** Optional status stream both nats flavors expose (`conn.status()`). */
 interface StatusfulConn extends NatsConnLike {
@@ -37,7 +51,8 @@ type ManagerEvents = {
   state: { state: ConnectionState }
   hostInfo: { info: unknown }
   compatibility: { result: import('./compatibility.ts').CompatibilityResult }
-  error: { message: string }
+  error: { message: string, kind: ConnectionFailureKind }
+  health: { snapshot: MobileHealthSnapshot | null, latencyMs: number | null, error: string | null }
 }
 
 export interface ConnectionManagerOptions {
@@ -55,6 +70,10 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   client: NatsApiClient | null = null
   hostInfo: unknown = null
   compatibility: CompatibilityResult | null = null
+  health: MobileHealthSnapshot | null = null
+  healthLatencyMs: number | null = null
+  healthError: string | null = null
+  lastOnlineAt: string | null = null
 
   private conn: NatsConnLike | null = null
   private generation = 0
@@ -73,7 +92,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       this.conn = await this.options.connect()
     } catch (error) {
       this.setState('reconnecting')
-      this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+      this.emitError(error)
       this.scheduleRetry(() => { void this.start().catch(() => undefined) })
       return
     }
@@ -88,7 +107,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       await this.establish()
     } catch (error) {
       this.setState('reconnecting')
-      this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+      this.emitError(error)
       this.scheduleRetry(() => { void this.retryEstablish(this.generation) })
     }
   }
@@ -133,6 +152,30 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     return fetchMobileInventory(this.conn, this.options.headers, this.options.instanceId, token)
   }
 
+  /** Runs the authenticated bridge health check and records its latency. */
+  async probeHealth(): Promise<MobileHealthSnapshot | null> {
+    if (this.conn === null) throw new Error('connection not ready')
+    const token = this.options.getToken()
+    if (token === undefined) throw new Error('mobile-unauthenticated')
+    const started = Date.now()
+    try {
+      const snapshot = await fetchMobileHealth(this.conn, this.options.headers, this.options.instanceId, token)
+      this.health = snapshot
+      this.healthLatencyMs = Date.now() - started
+      this.healthError = null
+      this.emit('health', { snapshot, latencyMs: this.healthLatencyMs, error: null })
+      return snapshot
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.health = null
+      this.healthLatencyMs = null
+      this.healthError = message
+      this.emit('health', { snapshot: null, latencyMs: null, error: message })
+      this.emitError(error)
+      throw error
+    }
+  }
+
   /**
    * One full "become online" pass; also the reconnect-baseline path. Order
    * matters: baselines land before hello so replayed pending frames update
@@ -149,6 +192,14 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (this.compatibility.status !== 'compatible') {
       this.setState('incompatible')
       return
+    }
+
+    if (this.compatibility.features.includes('health-check')) {
+      await this.probeHealth().catch(() => undefined)
+    } else {
+      this.health = null
+      this.healthLatencyMs = null
+      this.healthError = null
     }
 
     const describe = await client.host.describe({})
@@ -182,6 +233,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
 
     await Promise.all([muxOpen.waited, hostOpen.waited])
     await sendHello(this.conn!, this.options.headers, this.options.instanceId, token)
+    this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
   }
 
@@ -200,7 +252,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         for await (const frame of stream) apply(frame)
       } catch (error) {
         if (this.streamAbort?.signal.aborted === true) return
-        this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+        this.emitError(error)
       }
     })()
   }
@@ -233,7 +285,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         return
       } catch (error) {
         this.setState('reconnecting')
-        this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+        this.emitError(error)
         await sleep(delay)
         delay = Math.min(delay * 2, 15_000)
       }
@@ -253,6 +305,11 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (this.state === state) return
     this.state = state
     this.emit('state', { state })
+  }
+
+  private emitError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    this.emit('error', { message, kind: classifyConnectionFailure(message) })
   }
 }
 

@@ -41,7 +41,7 @@ async function callPlugin(
   conn: NatsConnLike,
   headersFactory: NatsHeadersFactory,
   instanceId: string,
-  method: 'pair' | 'hello' | 'mobile.info' | 'mobile.inventory',
+  method: 'pair' | 'hello' | 'mobile.info' | 'mobile.health' | 'mobile.inventory',
   payload: unknown,
   token: string | undefined,
   timeoutMs: number,
@@ -110,6 +110,24 @@ export interface MobileInventorySnapshot {
   entries: MobileInventoryEntry[]
 }
 
+/** Authenticated operational snapshot served by plugin 0.2+ health-check bridges. */
+export interface MobileHealthSnapshot {
+  status: 'ok'
+  connection: 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+  devices: number
+  pluginVersion: string
+  mobileApi: number
+  features: string[]
+  buildId: string
+  loadedFrom: string
+  instanceId: string
+  startedAt: string | null
+  uptimeMs: number
+  lastConnectedAt: string | null
+  lastReconnectAt: string | null
+  lastError: string | null
+}
+
 /**
  * Reads the plugin's compatibility manifest. Older bridges explicitly reject
  * `mobile.info`; callers treat that response as "unknown / too old" rather
@@ -126,16 +144,56 @@ export async function fetchMobileInfo(
 ): Promise<MobilePluginInfo | null> {
   try {
     const value = await callPlugin(conn, headersFactory, instanceId, 'mobile.info', {}, token, timeoutMs)
-    if (typeof value !== 'object' || value === null) return null
+    if (typeof value !== 'object' || value === null) throw new PairingError('mobile-info-invalid')
     const candidate = value as Partial<MobilePluginInfo>
-    if (typeof candidate.pluginVersion !== 'string' || candidate.pluginVersion === '') return null
-    if (typeof candidate.mobileApi !== 'number' || !Number.isInteger(candidate.mobileApi)) return null
-    if (!Array.isArray(candidate.features) || !candidate.features.every(item => typeof item === 'string')) return null
+    if (typeof candidate.pluginVersion !== 'string' || candidate.pluginVersion === '') throw new PairingError('mobile-info-invalid')
+    if (typeof candidate.mobileApi !== 'number' || !Number.isInteger(candidate.mobileApi)) throw new PairingError('mobile-info-invalid')
+    if (!Array.isArray(candidate.features) || !candidate.features.every(item => typeof item === 'string')) throw new PairingError('mobile-info-invalid')
     return {
       pluginVersion: candidate.pluginVersion,
       mobileApi: candidate.mobileApi,
       features: candidate.features,
     }
+  } catch (error) {
+    if (error instanceof PairingError && error.message === 'mobile-forbidden') return null
+    throw error
+  }
+}
+
+/** Reads the bridge's optional authenticated operational health snapshot. */
+export async function fetchMobileHealth(
+  conn: NatsConnLike,
+  headersFactory: NatsHeadersFactory,
+  instanceId: string,
+  token: string,
+  timeoutMs = 5_000,
+): Promise<MobileHealthSnapshot | null> {
+  try {
+    const value = await callPlugin(conn, headersFactory, instanceId, 'mobile.health', {}, token, timeoutMs)
+    if (typeof value !== 'object' || value === null) throw new PairingError('mobile-health-invalid')
+    const candidate = value as Partial<MobileHealthSnapshot>
+    const validConnection = candidate.connection === 'connecting'
+      || candidate.connection === 'connected'
+      || candidate.connection === 'reconnecting'
+      || candidate.connection === 'disconnected'
+    const nullableString = (item: unknown): boolean => item === null || typeof item === 'string'
+    if (candidate.status !== 'ok' || !validConnection
+      || typeof candidate.pluginVersion !== 'string'
+      || typeof candidate.mobileApi !== 'number' || !Number.isInteger(candidate.mobileApi)
+      || !Array.isArray(candidate.features)
+      || !candidate.features.every(item => typeof item === 'string')
+      || typeof candidate.buildId !== 'string'
+      || typeof candidate.loadedFrom !== 'string'
+      || typeof candidate.instanceId !== 'string'
+      || typeof candidate.devices !== 'number' || !Number.isInteger(candidate.devices) || candidate.devices < 0
+      || typeof candidate.uptimeMs !== 'number' || !Number.isFinite(candidate.uptimeMs) || candidate.uptimeMs < 0
+      || !nullableString(candidate.startedAt)
+      || !nullableString(candidate.lastConnectedAt)
+      || !nullableString(candidate.lastReconnectAt)
+      || !nullableString(candidate.lastError)) {
+      throw new PairingError('mobile-health-invalid')
+    }
+    return candidate as MobileHealthSnapshot
   } catch (error) {
     if (error instanceof PairingError && error.message === 'mobile-forbidden') return null
     throw error

@@ -101,6 +101,7 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > 进度（2026-08-30 第六轮）：**i18n 全面迁移、诊断补强和发布安全门禁落地。**
 > - 中文/English 切换覆盖配对、会话列表、聊天、设置、`+` 菜单、目标/统计条、工具卡、子代理和提问卡；固定标签也改为 locale-aware。
 > - 连接诊断增加最近连接状态事件；设置页展示状态、版本/能力、错误与连接事件，并复制脱敏 JSON。
+> - 连接诊断进一步接入 `mobile.health`：展示 RPC 延迟、桥构建 ID、真实加载路径、实例与启动/重连时间，并把桥无响应、鉴权、TLS、网络和协议错误分别归类；NATS 已连接但宿主桥未运行时不再误报“插件版本未知”。
 > - Android release：release 网络策略禁用明文、debug 源集保留本地回环；显式空备份/迁移规则；新增 `dshmobile://new-session` 深链接与“新会话”桌面快捷方式，连接未就绪时排队上线后自动创建。
 > - 签名支持 `DSH_RELEASE_*` 或 git-ignored `keystore.properties`；默认 release 无正式签名会失败，`-PallowDebugSignedRelease=true` 仅允许本机冒烟。正式 keystore 仍待用户提供/配置。
 > - 验证：App typecheck、lint 0 errors、core 28/28；`assembleRelease -PallowDebugSignedRelease=true` 通过；无签名 `verifyReleaseSigning` 按预期失败；模拟器实测深链接入口。
