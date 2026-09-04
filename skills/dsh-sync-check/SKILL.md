@@ -11,8 +11,8 @@ dsh 上游发版后，用本 skill 确认 dsh-mobile 的协议 vendor 树和 RPC
 
 ```bash
 # 在 deepseek-harness 仓库内
-git -c safe.directory=C:/code/deepseek/deepseek-harness log --oneline HEAD~10..HEAD -- packages/host/apiproxy/ packages/api/ packages/client/connection/
-git -c safe.directory=C:/code/deepseek/deepseek-harness diff --stat HEAD~10..HEAD -- packages/host/apiproxy/ packages/api/ packages/client/connection/
+git -c safe.directory=C:/code/deepseek/deepseek-harness log --oneline HEAD~10..HEAD -- packages/api/ packages/interaction/ packages/goal/ packages/preset/ packages/subagent/ packages/context/
+git -c safe.directory=C:/code/deepseek/deepseek-harness diff --stat HEAD~10..HEAD -- packages/api/ packages/interaction/ packages/goal/ packages/preset/ packages/subagent/ packages/context/
 ```
 
 关注两类信号：
@@ -31,25 +31,18 @@ node scripts/sync-protocol.mjs --check
 
 | 结果 | 含义 | 操作 |
 |------|------|------|
-| `vendor tree matches committed manifest` | vendor 与自身快照一致 | 转第三步对比上游 |
-| `source not found: .../packages/host/apiproxy/src` | 上游已重构目录结构 | 更新 sync-protocol.mjs 的 `sourceRoot` 路径 |
-| hash 不匹配 | vendor 文件被篡改或遗漏 | 运行完整 sync 重新 vendor |
+| `frozen mobile wire verified ... Remote surface verified` | 旧移动 wire 未漂移，当前 Remote endpoint 仍存在 | 转第三步核对语义 |
+| `frozen mobile wire changed` | 冻结 vendor 被篡改或遗漏 | 还原意外修改；有意升级需同步协议与 manifest |
+| `Remote surface drifted` | Remote owner 文件、方法或流已移动/改名 | 对比上游并更新插件映射与 `REMOTE_ALPHA5.json` |
 
 ## 第三步：对比上游 API 契约变化
 
-如果 `sourceRoot` 路径仍然有效（上游未重构），直接运行完整 sync：
+`packages/protocol/src/vendor/` 是已发布移动端 wire 的冻结快照，不再从已删除的 ApiProxy 复制。当前宿主契约由 `packages/protocol/src/REMOTE_ALPHA5.json` 列出并由插件适配。逐项核对：
 
-```bash
-DSH_REPO=C:/code/deepseek/deepseek-harness node scripts/sync-protocol.mjs
-git diff --stat -- packages/protocol/src/vendor/
-```
-
-如果上游已重构（如 apiproxy → packages/api），需要人工比对：
-
-1. 找到新的 API 契约目录（如 `packages/api/gateway`）。
-2. 逐文件对比 RPC 方法名、请求/响应 schema 是否与 vendor 树一致。
-3. 重点关注：删除的 RPC 方法、改名的字段、新增必填参数、事件流协议变化。
-4. 将变化映射到 `packages/protocol/src/` 中 mobile 侧的消费代码和 `packages/core/src/connection-manager.ts`。
+1. Remote 方法名、命名参数和返回值。
+2. `session/follow`、`session/page`、`session/control`、`workspace/follow` 的 baseline/增量语义。
+3. `$events` ready/waterfall/cancel 与 `$events/result` generation 绑定。
+4. 将变化同时映射到插件 `bridge.ts`/`events.ts`、App protocol/core 和测试。
 
 ## 第四步：更新版本兼容区间
 
@@ -80,10 +73,10 @@ pnpm test
 | dsh 版本 | apiproxy 状态 | dsh-mobile-plugin 兼容性 |
 |----------|--------------|--------------------------|
 | 0.1.1-rc.2 及以下 | `packages/host/apiproxy` 存在 | 0.1.x–0.2.x 直接兼容 |
-| 0.1.2-alpha.2+ | 已移除，替换为 `packages/api` gateway | 插件 0.2.1+ 已完成迁移 |
+| 0.1.2-alpha.2–alpha.5 | 已移除，替换为 Typert Gateway/Remote | 插件 0.2.1+，mobileApi 2 |
 
 ## 防止遗漏
 
-- sync 后必须提交 `packages/protocol/src/vendor/` 目录和 `SYNCED.json`。
-- CI 中 `sync-protocol:check` 在无源码时用 manifest 校验完整性，不会自动对比上游。
+- 冻结 wire 有意升级时必须同步 `packages/protocol/src/vendor/` 与 `SYNCED.json`；普通 Remote 迁移不得修改它。
+- Remote 变化必须同步 `REMOTE_ALPHA5.json`；有上游源码时 gate 会检查 owner 文件，无源码时只校验已提交 manifest 与 vendor 哈希。
 - 每次上游发版（tag `dsh-v*`）至少跑一次本 skill 的第一到第四步。

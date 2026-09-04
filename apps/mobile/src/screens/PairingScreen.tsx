@@ -21,6 +21,7 @@ type Translate = (key: TranslationKey, values?: Record<string, string | number>)
 function pairingErrorMessage(message: string, t: Translate): string {
   const text = message.trim()
   if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
+  if (text === 'mobile-device-limit') return t('pairing.deviceLimit')
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
     return t('pairing.networkFailed')
   }

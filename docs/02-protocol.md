@@ -1,9 +1,8 @@
 # 协议接入：同一套信封，NATS 传输
 
-> 本文描述移动端如何复用 deepseek-harness 的既有客户端协议。协议权威定义在
-> `deepseek-harness/packages/host/apiproxy`（契约 + 宿主实现）与
-> `deepseek-harness/packages/client/connection`（浏览器载体），本文只做消费侧摘要。
-> v2：传输层从"HTTP + WebSocket"换成 NATS，**信封字节与业务语义一字不改**。
+> 本文描述移动端如何接入 deepseek-harness 的当前 Typert Remote。协议权威定义在
+> `deepseek-harness/packages/api/**`、`packages/interaction/**` 等 Remote owner 中。
+> App 仍消费稳定的移动端信封；dsh-mobile-plugin 0.2.1 把 alpha.5 Remote 参数、流和事件适配成该信封。
 
 ## 传输映射
 
@@ -26,7 +25,7 @@ evt.dsh.{instance}.mux          pub/sub          会话域下行帧（ServerRequ
 evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequest）
 ```
 
-帧格式与 WS 载体完全一致：`ServerRequest` 文本消息原样作为 NATS 载荷，Zod 信封解析逻辑一行不改。
+NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。插件内部通过 Typert Gateway 调用当前 Remote，并把 `session/follow`、`session/control`、`workspace/follow` 和 `$events` 投影成移动端 mux/host 帧。
 
 既有 Hub 的 C 端账号权限（publish `svc.>`、subscribe `evt.>`）与 App 的需求**精确吻合**，无需为手机开放任何新权限。
 
@@ -37,7 +36,7 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
                      → 连 NATS → request svc.dsh.{instance}.pair { code, deviceName }
                      → 得到 { token, expiresAt }（之后每个 RPC 帧头携带）
 2. 连接              nats.ws 拨 WSS（Hub 的 8443，C 端账号凭证，App 内置/配对下发）
-3. 握手              svc.dsh.{instance}.host.describe → 宿主描述 + 版本对齐检查
+3. 握手              mobile.info → mobileApi/features 门禁 → host.describe
 4. 订阅下行          sub evt.dsh.{instance}.mux + evt.dsh.{instance}.host
 5. 就绪              订阅建立 + describe 成功 → 在线
 6. 运行期            一元调用走 rpc subject；一切实时数据由两个事件 subject 推下来
@@ -51,6 +50,8 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
 - `workspace.list`（含归档集合）
 - `session.list`
 - 打开中的会话：`session.history` 尾页（含 `projections` 水位线块）
+- 实时控制：`session/control` baseline 覆盖 queue/jobs/projections；App 在新 generation 前清空旧瞬态快照
+- 工作区：`workspace/follow` baseline 与增量，`workspace.list` 仍作为重连权威快照
 - 待处理提问/审批：插件在 App 重新订阅 `evt.dsh.{instance}.mux` 后重发当前待处理集合（对齐官方"mux 重开时重放"语义）
 
 ## 最小 RPC 清单（按里程碑）
@@ -69,6 +70,8 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
 | `session.updateQueue` | 编辑/移除待处理队列项 |
 | `session.rename` / `session.fork` | 标题、分叉 |
 | `respond` | 回答提问/审批（RpcReceipt） |
+| `command.list` / `command.execute` | alpha.5 动态命令发现与执行 |
+| `reference.files` / `reference.sessions` | 映射到文件与会话引用候选 Remote |
 
 ### M3 任务面板
 
@@ -103,15 +106,18 @@ evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequ
 1. **NATS 层**：App 用 Hub 的 C 端受限账号连 broker（publish `svc.>` / subscribe `evt.>`）。这层是命名空间围墙——注意它**允许调用任何服务**，所以它不是业务安全的边界。
 2. **应用层**：每个 RPC/respond 请求携带设备 token（配对时签发），插件逐请求校验并执行方法白名单。这层防"拿到 NATS 账号的人直接操作 harness"，也是吊销设备的真实开关。
 
+配对失败会保留可操作原因：无效/过期配对码返回 `mobile-pair-failed`；有效码因有效设备达到上限被拒绝时返回 `mobile-device-limit`，App 引导用户在电脑端吊销旧设备。插件健康状态的设备数只统计未吊销且未过期的有效设备。
+
 ## 版本兼容
 
-App 在建立会话基线前调用插件自有 `mobile.info`。响应必须携带 `pluginVersion`、`mobileApi` 和 `features`。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。App 0.1.x 接受 `pluginVersion >=0.1.0 <0.3.0` 且 `mobileApi=1`；同一代插件必须声明 `plus-menu`、`multi-image`、`durable-attachment-order` 能力位，`command-directory` 是可选增强（宿主不支持时 App 使用常用命令回退）。插件明确以 `mobile-forbidden` 拒绝该方法时按“插件版本未知/过旧”阻断；超时、无响应者、鉴权失败和格式错误仍是连接错误，不能误报为版本问题。必备能力位缺失时按“插件功能不足”阻断，并让用户在 Web 设置页更新 mobile bridge。
+App 在建立会话基线前调用插件自有 `mobile.info`。App 0.2.0 要求 `dsh-mobile-plugin >=0.2.1 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 
 ## 客户端实现策略
 
-- 契约层 vendor：从 deepseek-harness（我们的 fork）复制 `packages/host/apiproxy/src/api/` 到 `packages/protocol/src/vendor/`，sync 脚本负责更新与 diff。
+- `packages/protocol/src/vendor/` 是 App 已发布移动端信封的冻结快照，不再从已删除的 ApiProxy 目录复制。
+- `packages/protocol/src/REMOTE_ALPHA5.json` 列出插件实际依赖的 Remote endpoint；`sync-protocol:check` 同时校验冻结 vendor 哈希和当前 dsh 源码中的 Remote 定义，目录重构或方法改名会直接失败。
 - `NatsApiClient extends AbstractApiClient`：官方抽象要求平台子类只提供 `doFetch` 传输环节——我们的 `doFetch` 把请求字节作为 NATS request 发出、把回复字节返回，其余（rpcId、信封编解码、Zod、超时、取消）全部复用。
 - 下行循环：订阅两个事件 subject，帧喂给与浏览器载体相同的 sink 逻辑。
 - 握手时比对 `host.describe`；协议不匹配给出"请升级 App 或 harness"的明确错误。

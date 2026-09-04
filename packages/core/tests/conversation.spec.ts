@@ -105,6 +105,46 @@ describe('deriveConversation', () => {
     })
   })
 
+  it('keeps attachment images from root and nested read_image results', () => {
+    const store = new SessionStore()
+    const image = {
+      type: 'image',
+      attachment: { attachmentId: 'sha256:image', mediaType: 'image/png', width: 2, height: 1, bytes: 10, name: 'shot.png' },
+    }
+    feed(store, 1, 'tool/call', { turn: 1, step: 1, callId: 'root', name: 'read_image', arguments: '{"file_path":"shot.png"}' })
+    feed(store, 2, 'tool/result', {
+      turn: 1,
+      step: 1,
+      message: {
+        content: [{
+          type: 'tool-result', toolCallId: 'root', isError: false,
+          content: [{ type: 'text', text: 'image result' }, image],
+        }],
+      },
+    })
+    feed(store, 3, 'tool/call', { turn: 1, step: 2, callId: 'code', name: 'run_code', arguments: '{}' })
+    feed(store, 4, 'tool/code-dispatch-start', { parentCallId: 'code', subCallId: 'nested', name: 'read_image', arguments: { file_path: 'shot.png' } })
+    feed(store, 5, 'tool/code-dispatch', {
+      parentCallId: 'code', subCallId: 'nested', name: 'read_image', arguments: { file_path: 'shot.png' },
+      content: [{ type: 'text', text: 'nested image' }, image],
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({
+      kind: 'tool',
+      resultText: 'image result',
+      resultImages: [{ kind: 'attachment', attachmentId: 'sha256:image', name: 'shot.png' }],
+    })
+    expect(items[1]).toMatchObject({
+      kind: 'tool',
+      subCalls: [{
+        callId: 'nested',
+        resultText: 'nested image',
+        resultImages: [{ kind: 'attachment', attachmentId: 'sha256:image', name: 'shot.png' }],
+      }],
+    })
+  })
+
   it('live chunks form a stream item until the durable message lands', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', { message: { content: '问' } })

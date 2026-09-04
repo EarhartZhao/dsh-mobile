@@ -79,6 +79,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   private generation = 0
   private streamAbort: AbortController | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private retryTask: Promise<void> | null = null
 
   constructor(private readonly options: ConnectionManagerOptions) {
     super()
@@ -108,7 +109,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     } catch (error) {
       this.setState('reconnecting')
       this.emitError(error)
-      this.scheduleRetry(() => { void this.retryEstablish(this.generation) })
+      this.scheduleRetry(() => this.ensureRetryEstablish(this.generation))
     }
   }
 
@@ -120,6 +121,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     }
     this.streamAbort?.abort()
     this.streamAbort = null
+    this.retryTask = null
     const conn = this.conn
     this.conn = null
     this.client = null
@@ -211,12 +213,23 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     const abort = new AbortController()
     this.streamAbort = abort
     const generation = this.generation
+    this.store.resetLiveSnapshots()
     // Subscriptions must be registered before hello, or the replayed pending
     // frames publish into the void. onOpen fires post-flush (docs/02 lifecycle).
     const muxOpen = this.trackOpen()
     const hostOpen = this.trackOpen()
-    this.pump(client.events.mux({}, abort.signal, muxOpen.resolve), frame => this.store.applyMuxFrame(frame.rpcId, frame.payload))
-    this.pump(client.events.host({}, abort.signal, hostOpen.resolve), frame => this.store.applyHostFrame(frame.payload))
+    this.pump(
+      client.events.mux({}, abort.signal, muxOpen.resolve),
+      frame => this.store.applyMuxFrame(frame.rpcId, frame.payload),
+      abort.signal,
+      generation,
+    )
+    this.pump(
+      client.events.host({}, abort.signal, hostOpen.resolve),
+      frame => this.store.applyHostFrame(frame.payload),
+      abort.signal,
+      generation,
+    )
 
     const [workspaces, sessions] = await Promise.all([
       client.workspace.list({}),
@@ -246,13 +259,17 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   private pump<F extends MuxFrame | HostFrame>(
     stream: AsyncIterable<{ rpcId: RpcId; payload: F }>,
     apply: (frame: { rpcId: RpcId; payload: F }) => void,
+    signal: AbortSignal,
+    generation: number,
   ): void {
     void (async () => {
       try {
         for await (const frame of stream) apply(frame)
       } catch (error) {
-        if (this.streamAbort?.signal.aborted === true) return
+        if (signal.aborted || this.generation !== generation) return
+        this.setState('reconnecting')
         this.emitError(error)
+        this.ensureRetryEstablish(generation)
       }
     })()
   }
@@ -268,7 +285,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
           this.setState('connecting')
           // The server side may still be settling (responders not yet
           // re-subscribed); retry the establish pass with backoff.
-          void this.retryEstablish(generation)
+          this.ensureRetryEstablish(generation)
         }
       }
     } catch {
@@ -290,6 +307,15 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         delay = Math.min(delay * 2, 15_000)
       }
     }
+  }
+
+  private ensureRetryEstablish(generation: number): void {
+    if (this.retryTask !== null) return
+    const task = this.retryEstablish(generation)
+    this.retryTask = task
+    void task.finally(() => {
+      if (this.retryTask === task) this.retryTask = null
+    })
   }
 
   private scheduleRetry(run: () => void, delayMs = 2000): void {

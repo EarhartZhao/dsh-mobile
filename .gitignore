@@ -5,6 +5,7 @@ node_modules/
 .pnpm-store/
 .pnpm-store-mobile/
 *.log
+artifacts/
 
 apps/mobile/android/local.properties
 apps/mobile/android/.gradle/

@@ -10,6 +10,7 @@ import {
   Clipboard,
   Image,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   NativeModules,
   Platform,
@@ -84,9 +85,37 @@ function conversationTailSignature(items: ConversationItem[]): string {
   }
 }
 
+function activeComposerToken(text: string): { prefix: string; trigger: '/' | '@'; query: string } | null {
+  const quotedReference = /(?:^|\s)(@"([^"]*))$/u.exec(text)
+  if (quotedReference?.[1] !== undefined && quotedReference[2] !== undefined) {
+    return { prefix: quotedReference[1], trigger: '@', query: quotedReference[2] }
+  }
+  const reference = /(?:^|\s)(@([^\s]*))$/u.exec(text)
+  if (reference?.[1] !== undefined && reference[2] !== undefined) {
+    return { prefix: reference[1], trigger: '@', query: reference[2] }
+  }
+  const command = /(?:^|\s)(\/([\w.-]*))$/u.exec(text)
+  if (command?.[1] !== undefined && command[2] !== undefined) {
+    return { prefix: command[1], trigger: '/', query: command[2] }
+  }
+  return null
+}
+
+function fileMention(path: string, kind: 'file' | 'directory'): string | null {
+  const value = kind === 'directory' ? `${path}/` : path
+  const hasUnsafeCharacter = Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return character === '"' || codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+  })
+  if (hasUnsafeCharacter) return null
+  return /\s/u.test(value) ? `@"${value}"` : `@${value}`
+}
+
 export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
   const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
+  const [hasOlderHistory, setHasOlderHistory] = useState(false)
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false)
   const [draft, setDraft] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [running, setRunning] = useState(false)
@@ -120,6 +149,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [lightbox, setLightbox] = useState<{ source: string; name?: string } | null>(null)
   const [modelMenu, setModelMenu] = useState<{
     current: { provider: string; model: string; reasoningEffort?: string }
+    routable: boolean
+    failures: { id: string; name: string; message: string }[]
     groups: {
       id: string
       name: string
@@ -134,21 +165,22 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [modelLabel, setModelLabel] = useState(t('chat.model'))
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const skillsCache = useRef<{ sessionId: string; skills: { name: string; description: string }[] } | null>(null)
+  const candidateGeneration = useRef(0)
 
   /** Trailing-token detection: /skill and @file/session triggers (ui-input-trigger lite). */
   const onDraftChange = (text: string): void => {
     setDraft(text)
-    const m = /(^|\s)(\/|@)([\w.-]*)$/.exec(text)
-    if (m === null) { setCandidates([]); return }
-    const token = m[3]
-    if (m[2] === '/') {
-      void resolveSkills(token)
+    const generation = ++candidateGeneration.current
+    const token = activeComposerToken(text)
+    if (token === null) { setCandidates([]); return }
+    if (token.trigger === '/') {
+      void resolveSkills(token.query, generation)
     } else {
-      void resolveAtRefs(token)
+      void resolveAtRefs(token.query, generation)
     }
   }
 
-  const resolveSkills = async (query: string): Promise<void> => {
+  const resolveSkills = async (query: string, generation: number): Promise<void> => {
     const client = manager.client
     if (client === null) return
     let skills = skillsCache.current?.sessionId === sessionId ? skillsCache.current.skills : null
@@ -160,45 +192,39 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       }
     }
     if (skills === null) return
+    if (candidateGeneration.current !== generation) return
     setCandidates(skills
       .filter(s => s.name.startsWith(query))
       .map(s => ({ key: s.name, title: `/${s.name}`, subtitle: s.description, insert: `/${s.name} ` })))
   }
 
-  const resolveAtRefs = async (query: string): Promise<void> => {
+  const resolveAtRefs = async (query: string, generation: number): Promise<void> => {
     const client = manager.client
     if (client === null) return
-    const summary = manager.store.summaries.find(s => s.sessionId === sessionId)
-    const cwd = summary?.cwd
-    const files: Candidate[] = []
-    if (cwd !== undefined && cwd !== '') {
-      const listing = await client.host.listDirectory({ path: cwd } as never).catch(() => null)
-      if (listing?.result.ok) {
-        for (const entry of listing.result.value.entries) {
-          if (entry.name.toLowerCase().startsWith(query.toLowerCase())) {
-            files.push({ key: entry.path, title: entry.name, subtitle: entry.path, insert: `@${entry.path} ` })
-          }
-        }
-      }
-    }
-    const sessions: Candidate[] = manager.store.summaries
-      .filter(s => s.sessionId !== sessionId)
-      .filter(s => {
-        const t = manager.store.title(s.sessionId) ?? ''
-        return t.toLowerCase().includes(query.toLowerCase())
-      })
-      .slice(0, 4)
-      .map(s => ({
-        key: s.sessionId,
-        title: manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8),
-        subtitle: t('chat.session'),
-        insert: `@${manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(-8)} `,
-      }))
-    setCandidates([...files.slice(0, 6), ...sessions])
+    const [fileValues, sessionValues] = await Promise.all([
+      client.references.files({ sessionId, query }).catch(() => []),
+      client.references.sessions({ sessionId, query }).catch(() => []),
+    ])
+    if (candidateGeneration.current !== generation) return
+    const files: Candidate[] = fileValues.flatMap((entry) => {
+      const mention = fileMention(entry.path, entry.kind)
+      if (mention === null) return []
+      const title = entry.path.split('/').filter(Boolean).at(-1) ?? entry.path
+      return [{ key: `file:${entry.path}`, title: `${title}${entry.kind === 'directory' ? '/' : ''}`, subtitle: entry.path, insert: `${mention} ` }]
+    })
+    const sessions: Candidate[] = sessionValues.map(entry => ({
+      key: `session:${entry.sessionId}`,
+      title: entry.label,
+      subtitle: entry.sameWorkspace ? t('chat.session') : entry.cwd ?? t('chat.session'),
+      insert: `${entry.mention} `,
+    }))
+    setCandidates([...files.slice(0, 8), ...sessions.slice(0, 8)])
   }
 
   const pickCandidate = (candidate: Candidate): void => {
-    setDraft(draft.replace(/(^|\s)(\/|@)([\w.-]*)$/, (_full, lead: string) => `${lead}${candidate.insert}`))
+    candidateGeneration.current++
+    const token = activeComposerToken(draft)
+    if (token !== null) setDraft(`${draft.slice(0, -token.prefix.length)}${candidate.insert}`)
     setCandidates([])
   }
 
@@ -487,15 +513,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         }))
       setCommands(values)
       setCommandStatus('ready')
-    } catch {
-      setCommands([
-        { name: 'compact', description: t('chat.commandCompact') },
-        { name: 'goal', description: t('chat.commandGoal'), hint: '<objective>', images: true },
-        { name: 'permission', description: t('chat.commandPermission'), hint: '<preset>' },
-        { name: 'plan', description: t('chat.commandPlan'), hint: '[off|message]', images: true },
-      ])
-      setCommandStatus('ready')
-      setCommandError(t('chat.commandDirectoryFallback'))
+    } catch (error) {
+      setCommands([])
+      setCommandStatus('failed')
+      setCommandError(t('chat.loadFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }, [commandStatus, manager, sessionId, t])
 
@@ -519,23 +540,22 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const client = manager.client
     if (client === null || (!force && referenceStatus === 'ready')) return
     setReferenceStatus('loading')
-    const summary = manager.store.summaries.find(item => item.sessionId === sessionId)
-    const files: PlusReference[] = []
-    if (summary?.cwd !== undefined && summary.cwd !== '') {
-      const listing = await client.host.listDirectory({ path: summary.cwd } as never).catch(() => null)
-      if (listing?.result.ok) {
-        for (const entry of listing.result.value.entries) {
-          files.push({ key: `file:${entry.path}`, title: entry.name, subtitle: entry.path, insert: `@${entry.path} ` })
-        }
-      }
-    }
-    const sessions: PlusReference[] = manager.store.summaries
-      .filter(item => item.sessionId !== sessionId)
-      .slice(0, 20)
-      .map(item => {
-        const label = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(-8)
-        return { key: `session:${item.sessionId}`, title: label, subtitle: t('chat.session'), insert: `@${label} ` }
-      })
+    const [fileValues, sessionValues] = await Promise.all([
+      client.references.files({ sessionId, query: '' }).catch(() => []),
+      client.references.sessions({ sessionId, query: '' }).catch(() => []),
+    ])
+    const files: PlusReference[] = fileValues.flatMap((entry) => {
+      const mention = fileMention(entry.path, entry.kind)
+      if (mention === null) return []
+      const title = entry.path.split('/').filter(Boolean).at(-1) ?? entry.path
+      return [{ key: `file:${entry.path}`, title: `${title}${entry.kind === 'directory' ? '/' : ''}`, subtitle: entry.path, insert: `${mention} ` }]
+    })
+    const sessions: PlusReference[] = sessionValues.map(entry => ({
+      key: `session:${entry.sessionId}`,
+      title: entry.label,
+      subtitle: entry.sameWorkspace ? t('chat.session') : entry.cwd ?? t('chat.session'),
+      insert: `${entry.mention} `,
+    }))
     const skills: PlusReference[] = []
     const skillResult = await client.skills.list({ sessionId } as never).catch(() => null)
     if (skillResult?.result.ok) {
@@ -579,9 +599,31 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     noticeTimer.current = setTimeout(() => setNotice(null), 4000)
   }, [])
 
+  const loadOlderHistory = useCallback(async (): Promise<void> => {
+    const client = manager.client
+    const session = manager.store.sessions.get(sessionId)
+    const beforeSeq = session?.events
+      .map(entry => typeof entry.event.seq === 'number' ? entry.event.seq : undefined)
+      .find((seq): seq is number => seq !== undefined)
+    if (client === null || beforeSeq === undefined || loadingOlderHistory || !hasOlderHistory) return
+    setLoadingOlderHistory(true)
+    try {
+      const result = await client.sessions.history({ sessionId, beforeSeq, maxMessages: 120 } as never)
+      if (!result.result.ok) throw new Error(result.result.error.message)
+      manager.store.applyHistory(sessionId, result.result.value.events)
+      setHasOlderHistory(result.result.value.hasMore)
+    } catch (error) {
+      showNotice(t('chat.historyFailed', { message: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      if (mountedRef.current) setLoadingOlderHistory(false)
+    }
+  }, [hasOlderHistory, loadingOlderHistory, manager, sessionId, showNotice, t])
+
   useEffect(() => {
     // Baseline: tail page (with projections watermark), then live frames take over.
     let alive = true
+    setHasOlderHistory(false)
+    setLoadingOlderHistory(false)
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     const client = manager.client
     if (client !== null) {
@@ -592,6 +634,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             result.result.value.events,
             result.result.value.projections ?? undefined,
           )
+          setHasOlderHistory(result.result.value.hasMore)
         }
       }).catch(() => undefined)
     }
@@ -620,6 +663,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   }, [])
   useEffect(() => { void loadModels() }, [loadModels])
 
+  useEffect(() => manager.store.on('remoteEvent', ({ event, args }) => {
+    if (event === 'commands/change') {
+      setCommands([])
+      setCommandStatus('idle')
+      if (plusOpen) void loadCommands(true)
+    } else if (event === 'agent-preset/selected' && args[0] === sessionId) {
+      setPresets([])
+      setPresetStatus('idle')
+      void loadModels()
+    } else if (event === 'llm/adapters-updated' || event === 'credentials/reference-updated') {
+      void loadModels()
+    }
+  }), [loadCommands, loadModels, manager, plusOpen, sessionId])
+
   useEffect(() => () => {
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
   }, [])
@@ -628,6 +685,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const client = manager.client
     const text = draft.trim()
     if (client === null || (text === '' && pendingImages.length === 0)) return
+    Keyboard.dismiss()
     setDraft('')
     // Edit mode: rewrite the queued item in place instead of a new prompt.
     if (editingItem !== null) {
@@ -680,17 +738,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const runCommand = async (command: string): Promise<void> => {
     const client = manager.client
     if (client === null) return
-    const response = await client.sessions.prompt({
-      sessionId,
-      mode: 'queue',
-      content: [{ type: 'text', text: command }],
-    } as never).catch(() => null)
-    const result = response?.result
-    if (result?.ok) {
-      const text = result.value.command?.text
-      if (text !== undefined && text !== '') showNotice(text)
-    } else if (result !== undefined && !result.ok) {
-      showNotice(t('chat.commandFailed', { message: result.error.message }))
+    try {
+      const response = await client.commands.execute({ sessionId, line: command })
+      if (response.result.kind === 'error') showNotice(t('chat.commandFailed', { message: response.result.text }))
+      else if (response.result.text !== undefined && response.result.text !== '') showNotice(response.result.text)
+    } catch (error) {
+      showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -720,8 +773,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         setPendingImages([])
         if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
         return
-      } catch {
-        await runCommand(text)
+      } catch (error) {
+        showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
         return
       }
     }
@@ -736,8 +789,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         return
       }
       if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
-    } catch {
-      await runCommand(text)
+    } catch (error) {
+      showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -959,7 +1012,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         data={items}
         keyExtractor={item => item.key}
         contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="always"
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        ListHeaderComponent={hasOlderHistory ? (
+          <TouchableOpacity
+            style={styles.historyLoader}
+            disabled={loadingOlderHistory}
+            onPress={() => void loadOlderHistory()}
+          >
+            <Text style={styles.historyLoaderText}>
+              {loadingOlderHistory ? t('chat.loadingOlder') : t('chat.loadOlder')}
+            </Text>
+          </TouchableOpacity>
+        ) : undefined}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         onScroll={onListScroll}
         onScrollBeginDrag={onListScrollBeginDrag}
         onScrollEndDrag={onListScrollEndDrag}
@@ -967,6 +1033,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onMomentumScrollEnd={onListMomentumScrollEnd}
         scrollEventThrottle={16}
         onContentSizeChange={onListContentSizeChange}
+        onScrollToIndexFailed={({ index, averageItemLength }) => {
+          listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })
+        }}
         renderItem={({ item }) => (
           <Bubble
             item={item}
@@ -985,6 +1054,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onComplete={() => void goalAction('complete')}
         onClear={() => void goalAction('clear')}
       />
+      {goal?.phase === 'paused' && (
+        <Text style={styles.goalPausedHint}>{t('chat.goalPausedTurn')}</Text>
+      )}
       <TodoStrip todos={todos} />
       {notice !== null && (
         <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>
@@ -1065,18 +1137,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             multiline
           />
           {running ? (
-            <View style={styles.runningButtons}>
-              <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
-                <Text style={styles.sendText}>{t('chat.stop')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
-                disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
-                onPress={() => void send()}
-              >
-                <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.queue')}</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
+              <Text style={styles.sendText}>{t('chat.stop')}</Text>
+            </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
@@ -1125,6 +1188,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       <Modal transparent visible={modelMenu !== null} animationType="fade" onRequestClose={() => setModelMenu(null)}>
         <ModalBackdrop onClose={() => setModelMenu(null)}>
           <ScrollView style={styles.modelCard}>
+            {modelMenu?.routable === false && (
+              <Text style={styles.modelWarning}>{t('chat.modelRouteUnavailable')}</Text>
+            )}
             {modelMenu?.groups.map(group => (
               <View key={group.id}>
                 <Text style={styles.modelGroup}>{group.name}</Text>
@@ -1158,6 +1224,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
                     )}
                   </React.Fragment>
                 ))}
+              </View>
+            ))}
+            {modelMenu?.failures.map(failure => (
+              <View key={failure.id} style={styles.modelFailure}>
+                <Text style={styles.modelFailureTitle}>{failure.name}</Text>
+                <Text style={styles.modelFailureMessage}>{failure.message}</Text>
               </View>
             ))}
             <TouchableOpacity style={styles.menuRow} onPress={() => setModelMenu(null)}>
@@ -1481,7 +1553,7 @@ function Bubble({ item, manager, sessionId, onLongPress }: {
         </TouchableOpacity>
       )
     case 'tool':
-      return <ToolCard item={item} onLongPress={onLongPress} />
+      return <ToolCard item={item} manager={manager} sessionId={sessionId} onLongPress={onLongPress} />
   }
 }
 
@@ -1622,6 +1694,9 @@ const styles = StyleSheet.create({
   headerMenuText: { color: colors.accent, fontSize: 26, lineHeight: 28 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(1.5), gap: spacing(1.5) },
+  historyLoader: { alignSelf: 'center', paddingHorizontal: spacing(3), paddingVertical: spacing(1) },
+  historyLoaderText: { color: colors.accent, fontSize: fontSize.small },
+  goalPausedHint: { color: colors.warning, fontSize: fontSize.tiny, paddingHorizontal: spacing(2), paddingBottom: spacing(0.5) },
   metaHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -1633,7 +1708,7 @@ const styles = StyleSheet.create({
   modelChip: { alignSelf: 'flex-end', marginRight: spacing(1), marginVertical: spacing(0.5) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
-  permissionBar: { flexGrow: 0, height: 46, marginBottom: spacing(0.5) },
+  permissionBar: { flexGrow: 0, flexShrink: 0, height: 46, minHeight: 46, maxHeight: 46, marginBottom: spacing(0.5) },
   permissionContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(0.5), gap: spacing(1.5), alignItems: 'center' },
   permissionDanger: { borderColor: colors.danger },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
@@ -1655,8 +1730,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
   },
   modelGroup: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), paddingTop: spacing(3), paddingBottom: spacing(1) },
-  bubble: { maxWidth: '92%', borderRadius: radius.bubble, padding: spacing(2) },
-  bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser, paddingVertical: spacing(1) },
+  modelWarning: { color: colors.danger, fontSize: fontSize.small, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
+  modelFailure: { paddingHorizontal: spacing(4), paddingVertical: spacing(1.5), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  modelFailureTitle: { color: colors.warning, fontSize: fontSize.small, fontWeight: '600' },
+  modelFailureMessage: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
+  bubble: { maxWidth: '92%', borderRadius: radius.bubble, paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
+  bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser, paddingVertical: spacing(0.5) },
   bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: colors.bgBubbleAssistant },
   bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
   reasoningBlock: { marginBottom: spacing(1), borderRadius: radius.card, backgroundColor: colors.bgElevated, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
@@ -1722,7 +1801,7 @@ const styles = StyleSheet.create({
     minWidth: 40,
     paddingHorizontal: spacing(1.5),
     width: 40,
-    minHeight: 44,
+    minHeight: 40,
     alignSelf: 'stretch',
     borderRadius: radius.card,
     borderWidth: 1,
@@ -1788,7 +1867,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     flexShrink: 1,
     maxHeight: 120,
-    minHeight: 44,
+    minHeight: 40,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.bubble,
@@ -1801,8 +1880,8 @@ const styles = StyleSheet.create({
   sendButton: {
     backgroundColor: colors.accent,
     borderRadius: radius.bubble,
-    paddingHorizontal: spacing(2.5),
-    minHeight: 44,
+    paddingHorizontal: spacing(2),
+    minHeight: 40,
     paddingVertical: 0,
     minWidth: 64,
     alignItems: 'center',
@@ -1810,7 +1889,6 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.5 },
   sendText: { color: '#fff', fontSize: fontSize.body, fontWeight: '600' },
-  runningButtons: { flexDirection: 'row', alignSelf: 'stretch', gap: spacing(1), flexShrink: 0 },
   editCancel: { alignSelf: 'center', padding: spacing(0.5), flexShrink: 0 },
   editCancelText: { color: colors.textDim, fontSize: fontSize.body },
   notice: {

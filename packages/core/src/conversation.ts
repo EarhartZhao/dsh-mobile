@@ -30,6 +30,7 @@ export type ConversationItem =
       status: 'running' | 'done' | 'error'
       resultPreview: string
       resultText: string
+      resultImages: ConversationImage[]
       callView: ToolCallView | null
       resultView: ToolResultView | null
       subCalls: ToolSubCall[]
@@ -56,6 +57,7 @@ export interface ToolSubCall {
   status: 'running' | 'done' | 'error'
   resultPreview: string
   resultText: string
+  resultImages: ConversationImage[]
   subCalls: ToolSubCall[]
 }
 
@@ -96,11 +98,21 @@ function blocksToImages(content: unknown): ConversationImage[] {
     const attachment = isObj(block['attachment']) ? block['attachment'] : undefined
     const attachmentId = typeof attachment?.['attachmentId'] === 'string' ? attachment['attachmentId'] : undefined
     const mediaType = typeof block['mediaType'] === 'string' ? block['mediaType'] : 'image/png'
-    const name = typeof block['name'] === 'string' ? block['name'] : undefined
+    const name = typeof block['name'] === 'string'
+      ? block['name']
+      : typeof attachment?.['name'] === 'string' ? attachment.name : undefined
     if (attachmentId !== undefined) images.push({ kind: 'attachment', attachmentId, name })
     else if (typeof block['data'] === 'string') images.push({ kind: 'data', uri: `data:${mediaType};base64,${block['data']}`, name })
   }
   return images
+}
+
+function toolResultBlocks(content: unknown, callId: string | undefined): unknown {
+  if (!Array.isArray(content)) return content
+  const result = content.find(block => isObj(block)
+    && block['type'] === 'tool-result'
+    && (callId === undefined || block['toolCallId'] === callId))
+  return isObj(result) ? result['content'] : content
 }
 
 /** Tool view render intent: diff and edit cards report the paths they produced. */
@@ -201,6 +213,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           status: 'running',
           resultPreview: '',
           resultText: '',
+          resultImages: [],
           callView: view.call,
           resultView: null,
           subCalls: [],
@@ -213,16 +226,26 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
       case 'tool/result': {
         if (!isObj(data)) break
         const message = data['message']
+        const messageContent = isObj(message) ? message['content'] : undefined
+        const messageSource = isObj(message) && isObj(message['source']) ? message['source'] : undefined
+        const nestedResult = Array.isArray(messageContent)
+          ? messageContent.find(block => isObj(block) && block['type'] === 'tool-result')
+          : undefined
         const callId = isObj(message) && typeof message['toolCallId'] === 'string'
           ? message['toolCallId']
-          : undefined
+          : typeof messageSource?.['callId'] === 'string'
+            ? messageSource.callId
+            : isObj(nestedResult) && typeof nestedResult['toolCallId'] === 'string'
+              ? nestedResult.toolCallId
+              : undefined
         const target = callId === undefined ? undefined : tools.get(callId)
         if (target !== undefined) {
           target.status = isObj(data['error']) ? 'error' : 'done'
-          const content = isObj(message) ? message['content'] : undefined
+          const content = toolResultBlocks(messageContent, callId)
           const text = blocksToText(content)
           target.resultPreview = truncate(text, 300)
           target.resultText = truncate(text, 5000)
+          target.resultImages = blocksToImages(content)
           const view = toolEventView(entry)
           if (view.call !== null && target.callView === null) target.callView = view.call
           target.resultView = view.result
@@ -285,16 +308,17 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           toolParents.set(subCallId, parentCallId)
           parent.subCalls = [...siblings, {
             callId: subCallId, name, args, seq, status: 'running',
-            resultPreview: '', resultText: '', subCalls: [],
+            resultPreview: '', resultText: '', resultImages: [], subCalls: [],
           }]
           break
         }
         const isError = data['isError'] === true
         const resultText = truncate(blocksToText(data['content']), 5000)
+        const resultImages = blocksToImages(data['content'])
         const existing = at === -1 ? undefined : siblings[at]
         const child: ToolSubCall = existing === undefined
-          ? { callId: subCallId, name, args, seq, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, subCalls: [] }
-          : { ...existing, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText }
+          ? { callId: subCallId, name, args, seq, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages, subCalls: [] }
+          : { ...existing, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages }
         toolParents.set(subCallId, parentCallId)
         parent.subCalls = at === -1 ? [...siblings, child] : siblings.map((candidate, index) => index === at ? child : candidate)
         break

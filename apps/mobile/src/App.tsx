@@ -13,6 +13,7 @@ import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
 import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
+import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
@@ -106,6 +107,8 @@ function AppContent(): React.JSX.Element {
   const [inventoryLoading, setInventoryLoading] = useState(false)
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -129,6 +132,20 @@ function AppContent(): React.JSX.Element {
       setBooted(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (!booted) return
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10_000)
+    void checkForAppUpdate(controller.signal)
+      .then(setAppUpdate)
+      .catch(() => undefined)
+      .finally(() => clearTimeout(timeout))
+    return () => {
+      controller.abort()
+      clearTimeout(timeout)
+    }
+  }, [booted])
 
   useEffect(() => {
     void (NativeModules.DshTheme as { getMode(): Promise<ThemeMode> } | undefined)
@@ -250,6 +267,24 @@ function AppContent(): React.JSX.Element {
       })
       .finally(() => setHealthLoading(false))
   }, [showAlert, t])
+
+  const installUpdate = useCallback(async (): Promise<void> => {
+    if (appUpdate === null) return
+    const updater = NativeModules.DshUpdater as { downloadAndInstall(url: string): Promise<null> } | undefined
+    if (updater === undefined) {
+      showAlert(t('update.unavailable'))
+      return
+    }
+    setUpdateDownloading(true)
+    try {
+      await updater.downloadAndInstall(appUpdate.downloadUrl)
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code
+      showAlert(code === 'INSTALL_PERMISSION_REQUIRED' ? t('update.installPermission') : t('update.failed'))
+    } finally {
+      setUpdateDownloading(false)
+    }
+  }, [appUpdate, showAlert, t])
 
   const copyDiagnostics = useCallback(() => {
     const compatibility = managerRef.current?.compatibility
@@ -443,6 +478,27 @@ function AppContent(): React.JSX.Element {
           </View>
         </Modal>
       )}
+      <Modal transparent visible={appUpdate !== null} animationType="fade" onRequestClose={() => setAppUpdate(null)}>
+        <View style={styles.backdrop}>
+          <View style={styles.updateCard}>
+            <Text style={styles.updateTitle}>{t('update.title')}</Text>
+            <Text style={styles.updateVersion}>{t('update.version', { version: appUpdate?.version ?? '' })}</Text>
+            {appUpdate?.notes !== undefined && appUpdate.notes !== '' && (
+              <ScrollView style={styles.updateNotes}>
+                <Text style={styles.updateNotesText}>{appUpdate.notes}</Text>
+              </ScrollView>
+            )}
+            <View style={styles.updateActions}>
+              <TouchableOpacity style={styles.updateLater} disabled={updateDownloading} onPress={() => setAppUpdate(null)}>
+                <Text style={styles.updateLaterText}>{t('update.later')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.updateNow} disabled={updateDownloading} onPress={() => void installUpdate()}>
+                <Text style={styles.updateNowText}>{updateDownloading ? t('update.downloading') : t('update.install')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaProvider>
   )
 }
@@ -535,4 +591,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   compatRetryText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  updateCard: { backgroundColor: colors.bgElevated, borderRadius: 12, marginHorizontal: 28, padding: 20, gap: 10 },
+  updateTitle: { color: colors.text, fontSize: 19, fontWeight: '700' },
+  updateVersion: { color: colors.accent, fontSize: 14, fontWeight: '600' },
+  updateNotes: { maxHeight: 220 },
+  updateNotesText: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
+  updateActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
+  updateLater: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  updateLaterText: { color: colors.textDim, fontSize: 14 },
+  updateNow: { backgroundColor: colors.accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  updateNowText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 })
