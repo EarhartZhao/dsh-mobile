@@ -1,11 +1,11 @@
 /**
  * Onboarding: paste the QR payload (JSON) from the dsh settings card, redeem
- * the code, store the token. Camera scanning (vision-camera) lands after the
- * M1 spike; the manual paste path is the always-available fallback.
+ * the code, store the token. VisionCamera scans QR codes while the manual
+ * paste path remains the always-available fallback.
  */
 import React, { useEffect, useRef, useState } from 'react'
 import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
-import { Camera, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
+import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
@@ -49,6 +49,8 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [cameraKey, setCameraKey] = useState(0)
   const device = useCameraDevice('back')
   const { hasPermission, requestPermission } = useCameraPermission()
   const scanned = useRef(false)
@@ -101,6 +103,20 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
     },
   })
 
+  const handleCameraError = (cause: CameraRuntimeError): void => {
+    console.error('[camera]', cause.code, cause.message)
+    setCameraError(t('pairing.cameraFailed'))
+  }
+
+  const retryCamera = async (): Promise<void> => {
+    setCameraError(null)
+    if (!hasPermission) {
+      await requestPermission()
+      return
+    }
+    setCameraKey(value => value + 1)
+  }
+
   /** Dev loopback rig: pairs against scripts/fake-host.mjs (10.0.2.2 = host). */
   const pairDemo = async (): Promise<void> => {
     await pairWith({
@@ -146,14 +162,26 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       {hasPermission && device !== undefined && device !== null ? (
         <View style={styles.scanBox}>
           <Camera
+            key={cameraKey}
             style={StyleSheet.absoluteFill}
             device={device}
             isActive
             codeScanner={codeScanner}
+            androidPreviewViewType="texture-view"
+            onInitialized={() => setCameraError(null)}
+            onError={handleCameraError}
           />
           <View pointerEvents="none" style={styles.scanOverlay}>
             <Text style={styles.scanText}>{t('pairing.scanHint')}</Text>
           </View>
+          {cameraError !== null && (
+            <View style={styles.cameraErrorOverlay}>
+              <Text style={styles.cameraErrorText}>{cameraError}</Text>
+              <TouchableOpacity style={styles.scanRetryButton} onPress={() => void retryCamera()}>
+                <Text style={styles.cameraRetryText}>{t('common.retry')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       ) : (
         <View style={styles.scanFallback}>
@@ -247,6 +275,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(1.5),
     fontSize: fontSize.small,
   },
+  cameraErrorOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: colors.bgElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing(3),
+  },
+  cameraErrorText: { color: colors.danger, fontSize: fontSize.small, textAlign: 'center', paddingHorizontal: spacing(4) },
+  cameraRetryText: { color: colors.text, fontSize: fontSize.small },
   scanFallback: {
     height: 120,
     borderWidth: 1,
