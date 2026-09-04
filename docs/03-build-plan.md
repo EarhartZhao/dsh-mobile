@@ -3,6 +3,8 @@
 > 2026-08-26，方案已确认（00/01/02 + dsh-mobile-plugin/docs）。本文是跨仓库的落地计划。
 > 原则：**风险最高的假设最先验证**；每个阶段有可演示的验收点；插件可独立于 App 先行联调（用脚本模拟 App）。
 
+> 进度（2026-09-03，dsh 0.1.2-alpha.5 兼容升级）：App 0.2.0 / plugin 0.2.1 已切到 Typert Remote v2。阶段一完成 commands/preset/goals 参数迁移、`$events/result` 审批回答、`session/follow + page` 深历史和 packed chunks 展开；阶段二接入 `session/control`、`workspace/follow`、流失败重建及重连瞬态状态清空；阶段三新增 canonical 文件/会话引用、主聊天历史翻页与锚点保持、root/nested `read_image` 图片卡、轮次导航和模型 provider 失败展示。旧 ApiProxy vendor 改为冻结 wire，新增 alpha.5 Remote endpoint 门禁。
+
 ## 阶段总览
 
 ```text

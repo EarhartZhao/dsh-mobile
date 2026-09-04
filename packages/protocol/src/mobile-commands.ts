@@ -27,11 +27,11 @@ function mintRpcId(): string {
   return crypto.randomUUID()
 }
 
-async function callCommand<T>(
+export async function callMobileRemote<T>(
   conn: NatsConnLike,
   headersFactory: NatsHeadersFactory,
   instanceId: string,
-  method: 'command.list' | 'command.execute',
+  method: string,
   payload: unknown,
   token: string,
   timeoutMs: number,
@@ -56,12 +56,12 @@ export function createMobileCommands(conn: NatsConnLike, headersFactory: NatsHea
     async list(payload) {
       const token = getToken()
       if (token === undefined) throw new Error('connection not ready')
-      return callCommand(conn, headersFactory, instanceId, 'command.list', payload, token, 10_000)
+      return callMobileRemote(conn, headersFactory, instanceId, 'command.list', payload, token, 10_000)
     },
     async execute(payload) {
       const token = getToken()
       if (token === undefined) throw new Error('connection not ready')
-      return callCommand(conn, headersFactory, instanceId, 'command.execute', payload, token, 60_000)
+      return callMobileRemote(conn, headersFactory, instanceId, 'command.execute', payload, token, 60_000)
     },
   }
 }

@@ -1,8 +1,9 @@
 /** Structured tool presentation backed by host ToolCallView / ToolResultView. */
-import React, { useState } from 'react'
-import { Clipboard, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import type { ConversationItem, ToolSubCall } from '@dsh-mobile/core'
+import React, { useEffect, useState } from 'react'
+import { Clipboard, Image, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import type { ConnectionManager, ConversationImage, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { ImageLightbox } from './ImageLightbox'
 import { toolDisplayName } from '../ui-labels'
 import { useI18n, type TranslationKey } from '../i18n'
 
@@ -198,7 +199,52 @@ function WebView({ view }: { view: Record<string, unknown> }): React.JSX.Element
   )
 }
 
-function SubCall({ call, depth = 0 }: { call: ToolSubCall; depth?: number }): React.JSX.Element {
+function ToolImage({ image, manager, sessionId }: {
+  image: ConversationImage
+  manager: ConnectionManager
+  sessionId: string
+}): React.JSX.Element {
+  const { t } = useI18n()
+  const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
+  const [aspect, setAspect] = useState(4 / 3)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+
+  useEffect(() => {
+    if (image.kind !== 'attachment') return
+    let alive = true
+    void manager.client?.sessions.attachment({ sessionId, attachmentId: image.attachmentId } as never)
+      .then(result => {
+        if (!alive || !result.result.ok) return
+        const value = result.result.value as {
+          attachment: { mediaType: string; width: number; height: number }
+          data: string
+        }
+        setSource(`data:${value.attachment.mediaType};base64,${value.data}`)
+        if (value.attachment.width > 0 && value.attachment.height > 0) {
+          setAspect(value.attachment.width / value.attachment.height)
+        }
+      })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [image, manager, sessionId])
+
+  if (source === null) return <Text style={styles.imageFallback}>{t('chat.imageLoading')}</Text>
+  return (
+    <>
+      <TouchableOpacity onPress={() => setLightboxOpen(true)}>
+        <Image source={{ uri: source }} style={[styles.toolImage, { aspectRatio: aspect }]} />
+      </TouchableOpacity>
+      <ImageLightbox visible={lightboxOpen} source={source} name={image.name} onClose={() => setLightboxOpen(false)} />
+    </>
+  )
+}
+
+function SubCall({ call, manager, sessionId, depth = 0 }: {
+  call: ToolSubCall
+  manager: ConnectionManager
+  sessionId: string
+  depth?: number
+}): React.JSX.Element {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const statusColor = call.status === 'running' ? colors.running : call.status === 'error' ? colors.danger : colors.success
@@ -212,14 +258,22 @@ function SubCall({ call, depth = 0 }: { call: ToolSubCall; depth?: number }): Re
         <View style={styles.subCallBody}>
           {call.args !== '' && <Text style={styles.mono} numberOfLines={4}>{call.args}</Text>}
           {call.resultText !== '' && <Text style={styles.subCallResult} numberOfLines={6}>{call.resultText}</Text>}
-          {call.subCalls.map(child => <SubCall key={child.callId} call={child} depth={depth + 1} />)}
+          {call.resultImages.map(image => (
+            <ToolImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+          ))}
+          {call.subCalls.map(child => <SubCall key={child.callId} call={child} manager={manager} sessionId={sessionId} depth={depth + 1} />)}
         </View>
       )}
     </View>
   )
 }
 
-export function ToolCard({ item, onLongPress }: { item: ConversationItem & { kind: 'tool' }; onLongPress?: () => void }): React.JSX.Element {
+export function ToolCard({ item, manager, sessionId, onLongPress }: {
+  item: ConversationItem & { kind: 'tool' }
+  manager: ConnectionManager
+  sessionId: string
+  onLongPress?: () => void
+}): React.JSX.Element {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const statusColor = item.status === 'running' ? colors.running : item.status === 'error' ? colors.danger : colors.success
@@ -249,6 +303,9 @@ export function ToolCard({ item, onLongPress }: { item: ConversationItem & { kin
             <Mono text={item.resultText} />
           )}
           {item.resultText === '' && item.args !== '' && <Mono text={item.args} />}
+          {item.resultImages.map(image => (
+            <ToolImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+          ))}
           {locations.length > 0 && (
             <View style={styles.locations}>
               {locations.map(path => <MonoActionRow key={path} label={path} value={path} />)}
@@ -257,7 +314,7 @@ export function ToolCard({ item, onLongPress }: { item: ConversationItem & { kin
           {item.subCalls.length > 0 && (
             <View style={styles.subCalls}>
               <Text style={styles.sectionTitle}>{t('tools.subCalls')}</Text>
-              {item.subCalls.map(call => <SubCall key={call.callId} call={call} />)}
+              {item.subCalls.map(call => <SubCall key={call.callId} call={call} manager={manager} sessionId={sessionId} />)}
             </View>
           )}
         </View>
@@ -311,4 +368,6 @@ const styles = StyleSheet.create({
   subCallStatus: { color: colors.textDim, fontSize: fontSize.tiny },
   subCallBody: { marginTop: spacing(1), gap: spacing(1) },
   subCallResult: { color: colors.textDim, fontSize: fontSize.tiny },
+  toolImage: { width: '100%', maxHeight: 260, borderRadius: radius.card, backgroundColor: colors.bg },
+  imageFallback: { color: colors.textDim, fontSize: fontSize.tiny, paddingVertical: spacing(1) },
 })

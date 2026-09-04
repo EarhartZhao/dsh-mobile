@@ -63,7 +63,9 @@ async function callPlugin(
 
 /**
  * Redeem a pairing code. The only call allowed without a device token
- * (docs/01). Failures come back as a uniform `mobile-pair-failed`.
+ * (docs/01). Invalid/expired codes return `mobile-pair-failed`; a full device
+ * roster returns `mobile-device-limit` so the App can direct the user to
+ * revoke an old device instead of regenerating another valid code.
  */
 export async function redeemPairingCode(
   conn: NatsConnLike,

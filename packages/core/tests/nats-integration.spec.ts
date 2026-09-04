@@ -75,8 +75,8 @@ beforeAll(async () => {
       }
       if (method === 'mobile.info') {
         msg.respond(replyOk(body.rpcId, {
-          pluginVersion: '0.1.0',
-          mobileApi: 1,
+          pluginVersion: '0.2.1',
+          mobileApi: 2,
           features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
         }))
         continue
@@ -84,7 +84,7 @@ beforeAll(async () => {
       if (method === 'mobile.health') {
         msg.respond(replyOk(body.rpcId, {
           status: 'ok', connection: 'connected', devices: 1,
-          pluginVersion: '0.2.0', mobileApi: 1, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+          pluginVersion: '0.2.1', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
           buildId: 'test-build', loadedFrom: 'C:\\test\\bridge.js', instanceId: INSTANCE,
           startedAt: new Date(0).toISOString(), uptimeMs: 1000,
           lastConnectedAt: new Date(0).toISOString(), lastReconnectAt: null, lastError: null,
@@ -103,6 +103,15 @@ beforeAll(async () => {
           break
         case 'session.create':
           msg.respond(replyOk(body.rpcId, { sessionId: 's-new' }))
+          break
+        case 'reference.files':
+          msg.respond(replyOk(body.rpcId, [{ path: 'src/index.ts', kind: 'file' }]))
+          break
+        case 'reference.sessions':
+          msg.respond(replyOk(body.rpcId, [{
+            sessionId: 's-source', label: 'Research', sameWorkspace: true,
+            createdAt: 1, mention: '@[Research](dsh-session:c291cmNl)',
+          }]))
           break
         default:
           msg.respond(replyErr(body.rpcId, 'mobile-forbidden'))
@@ -137,6 +146,21 @@ describeNats('NatsApiClient over real NATS', () => {
     expect(describe.result.ok && describe.result.value.version).toBe('0.1.1')
     const created = await client.sessions.create({} as never)
     expect(created.result.ok).toBe(true)
+    await nc.close()
+  })
+
+  it('discovers canonical file and session references through the bridge', async () => {
+    const nc = await appConn()
+    const client = new NatsApiClient({ conn: nc, instanceId: INSTANCE, getToken: () => VALID_TOKEN, headers: natsHeaders })
+    await expect(client.references.files({ sessionId: 's-live', query: 'src' })).resolves.toEqual([
+      { path: 'src/index.ts', kind: 'file' },
+    ])
+    await expect(client.references.sessions({ sessionId: 's-live', query: 'res' })).resolves.toEqual([
+      {
+        sessionId: 's-source', label: 'Research', sameWorkspace: true,
+        createdAt: 1, mention: '@[Research](dsh-session:c291cmNl)',
+      },
+    ])
     await nc.close()
   })
 
@@ -197,7 +221,7 @@ describeNats('NatsApiClient over real NATS', () => {
     const responder = (async () => {
       for await (const msg of sub) {
         const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
-        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.0' }))
+        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.1' }))
       }
     })()
     await pluginSide.flush()
@@ -220,7 +244,7 @@ describe('ConnectionManager', () => {
     await manager.start()
     expect(manager.state).toBe('online')
     expect(manager.hostInfo).toMatchObject({ version: '0.1.1' })
-    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.0', instanceId: INSTANCE })
+    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.1', instanceId: INSTANCE })
     expect(manager.healthLatencyMs).toEqual(expect.any(Number))
     // hello replay delivered the pending approval into the store.
     await new Promise(r => setTimeout(r, 300))

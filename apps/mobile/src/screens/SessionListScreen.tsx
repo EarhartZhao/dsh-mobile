@@ -54,6 +54,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [browserError, setBrowserError] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
   const visible = store.summaries.filter(s => !s.blank && !store.archivedSessionIds.includes(s.sessionId))
   const archived = store.summaries.filter(s => store.archivedSessionIds.includes(s.sessionId))
   const visibleById = new Map(visible.map(s => [s.sessionId, s]))
@@ -160,10 +161,23 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
 
   const newSession = async (agentPreset?: string): Promise<void> => {
     const client = manager.client
-    if (client === null) return
-    const result = await client.sessions.create(agentPreset === undefined ? {} : { agentPreset } as never)
-    if (result.result.ok) {
-      onOpenSession(result.result.value.sessionId)
+    if (client === null || creatingSession) return
+    setCreatingSession(true)
+    try {
+      const result = await client.sessions.create(agentPreset === undefined ? {} : { agentPreset } as never)
+      if (result.result.ok) {
+        onOpenSession(result.result.value.sessionId)
+      } else {
+        Alert.alert(t('session.operationFailed'), t('link.newSessionFailed', {
+          message: String(result.result.error.message ?? ''),
+        }))
+      }
+    } catch (cause) {
+      Alert.alert(t('session.operationFailed'), t('link.newSessionFailed', {
+        message: cause instanceof Error ? cause.message : String(cause),
+      }))
+    } finally {
+      setCreatingSession(false)
     }
   }
 
@@ -190,8 +204,13 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('session.title')}</Text>
         <View style={styles.headerActions}>
-          <TouchableOpacity onPress={() => void newSession(undefined)} onLongPress={() => void openPresetPicker()} style={styles.headerButton}>
-            <Text style={styles.headerButtonText}>{t('session.new')}</Text>
+          <TouchableOpacity
+            disabled={creatingSession}
+            onPress={() => void newSession(undefined)}
+            onLongPress={() => void openPresetPicker()}
+            style={[styles.headerButton, creatingSession && styles.headerButtonDisabled]}
+          >
+            <Text style={styles.headerButtonText}>{t(creatingSession ? 'session.creating' : 'session.new')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowArchived(a => !a)} style={styles.headerButton}>
             <Text style={styles.headerButtonText}>{showArchived ? t('common.back') : t('common.archive')}</Text>
@@ -467,6 +486,7 @@ const styles = StyleSheet.create({
   headerTitle: { color: colors.text, fontSize: fontSize.title, fontWeight: '600' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing(3), marginLeft: 'auto' },
   headerButton: { paddingVertical: spacing(1) },
+  headerButtonDisabled: { opacity: 0.5 },
   headerButtonText: { color: colors.accent, fontSize: fontSize.small },
   settingsButton: { minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
   settingsIcon: { color: colors.accent, fontSize: 24, lineHeight: 28 },
