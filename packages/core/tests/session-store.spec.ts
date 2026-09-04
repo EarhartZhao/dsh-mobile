@@ -49,6 +49,26 @@ describe('SessionStore', () => {
     expect(store.sessions.get('s-1')!.jobs).toEqual([])
   })
 
+  it('clears generation-scoped snapshots before reconnect baselines', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/queue', sessionId: sid, items: [{ id: 'm1' }] as never }))
+    store.applyMuxFrame(...mux({ type: 'session/jobs', sessionId: sid, jobs: [{ id: 'j1', status: 'running' }] as never }))
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'title', value: 'stale', seq: 3 }))
+    store.applyMuxFrame(...mux({ type: 'approval/requested', sessionId: sid, approvalId: 'a1' as never, toolName: 'bash' }))
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), { type: 'question/requested', sessionId: sid, questions: [{}] as never })
+
+    store.resetLiveSnapshots()
+
+    const session = store.sessions.get('s-1')!
+    expect(session.queue).toEqual([])
+    expect(session.jobs).toEqual([])
+    expect(session.projections).toEqual({})
+    expect(session.projectionSeqs).toEqual({})
+    expect(session.pendingApprovals.size).toBe(0)
+    expect(session.pendingQuestions.size).toBe(0)
+    expect(session.running).toBe(false)
+  })
+
   it('tracks pending approvals/questions until resolved', () => {
     const store = new SessionStore()
     store.applyMuxFrame(...mux({ type: 'approval/requested', sessionId: sid, approvalId: 'a1' as never, toolName: 'bash' }))
@@ -88,6 +108,25 @@ describe('SessionStore', () => {
     store.applyHostFrame({ type: 'host/workspace-changed', workspace: { workspaceId: 'w1', title: 'W', sessionIds: [] } as never })
     store.applyHostFrame({ type: 'host/workspace-removed', workspaceId: 'w1' as never })
     expect(store.workspaces).toEqual([])
+  })
+
+  it('updates summary metadata and exposes forwarded host events', () => {
+    const store = new SessionStore()
+    const remoteEvents: unknown[] = []
+    store.on('remoteEvent', event => remoteEvents.push(event))
+    store.applyBaseline({
+      summaries: [{ sessionId: sid, updatedAt: 1, running: false, blank: false } as never],
+      workspaces: [],
+    })
+    store.applyHostFrame({ type: 'host/remote-event', event: 'api-session/activity', args: [sid, 9] as never })
+    store.applyHostFrame({ type: 'host/remote-event', event: 'agent-preset/selected', args: [sid, 'coder'] as never })
+    store.applyHostFrame({ type: 'host/remote-event', event: 'commands/change', args: [] })
+    expect(store.summaries[0]).toMatchObject({ updatedAt: 9, agentPreset: 'coder' })
+    expect(remoteEvents).toEqual([
+      { event: 'api-session/activity', args: [sid, 9] },
+      { event: 'agent-preset/selected', args: [sid, 'coder'] },
+      { event: 'commands/change', args: [] },
+    ])
   })
 
   it('emits jobSettled when a live job settles or leaves the snapshot', () => {

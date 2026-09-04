@@ -5,6 +5,7 @@
  * items and drop out the moment the durable `assistant/message` for their
  * step lands (the message is the authority; chunks are replay fidelity).
  */
+import type { ToolCallView, ToolResultView } from '@dsh-mobile/protocol'
 import type { SessionState } from './session-store.ts'
 
 export type ConversationItem =
@@ -19,7 +20,21 @@ export type ConversationItem =
       producedFiles: string[]
     }
   | { kind: 'compaction'; key: string; seq: number; summary: string; compactionId: string }
-  | { kind: 'tool'; key: string; seq: number; callId: string; name: string; args: string; status: 'running' | 'done' | 'error'; resultPreview: string; resultText: string }
+  | {
+      kind: 'tool'
+      key: string
+      seq: number
+      callId: string
+      name: string
+      args: string
+      status: 'running' | 'done' | 'error'
+      resultPreview: string
+      resultText: string
+      resultImages: ConversationImage[]
+      callView: ToolCallView | null
+      resultView: ToolResultView | null
+      subCalls: ToolSubCall[]
+    }
   | { kind: 'stream'; key: string; seq: number; text: string; reasoning: string }
 
 export type ConversationImage =
@@ -32,6 +47,18 @@ interface ChunkBuffer {
   step: number
   text: string
   reasoning: string
+}
+
+export interface ToolSubCall {
+  callId: string
+  name: string
+  args: string
+  seq: number
+  status: 'running' | 'done' | 'error'
+  resultPreview: string
+  resultText: string
+  resultImages: ConversationImage[]
+  subCalls: ToolSubCall[]
 }
 
 function isObj(value: unknown): value is Record<string, unknown> {
@@ -71,11 +98,21 @@ function blocksToImages(content: unknown): ConversationImage[] {
     const attachment = isObj(block['attachment']) ? block['attachment'] : undefined
     const attachmentId = typeof attachment?.['attachmentId'] === 'string' ? attachment['attachmentId'] : undefined
     const mediaType = typeof block['mediaType'] === 'string' ? block['mediaType'] : 'image/png'
-    const name = typeof block['name'] === 'string' ? block['name'] : undefined
+    const name = typeof block['name'] === 'string'
+      ? block['name']
+      : typeof attachment?.['name'] === 'string' ? attachment.name : undefined
     if (attachmentId !== undefined) images.push({ kind: 'attachment', attachmentId, name })
     else if (typeof block['data'] === 'string') images.push({ kind: 'data', uri: `data:${mediaType};base64,${block['data']}`, name })
   }
   return images
+}
+
+function toolResultBlocks(content: unknown, callId: string | undefined): unknown {
+  if (!Array.isArray(content)) return content
+  const result = content.find(block => isObj(block)
+    && block['type'] === 'tool-result'
+    && (callId === undefined || block['toolCallId'] === callId))
+  return isObj(result) ? result['content'] : content
 }
 
 /** Tool view render intent: diff and edit cards report the paths they produced. */
@@ -90,6 +127,19 @@ function producedPaths(view: unknown): string[] {
     .filter((path): path is string => typeof path === 'string')
 }
 
+function toolEventView(entry: HistoryEntryLike): { call: ToolCallView | null; result: ToolResultView | null } {
+  const view = entry.view
+  if (view === undefined || view === null) return { call: null, result: null }
+  if (view['for'] === 'call') return { call: view['view'] as ToolCallView, result: null }
+  if (view['for'] === 'result') return { call: null, result: view['view'] as ToolResultView }
+  return { call: null, result: null }
+}
+
+function stringifyArguments(value: unknown): string {
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) ?? '' } catch { return '' }
+}
+
 export function deriveConversation(session: SessionState): ConversationItem[] {
   const items: ConversationItem[] = []
   const live = new Map<string, ChunkBuffer>()
@@ -97,6 +147,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
   const tools = new Map<string, ConversationItem & { kind: 'tool' }>()
   const toolTurns = new Map<string, number>()
   const produced = new Map<number, { seq: number; path: string }[]>()
+  const toolParents = new Map<string, string>()
 
   for (const entry of session.events) {
     const event = entry.event
@@ -151,6 +202,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         if (!isObj(data)) break
         const callId = typeof data['callId'] === 'string' ? data['callId'] : `c${seq}`
         const turn = typeof data['turn'] === 'number' ? data['turn'] : -1
+        const view = toolEventView(entry)
         const item: ConversationItem & { kind: 'tool' } = {
           kind: 'tool',
           key: `t${seq}`,
@@ -161,6 +213,10 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           status: 'running',
           resultPreview: '',
           resultText: '',
+          resultImages: [],
+          callView: view.call,
+          resultView: null,
+          subCalls: [],
         }
         tools.set(callId, item)
         if (turn >= 0) toolTurns.set(callId, turn)
@@ -170,23 +226,33 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
       case 'tool/result': {
         if (!isObj(data)) break
         const message = data['message']
+        const messageContent = isObj(message) ? message['content'] : undefined
+        const messageSource = isObj(message) && isObj(message['source']) ? message['source'] : undefined
+        const nestedResult = Array.isArray(messageContent)
+          ? messageContent.find(block => isObj(block) && block['type'] === 'tool-result')
+          : undefined
         const callId = isObj(message) && typeof message['toolCallId'] === 'string'
           ? message['toolCallId']
-          : undefined
+          : typeof messageSource?.['callId'] === 'string'
+            ? messageSource.callId
+            : isObj(nestedResult) && typeof nestedResult['toolCallId'] === 'string'
+              ? nestedResult.toolCallId
+              : undefined
         const target = callId === undefined ? undefined : tools.get(callId)
         if (target !== undefined) {
           target.status = isObj(data['error']) ? 'error' : 'done'
-          const content = isObj(message) ? message['content'] : undefined
+          const content = toolResultBlocks(messageContent, callId)
           const text = blocksToText(content)
           target.resultPreview = truncate(text, 300)
           target.resultText = truncate(text, 5000)
-          const resultView = typeof entry.view === 'object' && entry.view !== null && isObj((entry.view as Record<string, unknown>)['view'])
-            ? (entry.view as Record<string, unknown>)['view']
-            : undefined
+          target.resultImages = blocksToImages(content)
+          const view = toolEventView(entry)
+          if (view.call !== null && target.callView === null) target.callView = view.call
+          target.resultView = view.result
           const turn = callId === undefined ? undefined : toolTurns.get(callId)
           if (target.status !== 'error' && turn !== undefined) {
             const files = produced.get(turn) ?? []
-            files.push(...producedPaths(resultView).map(path => ({ seq, path })))
+            files.push(...producedPaths(view.result).map(path => ({ seq, path })))
             produced.set(turn, files)
           }
         }
@@ -212,6 +278,49 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         // A cancelled turn may never finalize: its live buffer stays as the
         // delivered prefix (the host emits an interrupted assistant/message
         // when any content streamed, which clears the buffer itself).
+        break
+      }
+      case 'tool/code-dispatch-start':
+      case 'tool/code-dispatch': {
+        if (!isObj(data)) break
+        const parentCallId = typeof data['parentCallId'] === 'string' ? data['parentCallId'] : undefined
+        const subCallId = typeof data['subCallId'] === 'string' ? data['subCallId'] : undefined
+        if (parentCallId === undefined || subCallId === undefined || parentCallId === subCallId) break
+        const isStart = event['type'] === 'tool/code-dispatch-start'
+        const registeredParent = toolParents.get(subCallId)
+        if (isStart) {
+          if (toolParents.has(subCallId) || createsCycle(toolParents, parentCallId, subCallId)) break
+        } else if (registeredParent !== undefined && registeredParent !== parentCallId) {
+          break
+        } else if (registeredParent === undefined && createsCycle(toolParents, parentCallId, subCallId)) {
+          break
+        }
+        const rootId = tools.has(parentCallId) ? parentCallId : ancestorId(toolParents, parentCallId)
+        const root = rootId === undefined ? undefined : tools.get(rootId)
+        if (root === undefined) break
+        const parent = findSubCall(root, parentCallId) ?? root
+        const name = typeof data['name'] === 'string' ? data['name'] : 'tool'
+        const args = stringifyArguments(data['arguments'])
+        const siblings = parent.subCalls
+        const at = siblings.findIndex(child => child.callId === subCallId)
+        if (event['type'] === 'tool/code-dispatch-start') {
+          if (at >= 0) break
+          toolParents.set(subCallId, parentCallId)
+          parent.subCalls = [...siblings, {
+            callId: subCallId, name, args, seq, status: 'running',
+            resultPreview: '', resultText: '', resultImages: [], subCalls: [],
+          }]
+          break
+        }
+        const isError = data['isError'] === true
+        const resultText = truncate(blocksToText(data['content']), 5000)
+        const resultImages = blocksToImages(data['content'])
+        const existing = at === -1 ? undefined : siblings[at]
+        const child: ToolSubCall = existing === undefined
+          ? { callId: subCallId, name, args, seq, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages, subCalls: [] }
+          : { ...existing, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages }
+        toolParents.set(subCallId, parentCallId)
+        parent.subCalls = at === -1 ? [...siblings, child] : siblings.map((candidate, index) => index === at ? child : candidate)
         break
       }
       case 'compaction/summary': {
@@ -241,4 +350,35 @@ function extractContent(message: unknown): unknown {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + '…'
+}
+
+type HistoryEntryLike = { view?: { for?: unknown; view?: unknown } }
+
+function createsCycle(parents: Map<string, string>, parentCallId: string, subCallId: string): boolean {
+  const visited = new Set([subCallId])
+  let cursor: string | undefined = parentCallId
+  while (cursor !== undefined) {
+    if (visited.has(cursor)) return true
+    visited.add(cursor)
+    cursor = parents.get(cursor)
+  }
+  return false
+}
+
+function ancestorId(parents: Map<string, string>, callId: string): string | undefined {
+  let cursor = parents.get(callId)
+  while (cursor !== undefined) {
+    if (parents.has(cursor)) cursor = parents.get(cursor)
+    else return cursor
+  }
+  return undefined
+}
+
+function findSubCall(node: ToolSubCall, callId: string): ToolSubCall | undefined {
+  for (const child of node.subCalls) {
+    if (child.callId === callId) return child
+    const nested = findSubCall(child, callId)
+    if (nested !== undefined) return nested
+  }
+  return undefined
 }

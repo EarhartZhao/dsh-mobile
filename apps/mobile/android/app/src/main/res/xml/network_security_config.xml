@@ -5,7 +5,7 @@
 <network-security-config>
   <!-- The dev loop (Metro, local stand-in) speaks cleartext to localhost;
        the release story can tighten this to debug-overrides only. -->
-  <base-config cleartextTrafficPermitted="true" />
+  <base-config cleartextTrafficPermitted="false" />
   <domain-config>
     <domain includeSubdomains="false">115.159.57.137</domain>
     <trust-anchors>

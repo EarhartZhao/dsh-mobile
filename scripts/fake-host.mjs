@@ -72,6 +72,28 @@ void (async () => {
       msg.respond(ok(body.rpcId, { ok: true }))
       continue
     }
+    if (method === 'mobile.info') {
+      msg.respond(ok(body.rpcId, { pluginVersion: '0.1.0', mobileApi: 1, features: ['plus-menu', 'command-directory', 'multi-image', 'durable-attachment-order'] }))
+      continue
+    }
+    if (method === 'command.list') {
+      msg.respond(ok(body.rpcId, {
+        commands: [
+          { name: 'compact', description: '压缩当前会话上下文。' },
+          { name: 'goal', description: '设置或查看当前任务目标。', input: { hint: '<objective>', images: true } },
+          { name: 'permission', description: '切换权限预设。', input: { hint: '<preset>' } },
+          { name: 'plan', description: '进入或退出 Plan 模式。', input: { hint: '[off|message]', images: true } },
+        ],
+      }))
+      continue
+    }
+    if (method === 'command.execute') {
+      const line = body.payload?.line ?? ''
+      const name = line.replace(/^\//, '').split(/\s+/)[0] ?? 'command'
+      msg.respond(ok(body.rpcId, { commandId: crypto.randomUUID(), result: { kind: 'success', text: `${name} 已执行。` } }))
+      console.log(`[fake-host] command.execute: ${line}`)
+      continue
+    }
     switch (method) {
       case 'host.describe':
         msg.respond(ok(body.rpcId, { version: '0.1.1-fake', cwd: 'C:\\dsh', attachedSessions: 1, home: 'C:\\dsh-home', canOpenPath: false }))
@@ -91,7 +113,16 @@ void (async () => {
             { event: { seq: 4, type: 'tool/result', time: Date.now() - 53000, data: { turn: 1, step: 1, message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'README.md\nsrc/\npackage.json' }] } } } },
           ],
           hasMore: false,
-          projections: { asOfSeq: 4, values: { title: 'demo 会话' } },
+          projections: {
+            asOfSeq: 4,
+            values: {
+              title: 'demo 会话',
+              sessionStats: { turns: 4, steps: 20, llmMs: 101_000, toolMs: 35_400, ttftMs: 1_000, ttftSteps: 1, decodeMs: 79_800, decodeTokens: 9_500 },
+              tokenUsage: { uncachedInputTokens: 87_520, outputTokens: 9_500, cacheReadTokens: 459_480, cacheWriteTokens: 0 },
+              contextPressure: { projectedTokens: 547_000, contextWindow: 1_000_000 },
+              contextBreakdown: { systemTokens: 12_000, toolsTokens: 78_000, messageTokens: 457_000 },
+            },
+          },
         }))
         break
       case 'session.prompt': {

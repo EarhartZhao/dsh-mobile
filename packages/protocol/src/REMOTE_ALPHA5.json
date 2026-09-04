@@ -1,0 +1,53 @@
+{
+  "protocol": "dsh-0.1.2-alpha.5-remote",
+  "mobileApi": 2,
+  "endpoints": [
+    "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",
+    "session/rename", "session/fork", "session/prompt", "session/attachment", "session/updateQueue",
+    "session/cancel", "session/page", "session/follow", "session/control",
+    "workspace/create", "workspace/rename", "workspace/delete", "workspace/insertBefore",
+    "workspace/insertSessionBefore", "workspace/archiveSession", "workspace/follow",
+    "commands/list", "commands/execute", "agentPresets/list", "agentPresets/read", "agentPresets/select",
+    "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
+    "subagents/list", "subagents/prompt", "subagents/interruptByParent", "pluginInventory/list",
+    "fileReferences/list", "sessionReferenceResolver/candidates", "$events", "$events/result"
+  ],
+  "sourceChecks": [
+    {
+      "file": "packages/api/session-controller/src/index.ts",
+      "includes": ["@Remote('list')", "@Remote('modelCatalog')", "@Remote('page')", "@Remote({ mode: 'stream' })", "control("]
+    },
+    {
+      "file": "packages/api/workspace-controller/src/index.ts",
+      "includes": ["namespace: 'workspace'", "@Remote('insertSessionBefore')", "@Remote({ mode: 'stream' })"]
+    },
+    {
+      "file": "packages/interaction/commands/src/index.ts",
+      "includes": ["super(ctx, 'commands')", "list(", "execute("]
+    },
+    {
+      "file": "packages/preset/agent-presets/src/index.ts",
+      "includes": ["@Remote('list')", "@Remote('read')", "@Remote('select')"]
+    },
+    {
+      "file": "packages/goal/goal/src/index.ts",
+      "includes": ["@Remote('create')", "@Remote('edit')", "@Remote('pause')", "@Remote('resume')", "@Remote('complete')", "@Remote('clear')"]
+    },
+    {
+      "file": "packages/subagent/subagent/src/index.ts",
+      "includes": ["@Remote('list')", "@Remote('prompt')", "@Remote('interruptByParent')"]
+    },
+    {
+      "file": "packages/api/session-controller/src/file-references.ts",
+      "includes": ["namespace: 'fileReferences'", "@Remote", "list("]
+    },
+    {
+      "file": "packages/context/session-reference/src/index.ts",
+      "includes": ["@Remote('candidates')", "remoteExportCandidates("]
+    },
+    {
+      "file": "packages/api/gateway/src/stream-protocol.ts",
+      "includes": ["REMOTE_EVENT_RESULT_ENDPOINT = '$events/result'", "RemoteEventReadyFrame", "RemoteEventInvocationFrame"]
+    }
+  ]
+}

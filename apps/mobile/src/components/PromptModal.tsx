@@ -1,7 +1,9 @@
 /** Small text-prompt modal (RN has no cross-platform Alert.prompt). */
 import React, { useEffect, useState } from 'react'
 import { Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { useI18n } from '../i18n'
 
 export function PromptModal({ visible, title, initial, confirmLabel, onCancel, onConfirm }: {
   visible: boolean
@@ -11,16 +13,17 @@ export function PromptModal({ visible, title, initial, confirmLabel, onCancel, o
   onCancel: () => void
   onConfirm: (text: string) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const [text, setText] = useState(initial)
   useEffect(() => { if (visible) setText(initial) }, [visible, initial])
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.backdrop}>
+      <ModalBackdrop onClose={onCancel}>
         <View style={styles.card}>
           <Text style={styles.title}>{title}</Text>
           <TextInput style={styles.input} value={text} onChangeText={setText} autoFocus selectTextOnFocus />
           <View style={styles.row}>
-            <TouchableOpacity style={styles.button} onPress={onCancel}><Text style={styles.cancelText}>取消</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.button} onPress={onCancel}><Text style={styles.cancelText}>{t('modal.cancel')}</Text></TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.confirm, text.trim() === '' && styles.disabled]}
               disabled={text.trim() === ''}
@@ -30,13 +33,12 @@ export function PromptModal({ visible, title, initial, confirmLabel, onCancel, o
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </ModalBackdrop>
     </Modal>
   )
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: spacing(6) },
   card: { backgroundColor: colors.bgElevated, borderRadius: radius.card, padding: spacing(4), gap: spacing(3) },
   title: { color: colors.text, fontSize: fontSize.body, fontWeight: '600' },
   input: {

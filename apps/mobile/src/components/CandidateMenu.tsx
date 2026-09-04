@@ -1,7 +1,7 @@
 /** Input-trigger candidate menu (/ skills, @ files+sessions) above the composer. */
 import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { colors, fontSize, radius, spacing } from '../theme'
+import { colors, fontSize, spacing } from '../theme'
 
 export interface Candidate {
   key: string

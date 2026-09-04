@@ -9,16 +9,34 @@
 import {
   NatsApiClient,
   sendHello,
+  fetchMobileInfo,
+  fetchMobileHealth,
+  fetchMobileInventory,
   type HostFrame,
   type MuxFrame,
   type NatsConnLike,
   type NatsHeadersFactory,
   type RpcId,
+  type MobileInventorySnapshot,
+  type MobileHealthSnapshot,
 } from '@dsh-mobile/protocol'
 import { Emitter } from './emitter.ts'
 import { SessionStore } from './session-store.ts'
+import { checkMobileCompatibility, type CompatibilityResult } from './compatibility.ts'
 
-export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped'
+export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped' | 'incompatible'
+export type ConnectionFailureKind = 'bridge-unavailable' | 'authentication' | 'tls' | 'network' | 'protocol' | 'unknown'
+
+/** Classifies transport/RPC text without coupling the core package to UI copy. */
+export function classifyConnectionFailure(message: string): ConnectionFailureKind {
+  const text = message.toLowerCase()
+  if (text.includes('mobile-unauthenticated') || text.includes('authorization') || text.includes('authentication')) return 'authentication'
+  if (text.includes('certificate') || text.includes('tls') || text.includes('ssl')) return 'tls'
+  if (text.includes('no responders') || text.includes('503') || text.includes('timeout')) return 'bridge-unavailable'
+  if (text.includes('mobile-info-invalid') || text.includes('mobile-health-invalid') || text.includes('parse') || text.includes('json') || text.includes('zod')) return 'protocol'
+  if (text.includes('network') || text.includes('socket') || text.includes('connection refused') || text.includes('dns')) return 'network'
+  return 'unknown'
+}
 
 /** Optional status stream both nats flavors expose (`conn.status()`). */
 interface StatusfulConn extends NatsConnLike {
@@ -32,7 +50,9 @@ function hasStatus(conn: NatsConnLike): conn is StatusfulConn {
 type ManagerEvents = {
   state: { state: ConnectionState }
   hostInfo: { info: unknown }
-  error: { message: string }
+  compatibility: { result: import('./compatibility.ts').CompatibilityResult }
+  error: { message: string, kind: ConnectionFailureKind }
+  health: { snapshot: MobileHealthSnapshot | null, latencyMs: number | null, error: string | null }
 }
 
 export interface ConnectionManagerOptions {
@@ -49,11 +69,17 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   state: ConnectionState = 'idle'
   client: NatsApiClient | null = null
   hostInfo: unknown = null
+  compatibility: CompatibilityResult | null = null
+  health: MobileHealthSnapshot | null = null
+  healthLatencyMs: number | null = null
+  healthError: string | null = null
+  lastOnlineAt: string | null = null
 
   private conn: NatsConnLike | null = null
   private generation = 0
   private streamAbort: AbortController | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private retryTask: Promise<void> | null = null
 
   constructor(private readonly options: ConnectionManagerOptions) {
     super()
@@ -67,7 +93,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       this.conn = await this.options.connect()
     } catch (error) {
       this.setState('reconnecting')
-      this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+      this.emitError(error)
       this.scheduleRetry(() => { void this.start().catch(() => undefined) })
       return
     }
@@ -82,8 +108,8 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       await this.establish()
     } catch (error) {
       this.setState('reconnecting')
-      this.emit('error', { message: error instanceof Error ? error.message : String(error) })
-      this.scheduleRetry(() => { void this.retryEstablish(this.generation) })
+      this.emitError(error)
+      this.scheduleRetry(() => this.ensureRetryEstablish(this.generation))
     }
   }
 
@@ -95,6 +121,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     }
     this.streamAbort?.abort()
     this.streamAbort = null
+    this.retryTask = null
     const conn = this.conn
     this.conn = null
     this.client = null
@@ -119,6 +146,38 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     }
   }
 
+  /** Loads the optional plugin inventory when the connected bridge advertises it. */
+  async loadInventory(): Promise<MobileInventorySnapshot | null> {
+    if (this.conn === null || this.state !== 'online') return null
+    const token = this.options.getToken()
+    if (token === undefined) return null
+    return fetchMobileInventory(this.conn, this.options.headers, this.options.instanceId, token)
+  }
+
+  /** Runs the authenticated bridge health check and records its latency. */
+  async probeHealth(): Promise<MobileHealthSnapshot | null> {
+    if (this.conn === null) throw new Error('connection not ready')
+    const token = this.options.getToken()
+    if (token === undefined) throw new Error('mobile-unauthenticated')
+    const started = Date.now()
+    try {
+      const snapshot = await fetchMobileHealth(this.conn, this.options.headers, this.options.instanceId, token)
+      this.health = snapshot
+      this.healthLatencyMs = Date.now() - started
+      this.healthError = null
+      this.emit('health', { snapshot, latencyMs: this.healthLatencyMs, error: null })
+      return snapshot
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.health = null
+      this.healthLatencyMs = null
+      this.healthError = message
+      this.emit('health', { snapshot: null, latencyMs: null, error: message })
+      this.emitError(error)
+      throw error
+    }
+  }
+
   /**
    * One full "become online" pass; also the reconnect-baseline path. Order
    * matters: baselines land before hello so replayed pending frames update
@@ -129,6 +188,22 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     const token = this.options.getToken()
     if (client === null || token === undefined) throw new Error('connection not ready')
 
+    const mobileInfo = await fetchMobileInfo(this.conn!, this.options.headers, this.options.instanceId, token)
+    this.compatibility = checkMobileCompatibility(mobileInfo)
+    this.emit('compatibility', { result: this.compatibility })
+    if (this.compatibility.status !== 'compatible') {
+      this.setState('incompatible')
+      return
+    }
+
+    if (this.compatibility.features.includes('health-check')) {
+      await this.probeHealth().catch(() => undefined)
+    } else {
+      this.health = null
+      this.healthLatencyMs = null
+      this.healthError = null
+    }
+
     const describe = await client.host.describe({})
     if (!describe.result.ok) throw new Error(`host.describe failed: ${describe.result.error.message}`)
     this.hostInfo = describe.result.value
@@ -138,12 +213,23 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     const abort = new AbortController()
     this.streamAbort = abort
     const generation = this.generation
+    this.store.resetLiveSnapshots()
     // Subscriptions must be registered before hello, or the replayed pending
     // frames publish into the void. onOpen fires post-flush (docs/02 lifecycle).
     const muxOpen = this.trackOpen()
     const hostOpen = this.trackOpen()
-    this.pump(client.events.mux({}, abort.signal, muxOpen.resolve), frame => this.store.applyMuxFrame(frame.rpcId, frame.payload))
-    this.pump(client.events.host({}, abort.signal, hostOpen.resolve), frame => this.store.applyHostFrame(frame.payload))
+    this.pump(
+      client.events.mux({}, abort.signal, muxOpen.resolve),
+      frame => this.store.applyMuxFrame(frame.rpcId, frame.payload),
+      abort.signal,
+      generation,
+    )
+    this.pump(
+      client.events.host({}, abort.signal, hostOpen.resolve),
+      frame => this.store.applyHostFrame(frame.payload),
+      abort.signal,
+      generation,
+    )
 
     const [workspaces, sessions] = await Promise.all([
       client.workspace.list({}),
@@ -160,6 +246,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
 
     await Promise.all([muxOpen.waited, hostOpen.waited])
     await sendHello(this.conn!, this.options.headers, this.options.instanceId, token)
+    this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
   }
 
@@ -172,13 +259,17 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   private pump<F extends MuxFrame | HostFrame>(
     stream: AsyncIterable<{ rpcId: RpcId; payload: F }>,
     apply: (frame: { rpcId: RpcId; payload: F }) => void,
+    signal: AbortSignal,
+    generation: number,
   ): void {
     void (async () => {
       try {
         for await (const frame of stream) apply(frame)
       } catch (error) {
-        if (this.streamAbort?.signal.aborted === true) return
-        this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+        if (signal.aborted || this.generation !== generation) return
+        this.setState('reconnecting')
+        this.emitError(error)
+        this.ensureRetryEstablish(generation)
       }
     })()
   }
@@ -194,7 +285,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
           this.setState('connecting')
           // The server side may still be settling (responders not yet
           // re-subscribed); retry the establish pass with backoff.
-          void this.retryEstablish(generation)
+          this.ensureRetryEstablish(generation)
         }
       }
     } catch {
@@ -211,11 +302,20 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         return
       } catch (error) {
         this.setState('reconnecting')
-        this.emit('error', { message: error instanceof Error ? error.message : String(error) })
+        this.emitError(error)
         await sleep(delay)
         delay = Math.min(delay * 2, 15_000)
       }
     }
+  }
+
+  private ensureRetryEstablish(generation: number): void {
+    if (this.retryTask !== null) return
+    const task = this.retryEstablish(generation)
+    this.retryTask = task
+    void task.finally(() => {
+      if (this.retryTask === task) this.retryTask = null
+    })
   }
 
   private scheduleRetry(run: () => void, delayMs = 2000): void {
@@ -231,6 +331,11 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (this.state === state) return
     this.state = state
     this.emit('state', { state })
+  }
+
+  private emitError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    this.emit('error', { message, kind: classifyConnectionFailure(message) })
   }
 }
 

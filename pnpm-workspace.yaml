@@ -1,10 +1,8 @@
 packages:
   - 'packages/*'
   - 'apps/*'
-onlyBuiltDependencies:
-  - esbuild
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 minimumReleaseAgeExclude:
   - '@react-native/asset-utils@0.87.1'
   - '@react-native/babel-plugin-codegen@0.87.1'

@@ -72,6 +72,8 @@ type StoreEvents = {
   jobSettled: { sessionId: string; job: JobView }
   /** An answerable frame (approval/question) arrived or was replayed. */
   attention: { sessionId: string; kind: 'approval' | 'question'; summary: string }
+  /** One allowlisted Host event for UI-owned cache invalidation. */
+  remoteEvent: { event: string; args: unknown[] }
 }
 
 function isLiveJob(status: JobView['status']): boolean {
@@ -135,6 +137,20 @@ export class SessionStore extends Emitter<StoreEvents> {
     }
     this.emit('changed', { sessionId: undefined })
     this.emit('workspacesChanged', undefined)
+  }
+
+  /** Drop generation-scoped state before a reconnect baseline is consumed. */
+  resetLiveSnapshots(): void {
+    for (const session of this.sessions.values()) {
+      session.queue = []
+      session.jobs = []
+      session.projections = {}
+      session.projectionSeqs = {}
+      session.pendingApprovals.clear()
+      session.pendingQuestions.clear()
+      session.running = false
+    }
+    this.emit('changed', { sessionId: undefined })
   }
 
   /** History page merge (tail page first). Returns the merged log length. */
@@ -258,6 +274,18 @@ export class SessionStore extends Emitter<StoreEvents> {
       case 'host/session-added': {
         const session = this.session(frame.sessionId)
         session.running = false
+        if (!this.summaries.some(summary => summary.sessionId === frame.sessionId)) {
+          this.summaries.unshift({
+            sessionId: frame.sessionId,
+            updatedAt: Date.now(),
+            running: false,
+            blank: frame.blank,
+            ...(frame.parentSessionId === undefined ? {} : { parentSessionId: frame.parentSessionId }),
+            ...(frame.origin === undefined ? {} : { origin: frame.origin }),
+            ...(frame.cwd === undefined ? {} : { cwd: frame.cwd }),
+            ...(frame.agentPreset === undefined ? {} : { agentPreset: frame.agentPreset }),
+          } as SessionSummary)
+        }
         break
       }
       case 'host/session-removed':
@@ -287,8 +315,33 @@ export class SessionStore extends Emitter<StoreEvents> {
       case 'host/archived-sessions-changed':
         this.archivedSessionIds = frame.archivedSessionIds
         break
-      default:
-        break // workspace-order-changed / remote-event etc.: list refresh concern, not store state
+      case 'host/workspace-order-changed': {
+        const order = new Map(frame.workspaceIds.map((id, index) => [id, index]))
+        this.workspaces.sort((left, right) =>
+          (order.get(left.workspaceId) ?? Number.MAX_SAFE_INTEGER)
+          - (order.get(right.workspaceId) ?? Number.MAX_SAFE_INTEGER))
+        this.emit('workspacesChanged', undefined)
+        break
+      }
+      case 'host/remote-event': {
+        if (frame.event === 'api-session/activity'
+          && typeof frame.args[0] === 'string'
+          && typeof frame.args[1] === 'number') {
+          const summary = this.summaries.find(item => item.sessionId === frame.args[0])
+          if (summary !== undefined) summary.updatedAt = frame.args[1]
+          this.summaries.sort((left, right) => right.updatedAt - left.updatedAt)
+        } else if (frame.event === 'agent-preset/selected'
+          && typeof frame.args[0] === 'string'
+          && typeof frame.args[1] === 'string') {
+          const summary = this.summaries.find(item => item.sessionId === frame.args[0])
+          if (summary !== undefined) summary.agentPreset = frame.args[1]
+        }
+        this.emit('remoteEvent', { event: frame.event, args: frame.args })
+        break
+      }
+      case 'stream/error':
+        this.emit('error', { message: frame.error.message })
+        return
     }
     this.emit('changed', { sessionId: 'sessionId' in frame ? frame.sessionId : undefined })
   }
