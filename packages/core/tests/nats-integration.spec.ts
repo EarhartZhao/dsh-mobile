@@ -7,15 +7,19 @@
  * live harness.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { connect, headers as natsHeaders, type NatsConnection } from 'nats'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
+import { fetchMobileInfo, NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
+import { REQUIRED_PLUGIN_FEATURES } from '../src/compatibility.ts'
 import { ConnectionManager } from '../src/connection-manager.ts'
 
 const PORT = 16500 + Math.floor(Math.random() * 500)
 const URL = `nats://127.0.0.1:${PORT}`
 const INSTANCE = 'test-pc'
 const VALID_TOKEN = 'test-token-123'
+const NATS_SERVER_BIN = process.env.NATS_SERVER_BIN ?? 'C:\\nats-server\\nats-server.exe'
+const describeNats = existsSync(NATS_SERVER_BIN) ? describe : describe.skip
 
 let server: ChildProcess
 let pluginSide: NatsConnection
@@ -42,7 +46,7 @@ function pushMuxFrame(frame: unknown): void {
 }
 
 beforeAll(async () => {
-  server = spawn('C:\\nats-server\\nats-server.exe', ['-p', String(PORT)], { stdio: 'ignore' })
+  server = spawn(NATS_SERVER_BIN, ['-p', String(PORT)], { stdio: 'ignore' })
   await new Promise(r => setTimeout(r, 1500))
   pluginSide = await connect({ servers: URL })
 
@@ -69,6 +73,24 @@ beforeAll(async () => {
         msg.respond(replyOk(body.rpcId, { ok: true }))
         continue
       }
+      if (method === 'mobile.info') {
+        msg.respond(replyOk(body.rpcId, {
+          pluginVersion: '0.2.1',
+          mobileApi: 2,
+          features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+        }))
+        continue
+      }
+      if (method === 'mobile.health') {
+        msg.respond(replyOk(body.rpcId, {
+          status: 'ok', connection: 'connected', devices: 1,
+          pluginVersion: '0.2.1', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+          buildId: 'test-build', loadedFrom: 'C:\\test\\bridge.js', instanceId: INSTANCE,
+          startedAt: new Date(0).toISOString(), uptimeMs: 1000,
+          lastConnectedAt: new Date(0).toISOString(), lastReconnectAt: null, lastError: null,
+        }))
+        continue
+      }
       switch (method) {
         case 'host.describe':
           msg.respond(replyOk(body.rpcId, { version: '0.1.1', cwd: 'C:\\dsh', attachedSessions: 0, home: 'C:\\dsh-home', canOpenPath: true }))
@@ -81,6 +103,15 @@ beforeAll(async () => {
           break
         case 'session.create':
           msg.respond(replyOk(body.rpcId, { sessionId: 's-new' }))
+          break
+        case 'reference.files':
+          msg.respond(replyOk(body.rpcId, [{ path: 'src/index.ts', kind: 'file' }]))
+          break
+        case 'reference.sessions':
+          msg.respond(replyOk(body.rpcId, [{
+            sessionId: 's-source', label: 'Research', sameWorkspace: true,
+            createdAt: 1, mention: '@[Research](dsh-session:c291cmNl)',
+          }]))
           break
         default:
           msg.respond(replyErr(body.rpcId, 'mobile-forbidden'))
@@ -99,7 +130,7 @@ async function appConn(): Promise<NatsConnection> {
   return connect({ servers: URL })
 }
 
-describe('NatsApiClient over real NATS', () => {
+describeNats('NatsApiClient over real NATS', () => {
   it('redeems a pairing code and rejects a bad one', async () => {
     const nc = await appConn()
     const device = await redeemPairingCode(nc, natsHeaders, INSTANCE, 'GOOD-CODE', 'vitest')
@@ -115,6 +146,21 @@ describe('NatsApiClient over real NATS', () => {
     expect(describe.result.ok && describe.result.value.version).toBe('0.1.1')
     const created = await client.sessions.create({} as never)
     expect(created.result.ok).toBe(true)
+    await nc.close()
+  })
+
+  it('discovers canonical file and session references through the bridge', async () => {
+    const nc = await appConn()
+    const client = new NatsApiClient({ conn: nc, instanceId: INSTANCE, getToken: () => VALID_TOKEN, headers: natsHeaders })
+    await expect(client.references.files({ sessionId: 's-live', query: 'src' })).resolves.toEqual([
+      { path: 'src/index.ts', kind: 'file' },
+    ])
+    await expect(client.references.sessions({ sessionId: 's-live', query: 'res' })).resolves.toEqual([
+      {
+        sessionId: 's-source', label: 'Research', sameWorkspace: true,
+        createdAt: 1, mention: '@[Research](dsh-session:c291cmNl)',
+      },
+    ])
     await nc.close()
   })
 
@@ -147,6 +193,44 @@ describe('NatsApiClient over real NATS', () => {
     expect(frames[0]).toMatchObject({ type: 'session/subscribed', sessionId: 's-live' })
     await nc.close()
   })
+
+  it('does not misreport an offline bridge as an unknown plugin version', async () => {
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'offline-pc', VALID_TOKEN, 200)).rejects.toThrow()
+    await nc.close()
+  })
+
+  it('treats an explicit mobile.info rejection as a legacy plugin', async () => {
+    const sub = pluginSide.subscribe('svc.dsh.legacy-pc.mobile.info', { max: 1 })
+    const responder = (async () => {
+      for await (const msg of sub) {
+        const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
+        msg.respond(replyErr(body.rpcId, 'mobile-forbidden'))
+      }
+    })()
+    await pluginSide.flush()
+
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'legacy-pc', VALID_TOKEN, 1_000)).resolves.toBeNull()
+    await responder
+    await nc.close()
+  })
+
+  it('keeps a malformed mobile.info response as a protocol error', async () => {
+    const sub = pluginSide.subscribe('svc.dsh.malformed-pc.mobile.info', { max: 1 })
+    const responder = (async () => {
+      for await (const msg of sub) {
+        const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
+        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.1' }))
+      }
+    })()
+    await pluginSide.flush()
+
+    const nc = await appConn()
+    await expect(fetchMobileInfo(nc, natsHeaders, 'malformed-pc', VALID_TOKEN, 1_000)).rejects.toThrow('mobile-info-invalid')
+    await responder
+    await nc.close()
+  })
 })
 
 describe('ConnectionManager', () => {
@@ -160,6 +244,8 @@ describe('ConnectionManager', () => {
     await manager.start()
     expect(manager.state).toBe('online')
     expect(manager.hostInfo).toMatchObject({ version: '0.1.1' })
+    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.1', instanceId: INSTANCE })
+    expect(manager.healthLatencyMs).toEqual(expect.any(Number))
     // hello replay delivered the pending approval into the store.
     await new Promise(r => setTimeout(r, 300))
     expect(manager.store.sessions.get('s-live')?.pendingApprovals.size).toBe(1)

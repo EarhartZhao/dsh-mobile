@@ -1,13 +1,14 @@
 {
   "name": "@dsh-mobile/app-mobile",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "typecheck": "tsc --noEmit",
+    "test": "jest --passWithNoTests"
   },
   "dependencies": {
     "@dsh-mobile/core": "workspace:*",
@@ -24,8 +25,8 @@
     "react-native-markdown-display": "^7.0.2",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-svg": "15.12.1",
-    "react-native-url-polyfill": "^4.0.0"
-    , "react-native-vision-camera": "^4.6.4"
+    "react-native-url-polyfill": "^4.0.0",
+    "react-native-vision-camera": "^4.6.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
