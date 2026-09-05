@@ -19,6 +19,7 @@ class MainApplication : Application(), ReactApplication {
           add(ImagePickerPackage())
           add(ThemePackage())
           add(UpdaterPackage())
+          add(AppPackage())
         },
     )
   }
