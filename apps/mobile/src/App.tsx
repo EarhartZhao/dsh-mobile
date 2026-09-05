@@ -3,7 +3,7 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Clipboard, DevSettings, Linking, Modal, NativeModules, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { BackHandler, Clipboard, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { APP_VERSION } from '@dsh-mobile/core'
@@ -19,6 +19,7 @@ import { PairingScreen } from './screens/PairingScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
+import { handleSystemBack } from './system-back'
 
 type Route = { name: 'list' } | { name: 'chat'; sessionId: string } | { name: 'settings' }
 
@@ -111,12 +112,33 @@ function AppContent(): React.JSX.Element {
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastBackPress = useRef(0)
 
   const showAlert = useCallback((text: string) => {
     setAlert(text)
     if (alertTimer.current !== null) clearTimeout(alertTimer.current)
     alertTimer.current = setTimeout(() => setAlert(null), 5000)
   }, [])
+
+  const moveToBackground = useCallback(() => {
+    const app = NativeModules.DshApp as { moveTaskToBack(): Promise<boolean> } | undefined
+    if (typeof app?.moveTaskToBack === 'function') {
+      void app.moveTaskToBack()
+        .then(moved => { if (!moved) BackHandler.exitApp() })
+        .catch(() => BackHandler.exitApp())
+      return
+    }
+    BackHandler.exitApp()
+  }, [])
+
+  const showBackExitPrompt = useCallback(() => {
+    const message = t('app.pressBackAgainToExit')
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT)
+    } else {
+      showAlert(message)
+    }
+  }, [showAlert, t])
 
   const recordError = useCallback((message: string, kind: ConnectionFailureKind = 'unknown') => {
     setErrors(current => [...current.slice(-7), { at: new Date().toISOString(), message, kind }])
@@ -153,6 +175,30 @@ function AppContent(): React.JSX.Element {
       .then(setThemeMode)
       .catch(() => undefined)
   }, [])
+
+  const handleBackNavigation = useCallback(() => {
+    const result = handleSystemBack({
+      route: route.name,
+      now: Date.now(),
+      lastBackAt: lastBackPress.current,
+      goToList: () => setRoute({ name: 'list' }),
+      showPrompt: showBackExitPrompt,
+      moveToBackground,
+    })
+    lastBackPress.current = result.lastBackAt
+    return result.handled
+  }, [moveToBackground, route.name, showBackExitPrompt])
+
+  const handleHardwareBack = useCallback(() => {
+    if (pairing === null || managerRef.current === null) return false
+    return handleBackNavigation()
+  }, [handleBackNavigation, pairing])
+
+  useEffect(() => {
+    if (!booted) return
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handleHardwareBack)
+    return () => subscription.remove()
+  }, [booted, handleHardwareBack])
 
   const setTheme = (mode: ThemeMode): void => {
     setThemeMode(mode)
@@ -359,7 +405,7 @@ function AppContent(): React.JSX.Element {
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" />
       {pairing === null || managerRef.current === null ? (
-        <PairingScreen onPaired={onPaired} />
+        <PairingScreen onPaired={onPaired} onSystemBack={handleBackNavigation} />
       ) : (
         <>
           {connState !== 'online' && (

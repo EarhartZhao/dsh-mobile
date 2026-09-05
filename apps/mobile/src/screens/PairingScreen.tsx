@@ -3,8 +3,8 @@
  * the code, store the token. VisionCamera scans QR codes while the manual
  * paste path remains the always-available fallback.
  */
-import React, { useRef, useState } from 'react'
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import { BackHandler, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
 import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
@@ -14,6 +14,7 @@ import { useI18n, type TranslationKey } from '../i18n'
 
 interface Props {
   onPaired: (record: PairingRecord) => void
+  onSystemBack?: () => boolean
 }
 
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
@@ -44,7 +45,7 @@ function parseQr(text: string): PairingQrPayload {
   return { caFp: '', ...parsed } as PairingQrPayload
 }
 
-export function PairingScreen({ onPaired }: Props): React.JSX.Element {
+export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -55,6 +56,17 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
   const device = useCameraDevice('back')
   const { hasPermission, requestPermission } = useCameraPermission()
   const scanned = useRef(false)
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!scannerOpen) return onSystemBack?.() ?? false
+      setScannerOpen(false)
+      setCameraError(null)
+      scanned.current = false
+      return true
+    })
+    return () => subscription.remove()
+  }, [onSystemBack, scannerOpen])
 
   const pairWith = async (payload: PairingQrPayload): Promise<void> => {
     setBusy(true)
