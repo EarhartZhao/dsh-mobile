@@ -26,6 +26,8 @@ jobs:
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -51,6 +53,24 @@ jobs:
       - name: Make Gradle wrapper executable
         working-directory: apps/mobile/android
         run: chmod +x gradlew
+      - name: Verify release source
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "master" ]]; then
+              echo "Manual releases must run from master (current: ${GITHUB_REF_NAME})" >&2
+              exit 1
+            fi
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            git fetch origin master --no-tags
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/master; then
+              echo "Release tag ${GITHUB_REF_NAME} is not pointing to a commit on master" >&2
+              exit 1
+            fi
+          else
+            echo "Unsupported release ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
       - name: Check release version
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/release-version.mjs check "${GITHUB_REF_NAME}"
