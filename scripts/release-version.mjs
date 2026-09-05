@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { execFileSync } from 'node:child_process';
 
 const root = process.cwd();
 const appPackagePath = path.join(root, 'apps/mobile/package.json');
@@ -11,9 +12,62 @@ const androidGradlePath = path.join(root, 'apps/mobile/android/app/build.gradle'
 
 function usage() {
   console.log(`Usage:
+  node scripts/release-version.mjs preflight
+  node scripts/release-version.mjs next
   node scripts/release-version.mjs check <version>
-  node scripts/release-version.mjs bump <version> [--code <versionCode>]`);
+  node scripts/release-version.mjs bump <version> [--code <versionCode>]
+  node scripts/release-version.mjs bump-next [--code <versionCode>]`);
   process.exitCode = 1;
+}
+
+function git(args) {
+  try {
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  } catch (error) {
+    const detail = error?.stderr?.toString().trim();
+    throw new Error(detail ? `Git command failed: ${detail}` : `Git command failed: git ${args.join(' ')}`);
+  }
+}
+
+function assertReleaseState() {
+  let branch = '';
+  try {
+    branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  } catch {
+    branch = '';
+  }
+  if (branch !== 'master') {
+    throw new Error(`Release must start from the master branch (current: ${branch || 'detached HEAD'}).`);
+  }
+  if (git(['status', '--porcelain']) !== '') {
+    throw new Error('Release requires a clean working tree. Commit or discard all local changes first.');
+  }
+}
+
+function incrementReleaseVersion(version) {
+  const parsed = parseSemanticVersion(version);
+  let { major, minor, patch } = parsed;
+  patch += 1;
+  if (patch >= 100) {
+    patch = 0;
+    minor += 1;
+  }
+  if (minor >= 1000) {
+    minor = 0;
+    major += 1;
+  }
+  return `${major}.${minor}.${patch}`;
+}
+
+function latestTaggedVersion() {
+  const tags = git(['tag', '--list', 'v*', '--sort=-v:refname'])
+    .split(/\r?\n/)
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (tags.length === 0) {
+    throw new Error('No previous v* release tag found; provide an explicit version to bump.');
+  }
+  return parseSemanticVersion(tags[0]).version;
 }
 
 async function readJson(filePath) {
@@ -74,14 +128,17 @@ async function check(expectedVersion) {
 }
 
 async function bump(expectedVersion, versionCode) {
+  assertReleaseState();
   const version = parseSemanticVersion(expectedVersion);
   const normalized = `${version.major}.${version.minor}.${version.patch}`;
-  const code = versionCode ?? defaultVersionCode(normalized);
+  const appPackage = await readJson(appPackagePath);
+  const gradleBefore = await fs.readFile(androidGradlePath, 'utf8');
+  const currentCode = Number(/^\s*versionCode (\d+)$/m.exec(gradleBefore)?.[1] ?? 0);
+  const safeDefaultCode = Math.max(defaultVersionCode(normalized), currentCode + 1);
+  const code = versionCode ?? safeDefaultCode;
   if (!Number.isInteger(code) || code <= 0) {
     throw new Error(`versionCode must be a positive integer, got: ${code}`);
   }
-
-  const appPackage = await readJson(appPackagePath);
   appPackage.version = normalized;
   await fs.writeFile(appPackagePath, `${JSON.stringify(appPackage, null, 2)}\n`);
 
@@ -94,7 +151,7 @@ async function bump(expectedVersion, versionCode) {
   );
   await fs.writeFile(compatibilityPath, compatibility);
 
-  let gradle = await fs.readFile(androidGradlePath, 'utf8');
+  let gradle = gradleBefore;
   gradle = gradle
     .replace(/^(\s*versionCode )\d+$/m, `$1${code}`)
     .replace(/^(\s*versionName ")[^"]+(")$/m, `$1${normalized}$2`);
@@ -106,9 +163,21 @@ async function bump(expectedVersion, versionCode) {
   console.log(`Bumped release version to ${normalized} (versionCode ${code}).`);
 }
 
-const [command, version, codeFlag, codeValue] = process.argv.slice(2);
+const cliArgs = process.argv.slice(2);
+const command = cliArgs[0];
+const version = command === 'bump-next' ? undefined : cliArgs[1];
+const optionIndex = command === 'bump-next' ? 1 : 2;
+const codeFlag = cliArgs[optionIndex];
+const codeValue = cliArgs[optionIndex + 1];
 try {
-  if (command === 'check' && version) {
+  if (command === 'preflight') {
+    assertReleaseState();
+    console.log('Release preflight passed: on master with a clean working tree.');
+  } else if (command === 'next') {
+    assertReleaseState();
+    const previous = latestTaggedVersion();
+    console.log(incrementReleaseVersion(previous));
+  } else if (command === 'check' && version) {
     await check(version);
   } else if (command === 'bump' && version) {
     const explicitCode = codeFlag === '--code' ? Number(codeValue) : undefined;
@@ -116,6 +185,15 @@ try {
       throw new Error(`--code expects a positive integer, got: ${codeValue}`);
     }
     await bump(version, explicitCode);
+  } else if (command === 'bump-next') {
+    assertReleaseState();
+    const explicitCode = codeFlag === '--code' ? Number(codeValue) : undefined;
+    if (codeFlag === '--code' && (!Number.isInteger(explicitCode) || explicitCode <= 0)) {
+      throw new Error(`--code expects a positive integer, got: ${codeValue}`);
+    }
+    const previous = latestTaggedVersion();
+    const next = incrementReleaseVersion(previous);
+    await bump(next, explicitCode);
   } else {
     usage();
   }
