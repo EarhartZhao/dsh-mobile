@@ -1,8 +1,11 @@
 import React from 'react'
+import { BackHandler } from 'react-native'
 import renderer, { act } from 'react-test-renderer'
 
 let mockHasPermission = true
 const mockRequestPermission = jest.fn()
+type BackPressEvent = Parameters<Parameters<typeof BackHandler.addEventListener>[1]>[0]
+let backPressHandler: ((event: BackPressEvent) => boolean | undefined) | undefined
 
 jest.mock('react-native-vision-camera', () => ({
   Camera: (props: Record<string, unknown>) => require('react').createElement('Camera', props),
@@ -30,6 +33,15 @@ describe('PairingScreen camera', () => {
   beforeEach(() => {
     mockHasPermission = true
     mockRequestPermission.mockReset()
+    backPressHandler = undefined
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+      backPressHandler = handler
+      return { remove: jest.fn() }
+    })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   async function openScanner(tree: renderer.ReactTestRenderer): Promise<void> {
@@ -101,6 +113,32 @@ describe('PairingScreen camera', () => {
 
     expect(tree!.root.findAll(node => (node.type as unknown) === 'Camera')).toHaveLength(0)
     expect(tree!.root.findAllByProps({ children: 'pairing.openScanner' }).length).toBeGreaterThan(0)
+  })
+
+  it('handles the Android system back button while scanning', async () => {
+    let tree: renderer.ReactTestRenderer
+    act(() => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+    await openScanner(tree!)
+    expect(backPressHandler).toBeDefined()
+
+    let handled = false
+    act(() => { handled = backPressHandler!(undefined as unknown as BackPressEvent) === true })
+
+    expect(handled).toBe(true)
+    expect(tree!.root.findAll(node => (node.type as unknown) === 'Camera')).toHaveLength(0)
+    expect(tree!.root.findAllByProps({ children: 'pairing.openScanner' }).length).toBeGreaterThan(0)
+  })
+
+  it('delegates system back to the root-page handler outside the scanner', () => {
+    const onSystemBack = jest.fn(() => true)
+    act(() => {
+      renderer.create(<PairingScreen onPaired={jest.fn()} onSystemBack={onSystemBack} />)
+    })
+
+    expect(backPressHandler!(undefined as unknown as BackPressEvent)).toBe(true)
+    expect(onSystemBack).toHaveBeenCalledTimes(1)
   })
 
   it('shows an authorization button when camera permission is missing', () => {
