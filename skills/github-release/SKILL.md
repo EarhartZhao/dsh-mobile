@@ -26,7 +26,7 @@ description: 通过 GitHub Actions 构建签名 APK 并发布 GitHub Release。
 
 ## 自动发布
 
-必须先使用 `release-prep` skill 在 `master` 的干净工作区完成版本递增、提交和 tag。禁止直接从 `dev` 或带本地改动的工作区推送 tag。
+当用户说“发布版本”时，必须先按 `release-prep` 的请求处理顺序检查工作区：有未提交改动就提醒用户先提交并停止；工作区干净后切换到 `master`，通过预检后才能递增版本、提交和推送 tag。禁止直接从 `dev` 或带本地改动的工作区推送 tag。
 
 使用 `release-prep` skill 完成 tag 后：
 
