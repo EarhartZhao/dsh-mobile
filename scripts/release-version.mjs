@@ -29,6 +29,7 @@ function parseSemanticVersion(value) {
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
   };
 }
 

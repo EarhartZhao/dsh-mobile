@@ -4,7 +4,7 @@
  * paste path remains the always-available fallback.
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
+import { BackHandler, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
 import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
@@ -14,6 +14,7 @@ import { useI18n, type TranslationKey } from '../i18n'
 
 interface Props {
   onPaired: (record: PairingRecord) => void
+  onSystemBack?: () => boolean
 }
 
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
@@ -44,20 +45,28 @@ function parseQr(text: string): PairingQrPayload {
   return { caFp: '', ...parsed } as PairingQrPayload
 }
 
-export function PairingScreen({ onPaired }: Props): React.JSX.Element {
+export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [cameraKey, setCameraKey] = useState(0)
+  const [scannerOpen, setScannerOpen] = useState(false)
   const device = useCameraDevice('back')
   const { hasPermission, requestPermission } = useCameraPermission()
   const scanned = useRef(false)
 
   useEffect(() => {
-    if (!hasPermission) void requestPermission()
-  }, [hasPermission, requestPermission])
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!scannerOpen) return onSystemBack?.() ?? false
+      setScannerOpen(false)
+      setCameraError(null)
+      scanned.current = false
+      return true
+    })
+    return () => subscription.remove()
+  }, [onSystemBack, scannerOpen])
 
   const pairWith = async (payload: PairingQrPayload): Promise<void> => {
     setBusy(true)
@@ -97,9 +106,11 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
       const value = codes[0]?.value
       if (value === undefined || value === '') return
       scanned.current = true
-      void pairWith(parseQr(value)).finally(() => {
-        scanned.current = false
-      })
+      setText(value)
+      setError(null)
+      setCameraError(null)
+      setScannerOpen(false)
+      scanned.current = false
     },
   })
 
@@ -152,6 +163,51 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
     }
   }
 
+  if (scannerOpen && hasPermission && device !== undefined && device !== null) {
+    return (
+      <View style={styles.scannerScreen}>
+        <Camera
+          key={cameraKey}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive
+          codeScanner={codeScanner}
+          androidPreviewViewType="texture-view"
+          onInitialized={() => setCameraError(null)}
+          onError={handleCameraError}
+        />
+        <View pointerEvents="none" style={styles.scannerShade}>
+          <View style={styles.scanFrame} />
+          <Text style={styles.scanText}>{t('pairing.scanHint')}</Text>
+        </View>
+        <View style={styles.scannerTopBar}>
+          <TouchableOpacity
+            style={styles.scannerBackButton}
+            onPress={() => { setScannerOpen(false); setCameraError(null) }}
+            accessibilityRole="button"
+            accessibilityLabel={t('pairing.closeScanner')}
+            hitSlop={8}
+          >
+            <Text style={styles.scannerBackText}>‹ {t('pairing.closeScanner')}</Text>
+          </TouchableOpacity>
+        </View>
+        {cameraError !== null && (
+          <View style={styles.cameraErrorOverlay}>
+            <Text style={styles.cameraErrorText}>{cameraError}</Text>
+            <TouchableOpacity
+              style={styles.scanRetryButton}
+              onPress={() => void retryCamera()}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.retry')}
+            >
+              <Text style={styles.cameraRetryText}>{t('common.retry')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    )
+  }
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={styles.root}>
@@ -160,28 +216,11 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
         {t('pairing.hint')}
       </Text>
       {hasPermission && device !== undefined && device !== null ? (
-        <View style={styles.scanBox}>
-          <Camera
-            key={cameraKey}
-            style={StyleSheet.absoluteFill}
-            device={device}
-            isActive
-            codeScanner={codeScanner}
-            androidPreviewViewType="texture-view"
-            onInitialized={() => setCameraError(null)}
-            onError={handleCameraError}
-          />
-          <View pointerEvents="none" style={styles.scanOverlay}>
-            <Text style={styles.scanText}>{t('pairing.scanHint')}</Text>
-          </View>
-          {cameraError !== null && (
-            <View style={styles.cameraErrorOverlay}>
-              <Text style={styles.cameraErrorText}>{cameraError}</Text>
-              <TouchableOpacity style={styles.scanRetryButton} onPress={() => void retryCamera()}>
-                <Text style={styles.cameraRetryText}>{t('common.retry')}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+        <View style={styles.scanLauncher}>
+          <Text style={styles.scanFallbackText}>{t('pairing.scanHint')}</Text>
+          <TouchableOpacity style={styles.scanOpenButton} onPress={() => setScannerOpen(true)}>
+            <Text style={styles.scanOpenButtonText}>{t('pairing.openScanner')}</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <View style={styles.scanFallback}>
@@ -189,8 +228,8 @@ export function PairingScreen({ onPaired }: Props): React.JSX.Element {
             {hasPermission ? t('pairing.noCamera') : t('pairing.cameraPermission')}
           </Text>
           {!hasPermission && (
-            <TouchableOpacity style={styles.scanRetryButton} onPress={() => void requestPermission()}>
-              <Text style={styles.scanRetryText}>{t('pairing.allowCamera')}</Text>
+            <TouchableOpacity style={styles.scanOpenButton} onPress={() => void requestPermission()}>
+              <Text style={styles.scanOpenButtonText}>{t('pairing.allowCamera')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -247,34 +286,63 @@ const styles = StyleSheet.create({
   root: { flex: 1, padding: spacing(5), justifyContent: 'center' },
   title: { color: colors.text, fontSize: 22, fontWeight: '600', marginBottom: spacing(2) },
   hint: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 20, marginBottom: spacing(4) },
-  scanBox: {
-    height: 220,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  scanOverlay: {
+  scannerScreen: { flex: 1, backgroundColor: '#000' },
+  scannerTopBar: {
     position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    justifyContent: 'flex-end',
+    top: spacing(6),
+    left: spacing(4),
+    right: spacing(4),
+    zIndex: 2,
+  },
+  scannerBackButton: {
+    alignSelf: 'flex-start',
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: spacing(2),
+  },
+  scannerBackText: { color: '#fff', fontSize: fontSize.body, fontWeight: '600' },
+  scannerShade: {
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
-    paddingBottom: spacing(3),
-    backgroundColor: 'rgba(0,0,0,0.12)',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  scanFrame: {
+    width: 264,
+    height: 264,
+    borderWidth: 2,
+    borderColor: '#fff',
+    borderRadius: radius.card,
+    backgroundColor: 'transparent',
   },
   scanText: {
+    marginTop: spacing(4),
     color: '#fff',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.62)',
     borderRadius: 6,
     overflow: 'hidden',
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(1.5),
     fontSize: fontSize.small,
+    textAlign: 'center',
   },
+  scanLauncher: {
+    height: 120,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    backgroundColor: colors.bgElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing(3),
+  },
+  scanOpenButton: {
+    paddingHorizontal: spacing(4),
+    paddingVertical: spacing(2),
+    borderRadius: radius.card,
+    backgroundColor: colors.accent,
+  },
+  scanOpenButtonText: { color: '#fff', fontSize: fontSize.small, fontWeight: '600' },
   cameraErrorOverlay: {
     position: 'absolute',
     top: 0,
