@@ -206,10 +206,21 @@ export class SessionStore extends Emitter<StoreEvents> {
       case 'session/event': {
         const session = this.session(frame.sessionId)
         const seq = eventSeq(frame.event)
-        if (seq !== undefined && seq <= session.lastSeq) return // replay / duplicate
+        const transient = isRecord(frame.event) && isRecord(frame.event['data']) && frame.event['data']['transient'] === true
+        if (transient) {
+          const data = frame.event['data']
+          const attemptId = isRecord(data) && typeof data['attemptId'] === 'string' ? data['attemptId'] : ''
+          const index = isRecord(data) && typeof data['index'] === 'number' ? data['index'] : -1
+          if (attemptId !== '' && index >= 0 && session.events.some(entry => {
+            const event = entry.event
+            return isRecord(event) && event['type'] === 'assistant/chunk' && isRecord(event['data'])
+              && event['data']['transient'] === true && event['data']['attemptId'] === attemptId && event['data']['index'] === index
+          })) return
+        }
+        if (!transient && seq !== undefined && seq <= session.lastSeq) return // replay / duplicate
         this.absorbDerived(session, frame.event)
         session.events.push({ event: frame.event, ...(frame.view === undefined ? {} : { view: frame.view }) })
-        if (seq !== undefined) session.lastSeq = seq
+        if (!transient && seq !== undefined) session.lastSeq = seq
         break
       }
       case 'session/subscribed': {

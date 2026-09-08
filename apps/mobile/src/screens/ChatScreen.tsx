@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
+  ActivityIndicator,
   Clipboard,
   Image,
   FlatList,
@@ -56,6 +57,25 @@ interface PendingImage {
   height: number
   name?: string | null
 }
+
+interface PickedFile {
+  name: string
+  mimeType?: string
+  size?: number
+  data: string
+}
+
+interface PendingFile {
+  id: string
+  name: string
+  bytes: number
+  attachmentId?: string
+  receiptId?: string
+  status: 'uploading' | 'ready' | 'error'
+  error?: string
+}
+
+const MAX_MOBILE_FILE_BYTES = 512 * 1024
 
 interface ImageLimitsView {
   maxImageBytes: number
@@ -118,6 +138,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false)
   const [draft, setDraft] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [running, setRunning] = useState(false)
   const [queue, setQueue] = useState<QueuedInboxItem[]>([])
   const [jobs, setJobs] = useState<JobView[]>([])
@@ -247,6 +268,41 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const image = await callImagePicker('captureImage')
     if (image !== null && image !== undefined) {
       appendImage(image)
+    }
+  }
+
+  const chooseFile = async (): Promise<void> => {
+    const picker = NativeModules.DshFilePicker as { pickFile(): Promise<PickedFile | null> } | undefined
+    if (picker?.pickFile === undefined) {
+      showNotice(t('plus.filePickerUnavailable'))
+      return
+    }
+    let uploadId: string | null = null
+    try {
+      const selected = await picker.pickFile()
+      if (selected == null) return
+      if (selected.name.trim() === '' || selected.data.trim() === '') {
+        showNotice(t('plus.fileUploadFailed', { message: 'invalid file picker result' }))
+        return
+      }
+      const bytes = selected.size ?? Math.floor(selected.data.length * 3 / 4)
+      if (bytes > MAX_MOBILE_FILE_BYTES) {
+        showNotice(t('plus.fileTooLarge', { size: formatBytes(MAX_MOBILE_FILE_BYTES) }))
+        return
+      }
+      uploadId = `${selected.name}:${Date.now()}:${Math.random()}`
+      setPendingFiles(current => [...current, { id: uploadId as string, name: selected.name, bytes, status: 'uploading' }])
+      const client = manager.client
+      if (client === null) throw new Error(t('chat.loadConnection'))
+      const uploaded = await client.fileUploads.upload({ sessionId, data: selected.data, name: selected.name })
+      if (!uploaded?.receiptId) throw new Error('missing receiptId')
+      setPendingFiles(current => current.map(file => file.id === uploadId
+        ? { ...file, receiptId: uploaded.receiptId, attachmentId: uploaded.file.attachmentId, bytes: uploaded.file.bytes, status: 'ready' }
+        : file))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      showNotice(t('plus.fileUploadFailed', { message }))
+      if (uploadId !== null) setPendingFiles(current => current.map(file => file.id === uploadId ? { ...file, status: 'error', error: message } : file))
     }
   }
 
@@ -684,7 +740,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const send = async (): Promise<void> => {
     const client = manager.client
     const text = draft.trim()
-    if (client === null || (text === '' && pendingImages.length === 0)) return
+    const readyFiles = pendingFiles.filter(file => file.status === 'ready' && file.receiptId !== undefined)
+    if (client === null || (text === '' && pendingImages.length === 0 && readyFiles.length === 0)) return
+    if (editingItem !== null && readyFiles.length > 0) {
+      showNotice(t('plus.fileUploadFailed', { message: 'queued edits do not support file attachments' }))
+      return
+    }
     Keyboard.dismiss()
     setDraft('')
     // Edit mode: rewrite the queued item in place instead of a new prompt.
@@ -702,24 +763,25 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
     const clientTimeZone = typeof tz === 'string' && (tz === 'UTC' || tz.includes('/')) ? tz : undefined
     if (clientTimeZone === undefined) console.warn('[prompt] non-IANA timeZone omitted:', tz)
-    let result
+    let result: any = null
+    const content = [
+      ...(text !== '' ? [{ type: 'text' as const, text }] : []),
+      ...pendingImages.map(image => ({
+        type: 'image' as const,
+        mediaType: image.mediaType,
+        data: image.data,
+        ...(image.name === null ? {} : { name: image.name ?? undefined }),
+      })),
+      ...readyFiles.map(file => ({ type: 'file' as const, receiptId: file.receiptId as string })),
+    ]
     try {
-      result = await client.sessions.prompt({
-        sessionId,
-        // Always queue: while a turn runs the message parks in the inbox FIFO
-        // (dock below); explicit steering is the dock's 引导 action.
-        mode: 'queue',
-        content: [
-          ...(text !== '' ? [{ type: 'text', text }] : []),
-          ...pendingImages.map(image => ({
-            type: 'image',
-            mediaType: image.mediaType,
-            data: image.data,
-            ...(image.name === null ? {} : { name: image.name }),
-          })),
-        ],
-        clientTimeZone,
-      } as never)
+      const payload = { sessionId, mode: 'queue' as const, content, clientTimeZone }
+      if (readyFiles.length > 0) {
+        const uploadedPrompt = await client.filePrompts.prompt(payload)
+        result = { result: { ok: uploadedPrompt.accepted, value: { command: uploadedPrompt.command } } }
+      } else {
+        result = await client.sessions.prompt(payload as never)
+      }
     } catch (error) {
       result = null
       showNotice(t('chat.sendFailed', { message: error instanceof Error ? error.message : String(error) }))
@@ -730,6 +792,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       return
     }
     setPendingImages([])
+    setPendingFiles([])
     // Slash commands report their result in the command slot.
     const command = result.result.value.command
     if (command?.text !== undefined && command.text !== '') showNotice(command.text)
@@ -750,6 +813,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const runMenuCommand = async (command: PlusCommand, argument?: string): Promise<void> => {
     const client = manager.client
     if (client === null) return
+    if (pendingFiles.length > 0) {
+      showNotice(t('chat.commandRejectsFiles', { command: command.name }))
+      return
+    }
     showNotice(t('chat.executing', { command: command.name }))
     const text = argument === undefined || argument.trim() === ''
       ? `/${command.name}`
@@ -1104,6 +1171,26 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             ))}
           </ScrollView>
         )}
+        {pendingFiles.length > 0 && editingItem === null && (
+          <ScrollView horizontal style={styles.pendingFilesRow} contentContainerStyle={styles.pendingFilesContent}>
+            {pendingFiles.map(file => (
+              <View key={file.id} style={styles.pendingFileCard}>
+                <View style={styles.pendingFileHeader}>
+                  <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
+                  <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
+                    <Text style={styles.pendingImageRemoveText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
+                {file.status === 'uploading' && (
+                  <View style={styles.pendingFileProgress}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.pendingFileStatus}>{t('common.loading')}</Text></View>
+                )}
+                {file.status === 'ready' && <Text style={[styles.pendingFileStatus, { color: colors.accent }]}>{t('common.current')}</Text>}
+                {file.status === 'error' && <Text style={[styles.pendingFileStatus, { color: colors.danger }]} numberOfLines={1}>{file.error ?? t('plus.fileUploadFailed', { message: '' })}</Text>}
+              </View>
+            ))}
+          </ScrollView>
+        )}
         {lightbox !== null && (
           <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
         )}
@@ -1142,8 +1229,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && editingItem === null && styles.disabled]}
-              disabled={draft.trim() === '' && pendingImages.length === 0 && editingItem === null}
+              style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && pendingFiles.every(file => file.status !== 'ready') && editingItem === null && styles.disabled]}
+              disabled={draft.trim() === '' && pendingImages.length === 0 && pendingFiles.every(file => file.status !== 'ready') && editingItem === null}
               onPress={() => void send()}
             >
               <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.send')}</Text>
@@ -1256,10 +1343,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         modelLabel={modelLabel}
         presetLabel={manager.store.summaries.find(item => item.sessionId === sessionId)?.agentPreset}
         pendingImageCount={pendingImages.length}
+        pendingFileCount={pendingFiles.length}
+        uploadingFileCount={pendingFiles.filter(file => file.status === 'uploading').length}
         onClose={() => setPlusOpen(false)}
         onPickCommand={pickMenuCommand}
         onCaptureImage={() => { setPlusOpen(false); void captureImage() }}
         onPickImages={() => { setPlusOpen(false); void chooseImages() }}
+        onPickFile={() => { setPlusOpen(false); void chooseFile() }}
         onInsertReference={reference => { setPlusOpen(false); setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`) }}
         onPermission={value => { setPlusOpen(false); selectPermission(value) }}
         onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: t('plus.planSubtitle'), images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
@@ -1783,6 +1873,22 @@ const styles = StyleSheet.create({
   imageLimitsText: { color: colors.textDim, fontSize: fontSize.tiny },
   pendingImagesRow: { alignSelf: 'stretch', flexGrow: 0, paddingVertical: spacing(1) },
   pendingImagesContent: { gap: spacing(2), paddingHorizontal: spacing(1), paddingRight: spacing(3) },
+  pendingFilesRow: { alignSelf: 'stretch', flexGrow: 0, paddingVertical: spacing(1) },
+  pendingFilesContent: { gap: spacing(2), paddingHorizontal: spacing(1), paddingRight: spacing(3) },
+  pendingFileCard: {
+    width: 190,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    padding: spacing(2),
+    gap: spacing(1),
+    backgroundColor: colors.bgElevated,
+  },
+  pendingFileHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing(1) },
+  pendingFileName: { flex: 1, color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
+  pendingFileMeta: { color: colors.textDim, fontSize: fontSize.tiny },
+  pendingFileProgress: { flexDirection: 'row', alignItems: 'center', gap: spacing(1) },
+  pendingFileStatus: { color: colors.textDim, fontSize: fontSize.tiny },
   pendingImageCard: { width: 68, height: 68 },
   pendingImage: { width: 64, height: 64, borderRadius: radius.card },
   pendingImageRemove: {

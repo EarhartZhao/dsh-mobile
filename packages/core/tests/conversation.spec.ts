@@ -167,6 +167,14 @@ describe('deriveConversation', () => {
     expect(deriveConversation(store.sessions.get('s-1')!)[0]).toMatchObject({ interrupted: true, text: '半句' })
   })
 
+  it('drops abandoned live streams on the transient stream end marker', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'assistant/chunk', { turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0, chunk: { type: 'text-delta', index: 0, text: '半句' } })
+    expect(deriveConversation(store.sessions.get('s-1')!)).toHaveLength(1)
+    feed(store, 2, 'assistant/stream-end', { turn: 1, step: 1, transient: true, attemptId: 'a1', index: 1, outcome: { kind: 'abandoned' } })
+    expect(deriveConversation(store.sessions.get('s-1')!)).toEqual([])
+  })
+
   it('skips injected-context user messages (non-user source kind)', () => {
     const store = new SessionStore()
     // Real wire shape (verified against harness 0.1.1-rc.2): data IS the message.

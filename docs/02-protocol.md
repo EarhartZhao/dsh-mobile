@@ -2,7 +2,7 @@
 
 > 本文描述移动端如何接入 deepseek-harness 的当前 Typert Remote。协议权威定义在
 > `deepseek-harness/packages/api/**`、`packages/interaction/**` 等 Remote owner 中。
-> App 仍消费稳定的移动端信封；dsh-mobile-plugin 0.2.1 把 alpha.5 Remote 参数、流和事件适配成该信封。
+> App 仍消费稳定的移动端信封；dsh-mobile-plugin 0.2.2 把 dsh 0.1.3-alpha.1 Remote 参数、流和事件适配成该信封。
 
 ## 传输映射
 
@@ -72,6 +72,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `respond` | 回答提问/审批（RpcReceipt） |
 | `command.list` / `command.execute` | alpha.5 动态命令发现与执行 |
 | `reference.files` / `reference.sessions` | 映射到文件与会话引用候选 Remote |
+| `file.upload` | 移动端以 base64 通过 NATS 调用 dsh `fileUploads/upload`，返回 Agent-scoped receipt 与文件引用 |
 
 ### M3 任务面板
 
@@ -81,6 +82,8 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 
 - `settings.*` / `credentials.*` / `llm.*` 配置面、`host.pickDirectory` / `host.openPath` / `agentPreset.*` 创作面：移动端用不到，且插件白名单直接不放行。
 - `session.export`（ZIP 导出）：暂无场景；未来要做则走插件签发一次性下载 URL，不走 NATS 传大文件。
+
+文件上传使用 `file.upload` 移动端扩展方法：客户端先提交 canonical base64 与可选文件名，拿到 `receiptId` 后，再通过 `filePrompts.prompt` 以 `{ type: 'file', receiptId }` 提交到 `session.prompt`。由于 NATS Leaf 的 `max_payload` 约为 1 MiB，该路径适合小文件；大文件应使用 dsh Web 的 `/api/session/uploadFileBinary` 流式 HTTP 路径，移动端暂不绕过 NATS 限制。
 
 ## 事件流消费要点
 
@@ -110,7 +113,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 
 ## 版本兼容
 
-App 在建立会话基线前调用插件自有 `mobile.info`。App 0.2.0 要求 `dsh-mobile-plugin >=0.2.1 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
+App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 `dsh-mobile-plugin >=0.2.2 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 
