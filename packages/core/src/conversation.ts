@@ -274,6 +274,13 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         if (chunk['type'] === 'reasoning-delta' && typeof chunk['text'] === 'string') buffer.reasoning += chunk['text']
         break
       }
+      case 'assistant/stream-end': {
+        if (!isObj(data)) break
+        const turn = typeof data['turn'] === 'number' ? data['turn'] : -1
+        const step = typeof data['step'] === 'number' ? data['step'] : -1
+        live.delete(`${turn}:${step}`)
+        break
+      }
       case 'turn/end': {
         // A cancelled turn may never finalize: its live buffer stays as the
         // delivered prefix (the host emits an interrupted assistant/message

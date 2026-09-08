@@ -45,10 +45,13 @@ interface Props {
   modelLabel: string
   presetLabel?: string
   pendingImageCount: number
+  pendingFileCount: number
+  uploadingFileCount: number
   onClose: () => void
   onPickCommand: (command: PlusCommand, argument?: string) => void
   onCaptureImage: () => void
   onPickImages: () => void
+  onPickFile: () => void
   onInsertReference: (reference: PlusReference) => void
   onPermission: (value: string) => void
   onTogglePlan: () => void
@@ -164,8 +167,18 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                   <Text style={styles.itemTitle}>{t('plus.pickImages')}</Text>
                   <Text style={styles.itemSubtitle}>{t('plus.pickImagesSubtitle')}</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={styles.item} onPress={props.onPickFile}>
+                  <Text style={styles.itemTitle}>{t('plus.pickFile')}</Text>
+                  <Text style={styles.itemSubtitle}>{t('plus.pickFileSubtitle')}</Text>
+                </TouchableOpacity>
                 {props.pendingImageCount > 0 && (
                   <Text style={styles.meta}>{t('plus.imagesSelected', { count: props.pendingImageCount })}</Text>
+                )}
+                {props.pendingFileCount > 0 && (
+                  <Text style={styles.meta}>{t('plus.filesSelected', { count: props.pendingFileCount })}</Text>
+                )}
+                {props.uploadingFileCount > 0 && (
+                  <Text style={styles.meta}>{t('plus.filesUploading', { count: props.uploadingFileCount })}</Text>
                 )}
               </>
             )}

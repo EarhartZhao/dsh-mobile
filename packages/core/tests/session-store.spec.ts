@@ -22,6 +22,22 @@ describe('SessionStore', () => {
     expect(session.lastSeq).toBe(3)
   })
 
+  it('keeps transient assistant chunks out of the durable cursor and dedupes reconnects', () => {
+    const store = new SessionStore()
+    const transient = {
+      type: 'assistant/chunk', seq: 0,
+      data: { transient: true, attemptId: 'attempt-1', index: 0, turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'hi' } },
+    } as never
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 4 }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: transient }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: transient }))
+    const session = store.sessions.get('s-1')!
+    expect(session.events).toHaveLength(1)
+    expect(session.lastSeq).toBe(4)
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 5, type: 'assistant/message', data: {} } as never }))
+    expect(session.lastSeq).toBe(5)
+  })
+
   it('the subscribed watermark drops already-committed replays', () => {
     const store = new SessionStore()
     // lastSeq=2 means "the host log already holds seq 1-2; pull history for them".

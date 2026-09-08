@@ -75,7 +75,7 @@ beforeAll(async () => {
       }
       if (method === 'mobile.info') {
         msg.respond(replyOk(body.rpcId, {
-          pluginVersion: '0.2.1',
+          pluginVersion: '0.2.2',
           mobileApi: 2,
           features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
         }))
@@ -84,7 +84,7 @@ beforeAll(async () => {
       if (method === 'mobile.health') {
         msg.respond(replyOk(body.rpcId, {
           status: 'ok', connection: 'connected', devices: 1,
-          pluginVersion: '0.2.1', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
+          pluginVersion: '0.2.2', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
           buildId: 'test-build', loadedFrom: 'C:\\test\\bridge.js', instanceId: INSTANCE,
           startedAt: new Date(0).toISOString(), uptimeMs: 1000,
           lastConnectedAt: new Date(0).toISOString(), lastReconnectAt: null, lastError: null,
@@ -221,7 +221,7 @@ describeNats('NatsApiClient over real NATS', () => {
     const responder = (async () => {
       for await (const msg of sub) {
         const body = JSON.parse(decoder.decode(msg.data)) as { rpcId: string }
-        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.1' }))
+        msg.respond(replyOk(body.rpcId, { pluginVersion: '0.2.2' }))
       }
     })()
     await pluginSide.flush()
@@ -244,7 +244,7 @@ describe('ConnectionManager', () => {
     await manager.start()
     expect(manager.state).toBe('online')
     expect(manager.hostInfo).toMatchObject({ version: '0.1.1' })
-    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.1', instanceId: INSTANCE })
+    expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.2', instanceId: INSTANCE })
     expect(manager.healthLatencyMs).toEqual(expect.any(Number))
     // hello replay delivered the pending approval into the store.
     await new Promise(r => setTimeout(r, 300))

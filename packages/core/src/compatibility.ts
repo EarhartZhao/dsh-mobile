@@ -4,9 +4,9 @@
  */
 import type { MobilePluginInfo } from '@dsh-mobile/protocol'
 
-export const APP_VERSION = '0.0.2'
+export const APP_VERSION = '0.0.3'
 export const APP_MOBILE_API = 2
-export const SUPPORTED_PLUGIN_RANGE = '>=0.2.1 <0.3.0'
+export const SUPPORTED_PLUGIN_RANGE = '>=0.2.2 <0.3.0'
 export const SUPPORTED_MOBILE_APIS = [2] as const
 export const REQUIRED_PLUGIN_FEATURES = [
   'plus-menu',
@@ -18,6 +18,7 @@ export const REQUIRED_PLUGIN_FEATURES = [
   'workspace-follow',
   'remote-event-results',
   'reference-candidates',
+  'file-uploads',
 ] as const
 
 export type CompatibilityStatus = 'compatible' | 'incompatible' | 'unknown'
@@ -70,7 +71,7 @@ export function checkMobileCompatibility(info: MobilePluginInfo | null): Compati
   }
   const validMobileApi = (SUPPORTED_MOBILE_APIS as readonly number[]).includes(info.mobileApi)
   const version = semverCore(info.pluginVersion)
-  const pluginVersionValid = version !== null && compareSemver(info.pluginVersion, '0.2.1') >= 0 && compareSemver(info.pluginVersion, '0.3.0') < 0
+  const pluginVersionValid = version !== null && compareSemver(info.pluginVersion, '0.2.2') >= 0 && compareSemver(info.pluginVersion, '0.3.0') < 0
   const missingFeatures = REQUIRED_PLUGIN_FEATURES.filter(feature => !info.features.includes(feature))
   if (validMobileApi && pluginVersionValid) {
     if (missingFeatures.length > 0) {

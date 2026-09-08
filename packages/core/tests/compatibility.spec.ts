@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { checkMobileCompatibility, REQUIRED_PLUGIN_FEATURES } from '../src/compatibility.ts'
 
-const manifest = { pluginVersion: '0.2.1', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES] }
+const manifest = { pluginVersion: '0.2.2', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES] }
 
 describe('mobile compatibility', () => {
   it('accepts a plugin from the same mobileApi generation', () => {
@@ -11,7 +11,7 @@ describe('mobile compatibility', () => {
     expect(result.missingFeatures).toEqual([])
   })
 
-  it('accepts the 0.2.1 plugin generation with optional inventory support', () => {
+  it('accepts the 0.2.2 plugin generation with optional inventory support', () => {
     const result = checkMobileCompatibility({ ...manifest, features: [...REQUIRED_PLUGIN_FEATURES, 'plugin-inventory'] })
     expect(result.status).toBe('compatible')
     expect(result.features).toContain('plugin-inventory')
@@ -20,7 +20,7 @@ describe('mobile compatibility', () => {
   it('rejects older, newer, and malformed plugin manifests', () => {
     expect(checkMobileCompatibility({ pluginVersion: '0.2.0', mobileApi: 2, features: [] }).status).toBe('incompatible')
     expect(checkMobileCompatibility({ pluginVersion: '0.3.0', mobileApi: 2, features: [] }).status).toBe('incompatible')
-    expect(checkMobileCompatibility({ pluginVersion: '0.2.1', mobileApi: 1, features: [] }).status).toBe('incompatible')
+    expect(checkMobileCompatibility({ pluginVersion: '0.2.2', mobileApi: 1, features: [] }).status).toBe('incompatible')
     expect(checkMobileCompatibility({ pluginVersion: 'not-semver', mobileApi: 2, features: [] }).status).toBe('incompatible')
   })
 
