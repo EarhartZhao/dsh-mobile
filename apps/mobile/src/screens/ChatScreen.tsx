@@ -1474,8 +1474,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       <WorkspaceBrowserSheet
         visible={browserOpen}
         sessionId={sessionId}
-        client={manager.client}
-        features={manager.compatibility?.features ?? []}
+        manager={manager}
         onClose={() => setBrowserOpen(false)}
         onOpenFile={(path) => { setBrowserOpen(false); setPreviewPath(path) }}
       />

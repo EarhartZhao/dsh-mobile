@@ -42,19 +42,25 @@ describe('mobile workspace files', () => {
     const window = { absolutePath: '/repo/shot.png', version: 'v1', bytes: 2048, offset: 0, data: 'AAE=', eof: false }
     const seen = newSeen()
     const api = createMobileFiles(
-      connection([listing, page, window, { opened: true }], seen), headers, 'dsh-1', () => 'token-1',
+      connection([listing, page, window, window, { watching: true }, { opened: true }], seen), headers, 'dsh-1', () => 'token-1',
     )
     await expect(api.list({ sessionId: 's1' })).resolves.toEqual(listing)
     await expect(api.read({ sessionId: 's1', path: 'src/a.ts', offset: 1, limit: 50 })).resolves.toEqual(page)
     await expect(api.bytes({ sessionId: 's1', path: 'shot.png', length: 4096 })).resolves.toEqual(window)
+    await expect(api.related({ sessionId: 's1', path: 'docs/readme.md', relativePath: 'img/shot.png' })).resolves.toEqual(window)
+    await expect(api.watch({ sessionId: 's1' })).resolves.toEqual({ watching: true })
     await expect(api.reveal({ sessionId: 's1', path: '/repo/shot.png' })).resolves.toEqual({ opened: true })
     expect(seen.subjects).toEqual([
       'svc.dsh.dsh-1.file.list',
       'svc.dsh.dsh-1.file.read',
       'svc.dsh.dsh-1.file.bytes',
+      'svc.dsh.dsh-1.file.related',
+      'svc.dsh.dsh-1.file.watch',
       'svc.dsh.dsh-1.file.reveal',
     ])
     expect(seen.payloads[1]).toEqual({ sessionId: 's1', path: 'src/a.ts', offset: 1, limit: 50 })
+    expect(seen.payloads[3]).toEqual({ sessionId: 's1', path: 'docs/readme.md', relativePath: 'img/shot.png' })
+    expect(seen.payloads[4]).toEqual({ sessionId: 's1' })
     expect(seen.token).toBe('token-1')
   })
 
