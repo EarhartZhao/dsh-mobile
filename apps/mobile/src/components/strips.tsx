@@ -28,6 +28,8 @@ export interface GoalViewLite {
   revision: number
   objective: string
   phase: 'active' | 'paused' | 'blocked' | 'complete'
+  /** Process-local continuation eligibility from `goals/get`; absent when unread. */
+  activation?: 'armed' | 'disarmed'
 }
 
 export function GoalBar({ goal, onEdit, onPause, onResume, onComplete, onClear }: {
@@ -54,6 +56,9 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onComplete, onClear }
         </View>
       </View>
       <Text style={styles.goalObjective} numberOfLines={2}>{goal.objective}</Text>
+      {goal.phase === 'active' && goal.activation === 'disarmed' && (
+        <Text style={styles.goalHint}>{t('goal.disarmed')}</Text>
+      )}
     </View>
   )
 }
@@ -233,6 +238,7 @@ const styles = StyleSheet.create({
   goalActions: { flexDirection: 'row', gap: spacing(3) },
   goalAction: { color: colors.accent, fontSize: fontSize.small },
   goalObjective: { color: colors.text, fontSize: fontSize.small, marginTop: spacing(1) },
+  goalHint: { color: colors.warning, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   usageRow: { alignItems: 'flex-end', paddingHorizontal: spacing(3), paddingVertical: spacing(1) },
   usageText: { color: colors.textDim, fontSize: fontSize.tiny },
   planChip: {

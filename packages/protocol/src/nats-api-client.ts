@@ -17,6 +17,7 @@ import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 import { createMobileCommands } from './mobile-commands.ts'
 import { createMobileReferences } from './mobile-references.ts'
 import { createMobileFileUploads, createMobileFilePrompts } from './mobile-file-uploads.ts'
+import { createMobileFiles, createMobileGoalState } from './mobile-workspace.ts'
 
 export interface NatsApiClientOptions {
   conn: NatsConnLike
@@ -37,6 +38,8 @@ export class NatsApiClient extends AbstractApiClient {
   readonly references: ReturnType<typeof createMobileReferences>
   readonly fileUploads: ReturnType<typeof createMobileFileUploads>
   readonly filePrompts: ReturnType<typeof createMobileFilePrompts>
+  readonly files: ReturnType<typeof createMobileFiles>
+  readonly goalState: ReturnType<typeof createMobileGoalState>
 
   constructor(options: NatsApiClientOptions) {
     super(options.timeoutMs)
@@ -48,6 +51,8 @@ export class NatsApiClient extends AbstractApiClient {
     this.references = createMobileReferences(options.conn, options.headers, options.instanceId, options.getToken)
     this.fileUploads = createMobileFileUploads(options.conn, options.headers, options.instanceId, options.getToken)
     this.filePrompts = createMobileFilePrompts(options.conn, options.headers, options.instanceId, options.getToken)
+    this.files = createMobileFiles(options.conn, options.headers, options.instanceId, options.getToken)
+    this.goalState = createMobileGoalState(options.conn, options.headers, options.instanceId, options.getToken)
   }
 
   /**

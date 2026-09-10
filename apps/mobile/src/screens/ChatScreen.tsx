@@ -33,6 +33,7 @@ import { Circle, Path, Svg } from 'react-native-svg'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
+import { FilePreviewSheet } from '../components/FilePreviewSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
@@ -156,6 +157,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
+  const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
   const [plusOpen, setPlusOpen] = useState(false)
   const [commands, setCommands] = useState<PlusCommand[]>([])
@@ -719,6 +721,38 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   }, [])
   useEffect(() => { void loadModels() }, [loadModels])
 
+  /**
+   * Reads the goal's process-local activation, which the durable `goal`
+   * projection deliberately omits. Hosts without the bridge mapping answer
+   * `mobile-forbidden`; the projection stays authoritative there.
+   */
+  const goalActivationRequest = useRef(0)
+  const refreshGoalActivation = useCallback(async (): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    if (!(manager.compatibility?.features ?? []).includes('goal-state')) return
+    const request = ++goalActivationRequest.current
+    try {
+      const view = await client.goalState.get({ sessionId })
+      if (request !== goalActivationRequest.current) return
+      setGoal((current) => {
+        if (current === null) return current
+        if (view === null || view.id !== current.id) return { ...current, activation: undefined }
+        return { ...current, phase: view.phase, activation: view.activation }
+      })
+    } catch {
+      // Activation is a fidelity extra: a failed read must not clear the goal.
+    }
+  }, [manager, sessionId])
+
+  const goalId = goal?.id
+  const goalRevision = goal?.revision
+  const goalPhase = goal?.phase
+  useEffect(() => {
+    if (goalId === undefined) return
+    void refreshGoalActivation()
+  }, [goalId, goalPhase, goalRevision, refreshGoalActivation])
+
   useEffect(() => manager.store.on('remoteEvent', ({ event, args }) => {
     if (event === 'commands/change') {
       setCommands([])
@@ -728,10 +762,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
       setPresets([])
       setPresetStatus('idle')
       void loadModels()
+    } else if (event === 'goal/activation-changed') {
+      // The durable projection carries phase only; activation is process-local,
+      // so it has to be read from goals/get on every change. This emit carries
+      // one payload object (unlike the positional api-session/* emits).
+      const payload = args[0]
+      const changed = typeof payload === 'object' && payload !== null
+        ? (payload as { sessionId?: unknown }).sessionId
+        : undefined
+      if (changed === sessionId) void refreshGoalActivation()
     } else if (event === 'llm/adapters-updated' || event === 'credentials/reference-updated') {
       void loadModels()
     }
-  }), [loadCommands, loadModels, manager, plusOpen, sessionId])
+  }), [loadCommands, loadModels, manager, plusOpen, refreshGoalActivation, sessionId])
 
   useEffect(() => () => {
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
@@ -1109,6 +1152,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             manager={manager}
             sessionId={sessionId}
             onLongPress={() => setMessageAction(item)}
+            onPreview={setPreviewPath}
           />
         )}
       />
@@ -1411,6 +1455,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onCancel={() => setGoalPrompt(null)}
         onConfirm={value => void goalSubmit(value)}
       />
+      <FilePreviewSheet
+        visible={previewPath !== null}
+        path={previewPath}
+        sessionId={sessionId}
+        client={manager.client}
+        features={manager.compatibility?.features ?? []}
+        onClose={() => setPreviewPath(null)}
+        onNotice={showNotice}
+      />
     </KeyboardAvoidingView>
   )
 }
@@ -1591,11 +1644,13 @@ function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-function Bubble({ item, manager, sessionId, onLongPress }: {
+function Bubble({ item, manager, sessionId, onLongPress, onPreview }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
   onLongPress: () => void
+  /** Opens the workspace preview sheet for one produced path. */
+  onPreview: (path: string) => void
 }): React.JSX.Element {
   const { t } = useI18n()
   switch (item.kind) {
@@ -1630,7 +1685,7 @@ function Bubble({ item, manager, sessionId, onLongPress }: {
               <TouchableOpacity
                 key={path}
                 style={styles.deliverableChip}
-                onPress={() => { void Clipboard.setString(path) }}
+                onPress={() => onPreview(path)}
                 onLongPress={() => { void Share.share({ message: path }) }}
               >
                 <Text style={styles.deliverableText} numberOfLines={1}>{path.split(/[\\/]/).at(-1) ?? path}</Text>
