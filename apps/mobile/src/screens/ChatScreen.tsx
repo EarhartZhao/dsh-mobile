@@ -1477,6 +1477,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         manager={manager}
         onClose={() => setBrowserOpen(false)}
         onOpenFile={(path) => { setBrowserOpen(false); setPreviewPath(path) }}
+        onInsertReference={(path, kind) => {
+          const mention = fileMention(path, kind)
+          if (mention === null) return
+          setBrowserOpen(false)
+          setDraft(current => `${current === '' || /\s$/.test(current) ? current : `${current} `}${mention} `)
+        }}
       />
     </KeyboardAvoidingView>
   )

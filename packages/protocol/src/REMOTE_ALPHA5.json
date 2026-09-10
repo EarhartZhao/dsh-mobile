@@ -9,7 +9,7 @@
     "session/openWorkspacePath",
     "workspace/create", "workspace/rename", "workspace/delete", "workspace/insertBefore",
     "workspace/insertSessionBefore", "workspace/archiveSession", "workspace/follow",
-    "workspaceFiles/list", "workspaceFiles/read", "workspaceFiles/readBytes",
+    "workspaceFiles/list", "workspaceFiles/read", "workspaceFiles/readBytes", "workspaceFiles/stat",
     "workspaceFiles/readRelated", "workspaceFiles/changes",
     "commands/list", "commands/execute", "agentPresets/list", "agentPresets/read", "agentPresets/select",
     "goals/get", "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
@@ -23,7 +23,7 @@
     },
     {
       "file": "packages/api/workspace-files/src/index.ts",
-      "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "async readRelated(", "@Remote({ mode: 'stream' })"]
+      "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "async readRelated(", "async stat(", "@Remote({ mode: 'stream' })"]
     },
     {
       "file": "packages/api/workspace-controller/src/index.ts",
