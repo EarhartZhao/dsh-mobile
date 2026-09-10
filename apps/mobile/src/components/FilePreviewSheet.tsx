@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react'
 import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
+import { imageMediaTypeOf, isMarkdown, relativeImageRefs } from '../file-kinds'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -18,28 +19,13 @@ const MAX_IMAGE_BYTES = 512 * 1024
 /** Text page size; the host caps this again on its side. */
 const TEXT_LINES = 400
 
-const IMAGE_TYPES: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  bmp: 'image/bmp',
-}
-
 type PreviewState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'unsupported' }
-  | { status: 'text'; text: string; lines: number; bytes?: number; truncated: boolean }
+  | { status: 'text'; text: string; lines: number; bytes?: number; truncated: boolean; images: string[] }
   | { status: 'image'; uri: string }
   | { status: 'error'; message: string }
-
-function extensionOf(path: string): string {
-  const name = path.split(/[\\/]/).at(-1) ?? path
-  const dot = name.lastIndexOf('.')
-  return dot <= 0 ? '' : name.slice(dot + 1).toLowerCase()
-}
 
 export function FilePreviewSheet({ visible, path, sessionId, client, features, onClose, onNotice }: {
   visible: boolean
@@ -64,7 +50,7 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
     setState({ status: 'loading' })
     const load = async (): Promise<void> => {
       try {
-        const mediaType = IMAGE_TYPES[extensionOf(path)]
+        const mediaType = imageMediaTypeOf(path)
         if (mediaType !== undefined) {
           const window = await client.files.bytes({ sessionId, path, length: MAX_IMAGE_BYTES })
           if (!alive) return
@@ -73,12 +59,25 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
         }
         const page = await client.files.read({ sessionId, path, limit: TEXT_LINES })
         if (!alive) return
+        const images = isMarkdown(path)
+          ? (await Promise.all(relativeImageRefs(page.text).map(async (relativePath) => {
+            try {
+              const window = await client.files.related({ sessionId, path, relativePath })
+              return `data:${imageMediaTypeOf(relativePath) ?? 'application/octet-stream'};base64,${window.data}`
+            } catch {
+              // A missing or unreadable reference only drops that image.
+              return null
+            }
+          }))).filter((uri): uri is string => uri !== null)
+          : []
+        if (!alive) return
         setState({
           status: 'text',
           text: page.text,
           lines: page.lines,
           ...(page.bytes === undefined ? {} : { bytes: page.bytes }),
           truncated: !page.eof,
+          images,
         })
       } catch (error: unknown) {
         if (!alive) return
@@ -130,6 +129,16 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             <Text style={styles.footerNote}>
               {t('file.truncated', { lines: state.lines, bytes: state.bytes ?? 0 })}
             </Text>
+          )}
+          {state.status === 'text' && state.images.length > 0 && (
+            <View style={styles.imageStrip}>
+              <Text style={styles.footerNote}>{t('file.relativeImages')}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imageRow}>
+                {state.images.map(uri => (
+                  <Image key={uri} source={{ uri }} style={styles.relatedImage} resizeMode="contain" />
+                ))}
+              </ScrollView>
+            </View>
           )}
           <View style={styles.actions}>
             <SheetAction label={t('file.copyPath')} onPress={() => {
@@ -185,6 +194,9 @@ const styles = StyleSheet.create({
   textContent: { paddingVertical: spacing(1) },
   text: { color: colors.text, fontSize: fontSize.tiny, fontFamily: 'monospace' },
   footerNote: { color: colors.textDim, fontSize: fontSize.tiny },
+  imageStrip: { gap: spacing(1) },
+  imageRow: { gap: spacing(2), alignItems: 'center' },
+  relatedImage: { width: 160, height: 120, backgroundColor: colors.bg, borderRadius: radius.card },
   actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing(2) },
   action: { paddingHorizontal: spacing(3), paddingVertical: spacing(2) },
   actionText: { color: colors.accent, fontSize: fontSize.small },

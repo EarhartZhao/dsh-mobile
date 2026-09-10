@@ -7,9 +7,10 @@
  * know an absolute prefix. Tapping a file hands its workspace path to the
  * preview sheet, which reads it through `file.read` / `file.bytes`.
  */
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import type { MobileDirectoryEntry, NatsApiClient } from '@dsh-mobile/protocol'
+import type { ConnectionManager } from '@dsh-mobile/core'
+import type { MobileDirectoryEntry } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
@@ -28,23 +29,52 @@ function formatSize(bytes: number | undefined): string {
   return `${bytes}B`
 }
 
-export function WorkspaceBrowserSheet({ visible, sessionId, client, features, onClose, onOpenFile }: {
+export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, onOpenFile }: {
   visible: boolean
   sessionId: string
-  client: NatsApiClient | null
-  features: readonly string[]
+  manager: ConnectionManager
   onClose: () => void
   /** Opens one workspace-relative path in the file preview sheet. */
   onOpenFile: (path: string) => void
 }): React.JSX.Element {
   const { t } = useI18n()
+  const client = manager.client
+  const features = manager.compatibility?.features ?? []
   const [path, setPath] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
   const [state, setState] = useState<BrowserState>({ status: 'loading' })
   const canBrowse = features.includes('workspace-files')
+  const canWatch = features.includes('workspace-watch')
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Every open starts at the workspace root; the trail rebuilds from there.
   useEffect(() => { if (visible) setPath('') }, [visible])
+
+  const requestReload = useCallback((): void => {
+    if (reloadTimer.current !== null) clearTimeout(reloadTimer.current)
+    // Tool runs touch many files in a burst; one listing per burst is enough.
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = null
+      setReloadToken(token => token + 1)
+    }, 300)
+  }, [])
+
+  useEffect(() => () => {
+    if (reloadTimer.current !== null) clearTimeout(reloadTimer.current)
+  }, [])
+
+  // Arm the host-side change stream while the browser is open, and follow it.
+  useEffect(() => {
+    if (!visible || client === null || !canBrowse || !canWatch) return
+    void client.files.watch({ sessionId }).catch(() => undefined)
+    return manager.store.on('remoteEvent', ({ event, args }) => {
+      if (event !== 'workspace-files/change' && event !== 'workspace-files/ready') return
+      const payload = args[0]
+      if (typeof payload !== 'object' || payload === null) return
+      if ((payload as { sessionId?: unknown }).sessionId !== sessionId) return
+      requestReload()
+    })
+  }, [canBrowse, canWatch, client, manager, requestReload, sessionId, visible])
 
   useEffect(() => {
     if (!visible) return
