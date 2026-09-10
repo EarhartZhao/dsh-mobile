@@ -48,6 +48,8 @@ function parseQr(text: string): PairingQrPayload {
 export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [text, setText] = useState('')
+  const [localHost, setLocalHost] = useState('10.0.2.2')
+  const [localWebPort, setLocalWebPort] = useState('3080')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cameraError, setCameraError] = useState<string | null>(null)
@@ -131,7 +133,7 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
   /** Dev loopback rig: pairs against scripts/fake-host.mjs (10.0.2.2 = host). */
   const pairDemo = async (): Promise<void> => {
     await pairWith({
-      hub: 'ws://10.0.2.2:8333',
+      hub: `ws://${localHost.trim()}:8333`,
       user: 'demo',
       pass: 'demo',
       instance: 'demo',
@@ -146,15 +148,22 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch('http://10.0.2.2:3080/mobile-bridge/api/pair', { method: 'POST' })
+      const host = localHost.trim()
+      const port = Number(localWebPort.trim())
+      if (host === '' || host.includes('/') || !Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error('invalid local host or port')
+      }
+      const baseUrl = `http://${host}:${String(port)}`
+      const res = await fetch(`${baseUrl}/mobile-bridge/api/pair`, { method: 'POST' })
       if (!res.ok) throw new Error(`console /pair HTTP ${res.status}`)
       const body = await res.json() as { payload?: PairingQrPayload }
       if (body.payload === undefined) throw new Error('console /pair: no payload')
       // In React-Native dev builds the emulator cannot reach a host loopback
       // listener or the production TLS Hub address. Use the host-mapped local
       // NATS WebSocket while retaining the Hub payload for release builds.
+      const hubHost = host
       await pairWith(__DEV__
-        ? { ...body.payload, hub: 'ws://10.0.2.2:8443', caFp: '' }
+        ? { ...body.payload, hub: `ws://${hubHost}:8443`, caFp: '' }
         : body.payload)
     } catch (cause) {
       console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
@@ -257,6 +266,28 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
           </TouchableOpacity>
         )}
       </View>
+      {__DEV__ && (
+        <View style={styles.localDevFields}>
+          <TextInput
+            style={styles.localDevInput}
+            value={localHost}
+            onChangeText={setLocalHost}
+            placeholder={t('pairing.localHost')}
+            placeholderTextColor={colors.textDim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <TextInput
+            style={[styles.localDevInput, styles.localPortInput]}
+            value={localWebPort}
+            onChangeText={setLocalWebPort}
+            placeholder={t('pairing.localPort')}
+            placeholderTextColor={colors.textDim}
+            keyboardType="number-pad"
+          />
+        </View>
+      )}
       {error !== null && <Text style={styles.error}>{error}</Text>}
       <TouchableOpacity
         style={[styles.button, (busy || text.trim() === '') && styles.buttonDisabled]}
@@ -386,6 +417,18 @@ const styles = StyleSheet.create({
     padding: spacing(3),
     textAlignVertical: 'top',
   },
+  localDevFields: { flexDirection: 'row', gap: spacing(2), marginBottom: spacing(2) },
+  localDevInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    color: colors.text,
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(2),
+    fontSize: fontSize.small,
+  },
+  localPortInput: { flex: 0.35 },
   inputWrap: { position: 'relative' },
   clearButton: {
     position: 'absolute',
