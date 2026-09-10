@@ -105,6 +105,50 @@ describe('deriveConversation', () => {
     })
   })
 
+  it('derives the same sub-call tree from the renamed PTC dispatch events', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'dispatch', arguments: '{"task":"outer"}' })
+    // dsh 0.1.5 renamed tool/code-dispatch* to tool/ptc-dispatch*.
+    feed(store, 2, 'tool/ptc-dispatch-start', { parentCallId: 'c1', subCallId: 's1', name: 'search', arguments: { query: 'first' } })
+    feed(store, 3, 'tool/ptc-dispatch', {
+      parentCallId: 'c1', subCallId: 's1', name: 'search', arguments: { query: 'first' },
+      content: [{ type: 'text', text: 'outer result' }],
+    })
+    feed(store, 4, 'tool/result', {
+      turn: 1, step: 1,
+      message: { toolCallId: 'c1', content: [{ type: 'text', text: 'final result' }] },
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items).toHaveLength(1)
+    const tool = items[0]
+    if (tool?.kind !== 'tool') return
+    expect(tool).toMatchObject({ callId: 'c1', status: 'done', resultText: 'final result' })
+    expect(tool.subCalls).toHaveLength(1)
+    expect(tool.subCalls[0]).toMatchObject({
+      callId: 's1',
+      name: 'search',
+      status: 'done',
+      resultText: 'outer result',
+    })
+  })
+
+  it('keeps one sub-call tree when legacy and renamed dispatch events interleave', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'dispatch', arguments: '{}' })
+    feed(store, 2, 'tool/code-dispatch-start', { parentCallId: 'c1', subCallId: 's1', name: 'search', arguments: { query: 'q' } })
+    feed(store, 3, 'tool/ptc-dispatch', {
+      parentCallId: 'c1', subCallId: 's1', name: 'search', arguments: { query: 'q' },
+      content: [{ type: 'text', text: 'ok' }],
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    const tool = items[0]
+    if (tool?.kind !== 'tool') return
+    expect(tool.subCalls).toHaveLength(1)
+    expect(tool.subCalls[0]).toMatchObject({ callId: 's1', name: 'search', status: 'done', resultText: 'ok' })
+  })
+
   it('keeps attachment images from root and nested read_image results', () => {
     const store = new SessionStore()
     const image = {

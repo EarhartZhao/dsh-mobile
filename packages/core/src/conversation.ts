@@ -140,6 +140,19 @@ function stringifyArguments(value: unknown): string {
   try { return JSON.stringify(value) ?? '' } catch { return '' }
 }
 
+/**
+ * dsh 0.1.5 renamed the durable PTC dispatch events
+ * (`tool/code-dispatch*` → `tool/ptc-dispatch*`) and rewrites stored sessions
+ * through the v2→v3 migration, while older hosts still emit the legacy names.
+ * Fold both vocabularies onto the one the reducer below understands so
+ * migrated and freshly recorded sessions render the same sub-call tree.
+ */
+function normalizeEventType(type: unknown): unknown {
+  if (type === 'tool/ptc-dispatch-start') return 'tool/code-dispatch-start'
+  if (type === 'tool/ptc-dispatch') return 'tool/code-dispatch'
+  return type
+}
+
 export function deriveConversation(session: SessionState): ConversationItem[] {
   const items: ConversationItem[] = []
   const live = new Map<string, ChunkBuffer>()
@@ -154,7 +167,8 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
     if (!isObj(event)) continue
     const seq = typeof event['seq'] === 'number' ? event['seq'] : 0
     const data: unknown = event['data']
-    switch (event['type']) {
+    const type = normalizeEventType(event['type'])
+    switch (type) {
       case 'user/message': {
         // Only human-authored prompts render as bubbles. The harness also
         // logs injected context (skill catalogs, reminders, …) as
@@ -293,7 +307,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         const parentCallId = typeof data['parentCallId'] === 'string' ? data['parentCallId'] : undefined
         const subCallId = typeof data['subCallId'] === 'string' ? data['subCallId'] : undefined
         if (parentCallId === undefined || subCallId === undefined || parentCallId === subCallId) break
-        const isStart = event['type'] === 'tool/code-dispatch-start'
+        const isStart = type === 'tool/code-dispatch-start'
         const registeredParent = toolParents.get(subCallId)
         if (isStart) {
           if (toolParents.has(subCallId) || createsCycle(toolParents, parentCallId, subCallId)) break
@@ -310,7 +324,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         const args = stringifyArguments(data['arguments'])
         const siblings = parent.subCalls
         const at = siblings.findIndex(child => child.callId === subCallId)
-        if (event['type'] === 'tool/code-dispatch-start') {
+        if (type === 'tool/code-dispatch-start') {
           if (at >= 0) break
           toolParents.set(subCallId, parentCallId)
           parent.subCalls = [...siblings, {

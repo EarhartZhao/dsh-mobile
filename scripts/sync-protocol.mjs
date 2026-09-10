@@ -1,5 +1,5 @@
 /**
- * Verifies the frozen legacy mobile wire and the current alpha.5 Remote
+ * Verifies the frozen legacy mobile wire and the current Remote
  * endpoints that dsh-mobile-plugin adapts onto it. The former ApiProxy source
  * tree no longer exists, so copying files from packages/host/apiproxy would
  * make this gate silently skip the protocol that production actually uses.
@@ -17,6 +17,9 @@ const remoteManifestPath = join(root, 'packages/protocol/src/REMOTE_ALPHA5.json'
 
 const toPosix = value => value.replace(/\\/g, '/')
 const digest = file => createHash('sha256').update(readFileSync(file)).digest('hex')
+
+/** Label of the verified Remote manifest, reported by the gate summary. */
+let manifestLabel = 'committed manifest'
 
 function listFiles(dir) {
   const out = []
@@ -76,6 +79,7 @@ function verifyRemote() {
     console.error('[sync-protocol] Remote manifest must declare endpoints and sourceChecks')
     process.exit(1)
   }
+  manifestLabel = typeof manifest.protocol === 'string' ? manifest.protocol : manifestLabel
   if (!existsSync(sourceRepo)) {
     console.log(`[sync-protocol] dsh source unavailable; validated ${manifest.endpoints.length} committed Remote endpoints only`)
     return manifest.endpoints.length
@@ -93,7 +97,7 @@ function verifyRemote() {
     }
   }
   if (failures.length > 0) {
-    console.error('[sync-protocol] dsh alpha.5 Remote surface drifted:')
+    console.error('[sync-protocol] dsh Remote surface drifted:')
     for (const failure of failures) console.error(`  ${failure}`)
     process.exit(1)
   }
@@ -102,4 +106,4 @@ function verifyRemote() {
 
 const vendorFiles = verifyVendor()
 const endpoints = verifyRemote()
-console.log(`[sync-protocol] frozen mobile wire verified (${vendorFiles} files); alpha.5 Remote surface verified (${endpoints} endpoints)`)
+console.log(`[sync-protocol] frozen mobile wire verified (${vendorFiles} files); Remote surface verified (${endpoints} endpoints, ${manifestLabel})`)

@@ -5,6 +5,8 @@
 
 > 进度（2026-09-07，dsh 0.1.3-alpha.1 兼容升级）：App 0.0.3 / plugin 0.2.2 已切到 Typert Remote v2。阶段一完成 commands/preset/goals 参数迁移、`$events/result` 审批回答、`session/follow + page` 深历史和 packed chunks 展开；阶段二接入 `session/control`、`workspace/follow`、流失败重建及重连瞬态状态清空；阶段三新增 canonical 文件/会话引用、主聊天历史翻页与锚点保持、root/nested `read_image` 图片卡、轮次导航和模型 provider 失败展示；本次补齐新 dsh 的 `submittedAttachments` 参数、`assistantStream` 实时帧，以及基于 `fileUploads/upload` 的小文件 staged receipt 上传。旧 ApiProxy vendor 仍为冻结 wire，Remote endpoint 门禁继续校验。
 
+> 进度（2026-09-10，dsh 0.1.5-rc.1 兼容核对）：按 `skills/dsh-sync-check` 跑完门禁——冻结 wire（36 文件哈希）与 40 个 Remote endpoint 的 owner 定义全部命中，`session/*`、`workspace/*`、`$events`、`fileUploads/upload` 契约与插件宿主服务面（`connection` / `typertGateway`）无破坏性变化。唯一客户端可见的改动是 durable PTC 派发事件改名（`tool/code-dispatch*` → `tool/ptc-dispatch*`，历史会话由 v2→v3 迁移重写为新名）：core 事件归一层改为新旧名等价并补两条回归用例，App 与插件 typecheck/test 全绿。上游新增的 `goals/get`、`goal/activation-changed`、`workspaceFiles` Remote 命名空间、`/api/file` 媒体路由和 `session/openWorkspacePath` 的 `reveal` 动作本次未接入，留作后续增量。
+
 ## 阶段总览
 
 ```text

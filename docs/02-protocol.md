@@ -2,7 +2,9 @@
 
 > 本文描述移动端如何接入 deepseek-harness 的当前 Typert Remote。协议权威定义在
 > `deepseek-harness/packages/api/**`、`packages/interaction/**` 等 Remote owner 中。
-> App 仍消费稳定的移动端信封；dsh-mobile-plugin 0.2.2 把 dsh 0.1.3-alpha.1 Remote 参数、流和事件适配成该信封。
+> App 仍消费稳定的移动端信封；dsh-mobile-plugin 0.2.2 把 dsh 0.1.5-rc.1 Remote 参数、流和事件适配成该信封。
+> 迁移期内插件与 App 同时兼容旧命名，例如 durable PTC 派发事件的新名
+> `tool/ptc-dispatch*` 与旧名 `tool/code-dispatch*`（见"事件流消费要点"）。
 
 ## 传输映射
 
@@ -70,7 +72,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `session.updateQueue` | 编辑/移除待处理队列项 |
 | `session.rename` / `session.fork` | 标题、分叉 |
 | `respond` | 回答提问/审批（RpcReceipt） |
-| `command.list` / `command.execute` | alpha.5 动态命令发现与执行 |
+| `command.list` / `command.execute` | 当前 Remote 的动态命令发现与执行 |
 | `reference.files` / `reference.sessions` | 映射到文件与会话引用候选 Remote |
 | `file.upload` | 移动端以 base64 通过 NATS 调用 dsh `fileUploads/upload`，返回 Agent-scoped receipt 与文件引用 |
 
@@ -90,6 +92,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 ### events.mux（会话域）
 
 - 流式渲染：订阅目标会话的 `assistant/chunk`，**按 seq 排序、节流批量进 UI**；`assistant/message` 是定稿。
+- durable 事件名会随 dsh 版本改名（`tool/code-dispatch*` → `tool/ptc-dispatch*` 即 0.1.5 的改动，历史会话由 v2→v3 迁移重写为新名）。App 的事件归一层 `normalizeEventType` 把两套名字折到同一套语义，新增改名时在此登记，不要各自打补丁。
 - `session/projection` 帧（`{sessionId, key, value, seq}`）：按会话维护通用值仓，seq 高者胜；标题在 `title` 键下。
 - `session/jobs`：完整快照语义（非差分），直接替换本地集合；没有 baseline 即空集。
 - `session/queue`：权威队列快照，不要从轮次事件推断队列。
@@ -120,7 +123,7 @@ App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 
 ## 客户端实现策略
 
 - `packages/protocol/src/vendor/` 是 App 已发布移动端信封的冻结快照，不再从已删除的 ApiProxy 目录复制。
-- `packages/protocol/src/REMOTE_ALPHA5.json` 列出插件实际依赖的 Remote endpoint；`sync-protocol:check` 同时校验冻结 vendor 哈希和当前 dsh 源码中的 Remote 定义，目录重构或方法改名会直接失败。
+- `packages/protocol/src/REMOTE_ALPHA5.json`（文件名保留历史命名）列出插件实际依赖的 Remote endpoint；`sync-protocol:check` 同时校验冻结 vendor 哈希和当前 dsh 源码中的 Remote 定义，目录重构或方法改名会直接失败。
 - `NatsApiClient extends AbstractApiClient`：官方抽象要求平台子类只提供 `doFetch` 传输环节——我们的 `doFetch` 把请求字节作为 NATS request 发出、把回复字节返回，其余（rpcId、信封编解码、Zod、超时、取消）全部复用。
 - 下行循环：订阅两个事件 subject，帧喂给与浏览器载体相同的 sink 逻辑。
 - 握手时比对 `host.describe`；协议不匹配给出"请升级 App 或 harness"的明确错误。
