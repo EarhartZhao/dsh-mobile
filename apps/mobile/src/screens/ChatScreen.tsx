@@ -38,6 +38,7 @@ import { ImageLightbox } from '../components/ImageLightbox'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
 import { ToolCard } from '../components/ToolCard'
+import { WorkspaceBrowserSheet } from '../components/WorkspaceBrowserSheet'
 import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, type PlusReference } from '../components/PlusMenuSheet'
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
@@ -158,6 +159,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const [browserOpen, setBrowserOpen] = useState(false)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
   const [plusOpen, setPlusOpen] = useState(false)
   const [commands, setCommands] = useState<PlusCommand[]>([])
@@ -1300,6 +1302,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}>
               <Text style={styles.menuText}>{goal === null ? t('plus.goalCreate') : t('plus.goalEdit')}</Text>
             </TouchableOpacity>
+            {(manager.compatibility?.features ?? []).includes('workspace-files') && (
+              <TouchableOpacity style={styles.menuRow} onPress={() => { setMenuOpen(false); setBrowserOpen(true) }}>
+                <Text style={styles.menuText}>{t('chat.workspaceFiles')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </ModalBackdrop>
       </Modal>
@@ -1463,6 +1470,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         features={manager.compatibility?.features ?? []}
         onClose={() => setPreviewPath(null)}
         onNotice={showNotice}
+      />
+      <WorkspaceBrowserSheet
+        visible={browserOpen}
+        sessionId={sessionId}
+        client={manager.client}
+        features={manager.compatibility?.features ?? []}
+        onClose={() => setBrowserOpen(false)}
+        onOpenFile={(path) => { setBrowserOpen(false); setPreviewPath(path) }}
       />
     </KeyboardAvoidingView>
   )

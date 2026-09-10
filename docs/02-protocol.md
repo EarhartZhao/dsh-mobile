@@ -122,7 +122,9 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 
 App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 `dsh-mobile-plugin >=0.2.2 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
 
-能力位分两级：`mobile.info.features` 里插件必须提供的门禁能力（见 `packages/core/src/compatibility.ts` 的 `REQUIRED_PLUGIN_FEATURES`），以及**可选能力**——`workspace-files`（文件预览）、`goal-state`（目标 activation）、`open-path`（宿主机打开/定位）。可选能力缺席时 App 只隐藏对应入口（文件预览降级为复制路径、目标条只显示 durable phase），不会判为不兼容；因此旧插件仍可与 App 0.0.3+ 共存。
+能力位分两级：`mobile.info.features` 里插件必须提供的门禁能力（见 `packages/core/src/compatibility.ts` 的 `REQUIRED_PLUGIN_FEATURES`），以及**可选能力**——`workspace-files`（工作区文件目录浏览与文件预览）、`goal-state`（目标 activation）、`open-path`（宿主机打开/定位）。可选能力缺席时 App 只隐藏对应入口（会话菜单不出现"工作区文件"、文件 chip 点击降级为复制路径、目标条只显示 durable phase），不会判为不兼容；因此旧插件仍可与 App 0.0.3+ 共存。
+
+工作区浏览器只走 workspace 相对路径：`file.list` 返回的条目只带 basename，客户端自己拼接/回退/构建面包屑（`apps/mobile/src/workspace-path.ts`），路径以 `workspaceFileScopeId` 交给宿主解析成会话 workspace root，因此手机端既不需要知道绝对前缀，也无法越出工作区。图片按字节窗口读（上限 512 KB），文本按行页读（默认 400 行），两者都受宿主 `workspaceFiles` 的 `maxBytes`/`maxLines` 上限再裁一次。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 
