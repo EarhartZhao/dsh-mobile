@@ -160,6 +160,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [browserOpen, setBrowserOpen] = useState(false)
+  /** Composer handle: reference picks return focus so they stay sendable. */
+  const composerRef = useRef<React.ComponentRef<typeof TextInput> | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
   const [plusOpen, setPlusOpen] = useState(false)
   const [commands, setCommands] = useState<PlusCommand[]>([])
@@ -249,7 +251,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const pickCandidate = (candidate: Candidate): void => {
     candidateGeneration.current++
     const token = activeComposerToken(draft)
-    if (token !== null) setDraft(`${draft.slice(0, -token.prefix.length)}${candidate.insert}`)
+    if (token !== null) {
+      setDraft(`${draft.slice(0, -token.prefix.length)}${candidate.insert}`)
+      // Keep the caret in the composer so the picked reference is immediately sendable.
+      composerRef.current?.focus()
+    }
     setCandidates([])
   }
 
@@ -1262,12 +1268,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             </TouchableOpacity>
           )}
           <TextInput
+            ref={composerRef}
             style={styles.input}
             value={draft}
             onChangeText={onDraftChange}
             placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
             placeholderTextColor={colors.textDim}
             multiline
+            onKeyPress={(event) => {
+              const native = event.nativeEvent as { key?: string; shiftKey?: boolean }
+              if (native.key !== 'Enter' || native.shiftKey === true) return
+              // Chat convention: Enter sends, Shift+Enter keeps the newline.
+              // Soft keyboards that never report Enter simply keep typing.
+              const sendable = editingItem !== null || draft.trim() !== '' || pendingImages.length > 0
+                || pendingFiles.some(file => file.status === 'ready')
+              if (!sendable) return
+              event.preventDefault?.()
+              void send()
+            }}
           />
           {running ? (
             <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
@@ -1401,7 +1419,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         onCaptureImage={() => { setPlusOpen(false); void captureImage() }}
         onPickImages={() => { setPlusOpen(false); void chooseImages() }}
         onPickFile={() => { setPlusOpen(false); void chooseFile() }}
-        onInsertReference={reference => { setPlusOpen(false); setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`) }}
+        onInsertReference={reference => {
+          setPlusOpen(false)
+          setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`)
+          composerRef.current?.focus()
+        }}
         onPermission={value => { setPlusOpen(false); selectPermission(value) }}
         onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: t('plus.planSubtitle'), images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
         onGoal={() => { setPlusOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}
