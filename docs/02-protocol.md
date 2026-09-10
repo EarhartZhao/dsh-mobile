@@ -75,6 +75,9 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `command.list` / `command.execute` | 当前 Remote 的动态命令发现与执行 |
 | `reference.files` / `reference.sessions` | 映射到文件与会话引用候选 Remote |
 | `file.upload` | 移动端以 base64 通过 NATS 调用 dsh `fileUploads/upload`，返回 Agent-scoped receipt 与文件引用 |
+| `goal.get` | 映射到 `goals/get`：读当前目标的 phase 与**进程内 activation**（durable `goal` projection 故意不含 activation） |
+| `file.list` / `file.read` / `file.bytes` | 映射到 `workspaceFiles/list|read|readBytes`：workspace 目录列表、有界文本页、有界 base64 字节窗口（路径以 `workspaceFileScopeId` 解析到该会话的 workspace root） |
+| `file.reveal` / `host.openPath` | 都映射到 `session/openWorkspacePath`：`file.reveal` 带 `action: 'reveal'` 在宿主机文件管理器定位，`host.openPath` 用默认应用打开 |
 
 ### M3 任务面板
 
@@ -82,8 +85,9 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 
 ### 明确不做（v1）
 
-- `settings.*` / `credentials.*` / `llm.*` 配置面、`host.pickDirectory` / `host.openPath` / `agentPreset.*` 创作面：移动端用不到，且插件白名单直接不放行。
+- `settings.*` / `credentials.*` / `llm.*` 配置面与 `host.pickDirectory`：移动端用不到，且插件白名单直接不放行。（`host.openPath` 自插件 0.2.3 起放行，见上表。）
 - `session.export`（ZIP 导出）：暂无场景；未来要做则走插件签发一次性下载 URL，不走 NATS 传大文件。
+- dsh 新增的 `/api/file` 媒体路由：它是宿主 web server 上的 HTTP 路由，而移动端只经 NATS 连公网 Hub，手机到不了宿主的 `/api` 前缀，因此不接入；文件读取统一走 `file.read` / `file.bytes`（受 `workspaceFiles.maxBytes` 与 NATS `max_payload` 双重约束）。
 
 文件上传使用 `file.upload` 移动端扩展方法：客户端先提交 canonical base64 与可选文件名，拿到 `receiptId` 后，再通过 `filePrompts.prompt` 以 `{ type: 'file', receiptId }` 提交到 `session.prompt`。由于 NATS Leaf 的 `max_payload` 约为 1 MiB，该路径适合小文件；大文件应使用 dsh Web 的 `/api/session/uploadFileBinary` 流式 HTTP 路径，移动端暂不绕过 NATS 限制。
 
@@ -117,6 +121,8 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 ## 版本兼容
 
 App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 `dsh-mobile-plugin >=0.2.2 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
+
+能力位分两级：`mobile.info.features` 里插件必须提供的门禁能力（见 `packages/core/src/compatibility.ts` 的 `REQUIRED_PLUGIN_FEATURES`），以及**可选能力**——`workspace-files`（文件预览）、`goal-state`（目标 activation）、`open-path`（宿主机打开/定位）。可选能力缺席时 App 只隐藏对应入口（文件预览降级为复制路径、目标条只显示 durable phase），不会判为不兼容；因此旧插件仍可与 App 0.0.3+ 共存。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 

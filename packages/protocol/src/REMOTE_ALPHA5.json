@@ -6,17 +6,23 @@
     "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",
     "session/rename", "session/fork", "session/prompt", "session/attachment", "session/updateQueue",
     "session/cancel", "session/page", "session/follow", "session/control",
+    "session/openWorkspacePath",
     "workspace/create", "workspace/rename", "workspace/delete", "workspace/insertBefore",
     "workspace/insertSessionBefore", "workspace/archiveSession", "workspace/follow",
+    "workspaceFiles/list", "workspaceFiles/read", "workspaceFiles/readBytes",
     "commands/list", "commands/execute", "agentPresets/list", "agentPresets/read", "agentPresets/select",
-    "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
+    "goals/get", "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
     "subagents/list", "subagents/prompt", "subagents/interruptByParent", "pluginInventory/list",
     "fileReferences/list", "sessionReferenceResolver/candidates", "$events", "$events/result"
   ],
   "sourceChecks": [
     {
       "file": "packages/api/session-controller/src/index.ts",
-      "includes": ["@Remote('list')", "@Remote('modelCatalog')", "@Remote('page')", "@Remote({ mode: 'stream' })", "control("]
+      "includes": ["@Remote('list')", "@Remote('modelCatalog')", "@Remote('page')", "@Remote({ mode: 'stream' })", "@Remote('openWorkspacePath')", "control("]
+    },
+    {
+      "file": "packages/api/workspace-files/src/index.ts",
+      "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "@Remote({ mode: 'stream' })"]
     },
     {
       "file": "packages/api/workspace-controller/src/index.ts",
