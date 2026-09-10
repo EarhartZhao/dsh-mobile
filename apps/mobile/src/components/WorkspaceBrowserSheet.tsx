@@ -29,13 +29,15 @@ function formatSize(bytes: number | undefined): string {
   return `${bytes}B`
 }
 
-export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, onOpenFile }: {
+export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, onOpenFile, onInsertReference }: {
   visible: boolean
   sessionId: string
   manager: ConnectionManager
   onClose: () => void
   /** Opens one workspace-relative path in the file preview sheet. */
   onOpenFile: (path: string) => void
+  /** Inserts one path into the composer as an `@` reference. */
+  onInsertReference?: (path: string, kind: 'file' | 'directory') => void
 }): React.JSX.Element {
   const { t } = useI18n()
   const client = manager.client
@@ -146,26 +148,37 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
                   const childPath = joinWorkspacePath(path, entry.name)
                   const isDirectory = entry.type === 'directory'
                   return (
-                    <TouchableOpacity
-                      key={entry.name}
-                      style={styles.row}
-                      disabled={entry.type === 'other'}
-                      onPress={() => {
-                        if (isDirectory) setPath(childPath)
-                        else onOpenFile(childPath)
-                      }}
-                    >
-                      <Text style={styles.rowIcon}>{isDirectory ? '📁' : entry.type === 'file' ? '📄' : '❔'}</Text>
-                      <Text
-                        style={[styles.rowName, entry.type === 'other' && styles.rowDisabled]}
-                        numberOfLines={1}
+                    <View key={entry.name} style={styles.row}>
+                      <TouchableOpacity
+                        style={styles.rowMain}
+                        disabled={entry.type === 'other'}
+                        onPress={() => {
+                          if (isDirectory) setPath(childPath)
+                          else onOpenFile(childPath)
+                        }}
                       >
-                        {entry.name}
-                      </Text>
+                        <Text style={styles.rowIcon}>{isDirectory ? '📁' : entry.type === 'file' ? '📄' : '❔'}</Text>
+                        <Text
+                          style={[styles.rowName, entry.type === 'other' && styles.rowDisabled]}
+                          numberOfLines={1}
+                        >
+                          {entry.name}
+                        </Text>
+                      </TouchableOpacity>
                       {entry.type === 'file' && (
                         <Text style={styles.rowMeta}>{formatSize(entry.size)}</Text>
                       )}
-                    </TouchableOpacity>
+                      {onInsertReference !== undefined && entry.type !== 'other' && (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityLabel={t('files.insertReference')}
+                          hitSlop={8}
+                          onPress={() => onInsertReference(childPath, isDirectory ? 'directory' : 'file')}
+                        >
+                          <Text style={styles.rowAction}>＋</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   )
                 })}
                 {state.truncated && (
@@ -201,8 +214,10 @@ const styles = StyleSheet.create({
   spinner: { marginVertical: spacing(3) },
   hint: { color: colors.textDim, fontSize: fontSize.small, paddingVertical: spacing(2) },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), paddingVertical: spacing(2) },
+  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   rowIcon: { color: colors.textDim, fontSize: fontSize.small, width: spacing(6) },
   rowName: { flex: 1, color: colors.text, fontSize: fontSize.small },
   rowDisabled: { color: colors.textDim },
   rowMeta: { color: colors.textDim, fontSize: fontSize.tiny },
+  rowAction: { color: colors.accent, fontSize: fontSize.body, paddingHorizontal: spacing(1) },
 })

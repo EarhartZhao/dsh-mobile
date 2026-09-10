@@ -36,6 +36,14 @@ export interface MobileFileText {
   eof: boolean
 }
 
+/** Identity and freshness of one workspace file, without its content. */
+export interface MobileFileStat {
+  absolutePath: string
+  /** Opaque freshness token; compared, never parsed. */
+  version: string
+  bytes?: number
+}
+
 /** One byte window of a workspace file, base64 in `data`. */
 export interface MobileFileBytes {
   absolutePath: string
@@ -62,6 +70,8 @@ export interface MobileFiles {
   list(payload: { sessionId: string; path?: string }): Promise<MobileDirectoryListing>
   read(payload: { sessionId: string; path: string; offset?: number; limit?: number }): Promise<MobileFileText>
   bytes(payload: { sessionId: string; path: string; offset?: number; length?: number }): Promise<MobileFileBytes>
+  /** Freshness probe: reuse a cached preview while `version` is unchanged. */
+  stat(payload: { sessionId: string; path: string }): Promise<MobileFileStat>
   /** Reads one path relative to another file's directory (Markdown references). */
   related(payload: { sessionId: string; path: string; relativePath: string }): Promise<MobileFileBytes>
   /**
@@ -96,6 +106,7 @@ export function createMobileFiles(
     list: payload => call('file.list', payload, 20_000),
     read: payload => call('file.read', payload, 20_000),
     bytes: payload => call('file.bytes', payload, 30_000),
+    stat: payload => call('file.stat', payload, 20_000),
     related: payload => call('file.related', payload, 30_000),
     watch: payload => call('file.watch', payload, 20_000),
     reveal: payload => call('file.reveal', payload, 20_000),

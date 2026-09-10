@@ -78,6 +78,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `goal.get` | 映射到 `goals/get`：读当前目标的 phase 与**进程内 activation**（durable `goal` projection 故意不含 activation） |
 | `file.list` / `file.read` / `file.bytes` | 映射到 `workspaceFiles/list|read|readBytes`：workspace 目录列表、有界文本页、有界 base64 字节窗口（路径以 `workspaceFileScopeId` 解析到该会话的 workspace root） |
 | `file.related` | 映射到 `workspaceFiles/readRelated`：以某个文件所在目录为基准读相对路径，供 Markdown 预览拉取文中引用的图片 |
+| `file.stat` | 映射到 `workspaceFiles/stat`：只取 `version`/`bytes` 的轻量探针，版本未变时预览直接复用缓存页，省掉整页重读 |
 | `file.watch` | 映射到 `workspaceFiles/changes` 流：插件为该会话打开变更流，把它作为 `workspace-files/change` / `-ready` / `-watch-error` 转发事件发到宿主域下行帧 |
 | `file.reveal` / `host.openPath` | 都映射到 `session/openWorkspacePath`：`file.reveal` 带 `action: 'reveal'` 在宿主机文件管理器定位，`host.openPath` 用默认应用打开 |
 
@@ -129,6 +130,8 @@ App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 
 工作区浏览器只走 workspace 相对路径：`file.list` 返回的条目只带 basename，客户端自己拼接/回退/构建面包屑（`apps/mobile/src/workspace-path.ts`），路径以 `workspaceFileScopeId` 交给宿主解析成会话 workspace root，因此手机端既不需要知道绝对前缀，也无法越出工作区。图片按字节窗口读（上限 512 KB），文本按行页读（默认 400 行），两者都受宿主 `workspaceFiles` 的 `maxBytes`/`maxLines` 上限再裁一次。
 
 文件变更通知刻意复用**已发布**的 `host/remote-event` 帧，而不是新增 mux 帧类型：App 侧的 mux/host 帧 schema 是冻结的 `discriminatedUnion('type')`，未知帧类型会被载体丢弃；`host/remote-event` 的 `args` 是 `unknown[]`，正好承载 `{ sessionId, absolutePath, version | absent }`。事件名沿用上游词汇 `workspace-files/*`，浏览器收到后做 300 ms 去抖重列（一次工具运行会连续写多个文件）。
+
+预览的读取策略：打开文件先用 `file.stat` 比对 `version`，命中缓存就直接展示上次那页，否则按种类读取（图片取 512 KB 字节窗口，其余按 400 行一页）。文本页在 `eof=false` 时提供"继续读取"，按 `offset + lines` 拉下一页并追加。目录列表没有游标参数——`workspaceFiles/list` 只按宿主 `maxEntries` 截断并回报 `truncated`，因此列表无法续读，只能提示用户进入子目录。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 
