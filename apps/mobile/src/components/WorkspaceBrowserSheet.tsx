@@ -14,7 +14,9 @@ import type { MobileDirectoryEntry } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
-import { joinWorkspacePath, parentWorkspacePath, sortWorkspaceEntries, workspaceCrumbs } from '../workspace-path'
+import {
+  changeTouchesDirectory, joinWorkspacePath, parentWorkspacePath, sortWorkspaceEntries, workspaceCrumbs,
+} from '../workspace-path'
 
 type BrowserState =
   | { status: 'loading' }
@@ -74,9 +76,15 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
       const payload = args[0]
       if (typeof payload !== 'object' || payload === null) return
       if ((payload as { sessionId?: unknown }).sessionId !== sessionId) return
+      if (event === 'workspace-files/change') {
+        // Reload only when the change lands in the shown directory. A change
+        // without a resolvable workspace path refreshes anyway: a stale listing
+        // is worse than one redundant request.
+        if (!changeTouchesDirectory(path, (payload as { path?: unknown }).path)) return
+      }
       requestReload()
     })
-  }, [canBrowse, canWatch, client, manager, requestReload, sessionId, visible])
+  }, [canBrowse, canWatch, client, manager, path, requestReload, sessionId, visible])
 
   useEffect(() => {
     if (!visible) return

@@ -53,3 +53,13 @@ export function sortWorkspaceEntries<T extends { name: string; type: 'file' | 'd
     return byType === 0 ? left.name.localeCompare(right.name) : byType
   })
 }
+
+/**
+ * Whether one observed change should refresh the directory a browser shows.
+ * An unknown location refreshes: a stale listing is worse than a redundant
+ * request, and only hosts that cannot resolve the workspace root omit it.
+ */
+export function changeTouchesDirectory(currentPath: string, changedPath: unknown): boolean {
+  if (typeof changedPath !== 'string') return true
+  return parentWorkspacePath(changedPath) === normalize(currentPath)
+}

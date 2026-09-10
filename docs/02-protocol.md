@@ -129,7 +129,9 @@ App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 
 
 工作区浏览器只走 workspace 相对路径：`file.list` 返回的条目只带 basename，客户端自己拼接/回退/构建面包屑（`apps/mobile/src/workspace-path.ts`），路径以 `workspaceFileScopeId` 交给宿主解析成会话 workspace root，因此手机端既不需要知道绝对前缀，也无法越出工作区。图片按字节窗口读（上限 512 KB），文本按行页读（默认 400 行），两者都受宿主 `workspaceFiles` 的 `maxBytes`/`maxLines` 上限再裁一次。
 
-文件变更通知刻意复用**已发布**的 `host/remote-event` 帧，而不是新增 mux 帧类型：App 侧的 mux/host 帧 schema 是冻结的 `discriminatedUnion('type')`，未知帧类型会被载体丢弃；`host/remote-event` 的 `args` 是 `unknown[]`，正好承载 `{ sessionId, absolutePath, version | absent }`。事件名沿用上游词汇 `workspace-files/*`，浏览器收到后做 300 ms 去抖重列（一次工具运行会连续写多个文件）。
+文件变更通知刻意复用**已发布**的 `host/remote-event` 帧，而不是新增 mux 帧类型：App 侧的 mux/host 帧 schema 是冻结的 `discriminatedUnion('type')`，未知帧类型会被载体丢弃；`host/remote-event` 的 `args` 是 `unknown[]`，正好承载 `{ sessionId, absolutePath, version | absent, path? }`。事件名沿用上游词汇 `workspace-files/*`，浏览器收到后做 300 ms 去抖重列（一次工具运行会连续写多个文件）。
+
+插件在开流前用 `session/list` 取该会话的 `cwd`（与 `workspaceFileScope` 解析 workspace root 用的是同一个值），据此把 `absolutePath` 额外换算成 workspace 相对 `path`；拿不到 `cwd` 时该字段缺省，App 视为"位置未知"一律重列。浏览器只有在 `parentPath(path) === 当前目录` 时才刷新——仓库里高频写入时不再每次都整列重拉。
 
 预览的读取策略：打开文件先用 `file.stat` 比对 `version`，命中缓存就直接展示上次那页，否则按种类读取（图片取 512 KB 字节窗口，其余按 400 行一页）。文本页在 `eof=false` 时提供"继续读取"，按 `offset + lines` 拉下一页并追加。目录列表没有游标参数——`workspaceFiles/list` 只按宿主 `maxEntries` 截断并回报 `truncated`，因此列表无法续读，只能提示用户进入子目录。
 

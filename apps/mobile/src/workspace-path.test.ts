@@ -1,4 +1,6 @@
-import { joinWorkspacePath, parentWorkspacePath, sortWorkspaceEntries, workspaceCrumbs } from './workspace-path'
+import {
+  changeTouchesDirectory, joinWorkspacePath, parentWorkspacePath, sortWorkspaceEntries, workspaceCrumbs,
+} from './workspace-path'
 
 describe('workspace relative paths', () => {
   it('joins child basenames onto the current directory', () => {
@@ -32,5 +34,15 @@ describe('workspace relative paths', () => {
       { name: 'a-dir', type: 'directory' as const },
     ])
     expect(sorted.map(entry => entry.name)).toEqual(['a-dir', 'b-dir', 'a.txt', 'z.txt', 'link'])
+  })
+
+  it('refreshes only for changes inside the shown directory', () => {
+    expect(changeTouchesDirectory('src', 'src/a.ts')).toBe(true)
+    expect(changeTouchesDirectory('src', 'a.ts')).toBe(false)
+    expect(changeTouchesDirectory('src', 'src/nested/a.ts')).toBe(false)
+    expect(changeTouchesDirectory('', 'a.ts')).toBe(true)
+    expect(changeTouchesDirectory('src/app/', 'src/app/a.ts')).toBe(true)
+    // No resolvable workspace path: refresh rather than show a stale listing.
+    expect(changeTouchesDirectory('src', undefined)).toBe(true)
   })
 })
