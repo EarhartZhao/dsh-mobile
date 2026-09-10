@@ -43,6 +43,7 @@ node scripts/sync-protocol.mjs --check
 2. `session/follow`、`session/page`、`session/control`、`workspace/follow` 的 baseline/增量语义。
 3. `$events` ready/waterfall/cancel 与 `$events/result` generation 绑定。
 4. 将变化同时映射到插件 `bridge.ts`/`events.ts`、App protocol/core 和测试。
+5. durable 事件名是否改名/新增（如 0.1.5 把 `tool/code-dispatch*` 改成 `tool/ptc-dispatch*`，并把历史会话经 v2→v3 迁移重写）。改名要登记到 App 的 `packages/core/src/conversation.ts` 事件归一层并补回归用例，新增事件确认是忽略还是展示。
 
 ## 第四步：更新版本兼容区间
 
@@ -73,10 +74,11 @@ pnpm test
 | dsh 版本 | apiproxy 状态 | dsh-mobile-plugin 兼容性 |
 |----------|--------------|--------------------------|
 | 0.1.1-rc.2 及以下 | `packages/host/apiproxy` 存在 | 0.1.x–0.2.x 直接兼容 |
-| 0.1.2-alpha.2–alpha.5 | 已移除，替换为 Typert Gateway/Remote | 插件 0.2.1+，mobileApi 2 |
+| 0.1.2-alpha.2–0.1.3-alpha.2 | 已移除，替换为 Typert Gateway/Remote | 插件 0.2.1+，mobileApi 2 |
+| 0.1.5-rc.1（2026-09-10 核对） | 同上；`connection` / `typertGateway` 服务名与 `createSharedFetchHandler('/api')` 未变 | 插件 0.2.2 + App 0.0.3 直接兼容；PTC 事件改名已由 App 归一层兼容 |
 
 ## 防止遗漏
 
 - 冻结 wire 有意升级时必须同步 `packages/protocol/src/vendor/` 与 `SYNCED.json`；普通 Remote 迁移不得修改它。
-- Remote 变化必须同步 `REMOTE_ALPHA5.json`；有上游源码时 gate 会检查 owner 文件，无源码时只校验已提交 manifest 与 vendor 哈希。
+- Remote 变化必须同步 `REMOTE_ALPHA5.json`（文件名保留历史命名）；有上游源码时 gate 会检查 owner 文件，无源码时只校验已提交 manifest 与 vendor 哈希。
 - 每次上游发版（tag `dsh-v*`）至少跑一次本 skill 的第一到第四步。

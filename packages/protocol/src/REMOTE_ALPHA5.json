@@ -1,5 +1,6 @@
 {
-  "protocol": "dsh-0.1.2-alpha.5-remote",
+  "protocol": "dsh-0.1.5-rc.1-remote",
+  "verifiedAt": "2026-09-10",
   "mobileApi": 2,
   "endpoints": [
     "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",

@@ -1,4 +1,4 @@
-/** Mobile-only reference discovery mapped by dsh-mobile-plugin to alpha.5 Remote. */
+/** Mobile-only reference discovery mapped by dsh-mobile-plugin to the current Remote. */
 import { callMobileRemote } from './mobile-commands.ts'
 import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 
