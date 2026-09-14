@@ -20,6 +20,15 @@
 > “新会话”快捷方式；正式签名门禁支持环境变量或 `keystore.properties`，未配置时
 > release 默认失败。系统推送、iPad 双栏和真正的大文件导出仍需宿主/插件后续支持。
 
+> 2026-09-14 更新（dsh 0.1.5-rc.1 对齐）：按 `skills/dsh-sync-check` 完成一次上游核对，
+> 冻结 wire 与 48 个 Remote endpoint 全部命中。本轮新增：PTC 派发事件改名兼容
+> （`tool/ptc-dispatch*` 与旧名等价）、目标 activation（`goals/get` + `goal/activation-changed`）、
+> 工作区文件面（`workspaceFiles` 的 list/read/bytes/stat/readRelated 与 `changes` 流）、
+> 目录浏览器、文件预览（文本分页续读、图片窗口、Markdown 文中相对图片）、
+> 变更按目录过滤的实时刷新、引用 chip、宿主机打开/定位，以及回车发送开关（设置页可关）。
+> 插件仓库补上 CI（含浏览器半端的 `typecheck:client`）；`dev` 已合回 `v0.0.3` 发布提交，
+> 三处版本载体恢复一致（`release-version.mjs check 0.0.3` 通过）。
+
 ## 一、移动端现状（已完成）
 
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
@@ -43,14 +52,14 @@
 | 归档会话 | ✅ workspace.archiveSession + host/archived-sessions-changed | ● | 归档操作、归档列表开关和事件同步已接入 |
 | workspace 管理 | ✅ workspace.create/rename/delete/insertBefore/insertSessionBefore | ● | 创建/重命名/删除和工作区、会话排序已接入 |
 | 图片附件 | ✅ session.attachment + PromptContentPart.image | ● | 拍照/相册多选、限制预检、待发送排序、历史图片预览和全屏灯箱已接入 |
-| 消息反馈 | ⚠️ 宿主无 RPC（Web 为客户端本地） | ○ | Like/Dislike 暂无契约面，等宿主 |
+| 消息反馈 | ✅ `messageFeedback/list\|put\|delete` + `sessionFeedback/record`（0.1.5-rc.1 起契约已有） | ○ | 阻塞点已解除：插件白名单与 App 消息动作条待接入（Web 端为客户端本地实现，此前误记为"宿主无 RPC"） |
 
 ### B. 会话上下文与投影（中高价值，契约已有）
 
 | 功能 | 数据来源 | 移动端 | 说明 |
 |---|---|---|---|
 | Todo 计划条 | ✅ todo/write 事件 | ● | 三态折叠条已接入 |
-| 目标条 GoalBar | ✅ goal.* RPC + session/projection(goal) | ● | 显示、创建/编辑、暂停/恢复/完成/清除已接入 |
+| 目标条 GoalBar | ✅ goal.* RPC + session/projection(goal) + `goals/get`(activation) + `goal/activation-changed` | ● | 显示、创建/编辑、暂停/恢复/完成/清除已接入；进程内 activation 由 `goals/get` 补读并在事件到达时刷新，关闭自动续跑会显式提示 |
 | Plan 模式 chip | ✅ /plan 命令 + plan 投影 | ● | 状态 chip 与进入/退出入口已接入 |
 | 上下文用量统计 | ✅ assistant/message.usage + contextBreakdown 投影 | ● | token 用量条已接入 |
 | Compaction 指示 | ✅ compaction 投影 + assistant 摘要 | ● | 压缩/摘要标记已接入 |
@@ -70,10 +79,16 @@
 
 | 功能 | 数据来源 | 移动端 | 说明 |
 |---|---|---|---|
-| 目录浏览 | ✅ host.listDirectory + host.createDirectory | ● | 面包屑、子目录、新建目录已接入 |
+| 目录浏览 | ✅ `workspaceFiles/list`（插件 `file.list`，workspace 相对路径） | ● | 会话菜单进入；面包屑、上级目录、目录优先排序、刷新与截断提示已接入 |
+| 文件预览 | ✅ `workspaceFiles/read\|readBytes` | ● | 文本按 400 行一页并可续读，图片取 512KB 字节窗口；非文本给出明确失败信息 |
+| 预览缓存复用 | ✅ `workspaceFiles/stat` | ● | 打开前比对 `version`，未变直接复用缓存页，避免整页重读 |
+| Markdown 文中图片 | ✅ `workspaceFiles/readRelated` | ● | 以文档目录为基准解析 `![](rel)`，最多 4 张就地展示，单张失败不影响其余 |
+| 变更实时刷新 | ✅ `workspaceFiles/changes`（插件 `file.watch`/`file.unwatch`） | ● | 复用已发布的 `host/remote-event` 承载；插件按 workspace 相对路径补 `path`，App 只刷新受影响目录，300ms 去抖 |
 | 交付物/产物行 | ✅ tool/result + 产物投影 | ● | assistant 收尾后的产物 chips 已接入 |
-| @ 引用（文件/会话） | ✅ host.listDirectory + session.list 组合 | ● | 输入触发候选与 `+` 引用面板已接入 |
+| @ 引用（文件/会话） | ✅ `fileReferences/list` + `sessionReferenceResolver/candidates` + `workspaceFiles` 浏览器 | ● | 输入触发候选、`+` 引用面板与目录浏览器三条入口共用 `fileMention` 规则；浏览器插入后显示引用 chip 并交还焦点 |
+| 宿主机打开/定位 | ✅ `session/openWorkspacePath`（`action: 'reveal'`） | ● | 预览面板可"在电脑上打开"或用文件管理器定位；宿主不支持时回显错误 |
 | 文件导出 | ⚠️ session.export（ZIP，max_payload 1MiB 限制） | ○ | 设计已排除大文件传输；用一次性下载 URL 方案，待宿主支持 |
+| 目录列表分页 | ⚠️ `workspaceFiles/list` 无游标/offset | ○ | 宿主按 `maxEntries` 截断并回报 `truncated`，客户端只能提示进子目录；真续读需上游加 limit/offset |
 
 ### E. 设置与系统（低-中价值）
 
