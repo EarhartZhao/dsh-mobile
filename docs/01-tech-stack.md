@@ -65,3 +65,22 @@ dsh-mobile/
 - [ ] NATS server 的 WSS + TLS：私有 CA + nats-server 原生 TLS（见插件 docs/02，不用域名）。
 - [ ] Android networkSecurityConfig 内嵌私有 CA 对 RN WebSocket 生效。
 - [ ] 外网弱网下的重连体验：移动网络切换（WiFi↔蜂窝）时 NATS 重连 + 基线重拉的耗时。
+
+### 传输策略：release 只走 TLS，本地明文入口仅 debug（2026-09-14 决策）
+
+App 的 `nats.ws` 只能走 websocket，两种载体的可用性由构建类型决定：
+
+| 链路 | 传输 | debug | release | 依据 |
+|---|---|---|---|---|
+| 线上 Hub | `wss://115.159.57.137:8443`（私有 CA 签发的 TLS） | ✅ | ✅ | `src/main/res/xml/network_security_config.xml` 仅对该域信任 `@raw/dsh_root_ca` |
+| 本地 leaf（模拟器 `10.0.2.2:8443` / 局域网 IP） | `ws://`（`leaf.conf` 里 `no_tls: true`） | ✅ | ❌ | 同一文件的 `<base-config cleartextTrafficPermitted="false" />`；debug 变体覆盖为 `true` |
+
+结论：**release 连不上本地 leaf 的原因是"明文被禁"，不是"本地不可用"**。当前决定是本地明文入口只服务 debug（开发捷径），release 走 Hub，暂不为本地直连放行。
+
+将来若要让 release 包在家里脱离公网直连本地 harness，需要三件事（缺一不可）：
+
+1. 用现有私有 CA 重签服务器证书，SAN 加上要用的本地地址（现在 `certs/san.ext` 只有 `IP:115.159.57.137`；CA 私钥按设计只在服务器上，仓库内只有公钥材料）；
+2. 本地 leaf 的 websocket 打开 `tls { cert_file, key_file }`（去掉 `no_tls`），4222 继续明文供本机进程使用；
+3. 把该本地地址加入 release 的 `network_security_config.xml` domain-config，复用同一个私有 CA。
+
+不建议的做法：在 release 里对本地地址放行明文——那会把"release 只走 TLS"的安全基线打穿，且明文流量携带设备令牌，同网段可嗅探。
