@@ -1417,18 +1417,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
             placeholderTextColor={colors.textDim}
             multiline
-            onKeyPress={(event) => {
-              const native = event.nativeEvent as { key?: string; shiftKey?: boolean }
-              if (native.key !== 'Enter' || native.shiftKey === true) return
-              if (!enterToSend) return
-              // Chat convention: Enter sends, Shift+Enter keeps the newline.
-              // Soft keyboards that never report Enter simply keep typing.
-              const sendable = editingItem !== null || draft.trim() !== '' || pendingImages.length > 0
-                || pendingFiles.some(file => file.status === 'ready')
-              if (!sendable) return
-              event.preventDefault?.()
-              void send()
-            }}
+            // Multiline submit is a TextInput behavior, not a key handler: on
+            // Android a hardware Enter reaches neither onKeyPress nor
+            // preventDefault, and a soft keyboard's return key inserts a
+            // newline for multiline fields. `submitBehavior` makes the input's
+            // own submit path fire onSubmitEditing instead (verified on the
+            // emulator: onKeyPress left the newline in the draft).
+            submitBehavior={enterToSend ? 'submit' : 'newline'}
+            onSubmitEditing={() => { if (enterToSend) void send() }}
           />
           {running ? (
             <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>

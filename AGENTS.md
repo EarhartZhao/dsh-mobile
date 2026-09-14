@@ -25,6 +25,15 @@ pnpm --config.verify-deps-before-run=false run lint
 
 最后两条在 `apps/mobile` 内执行。Android 构建在 `apps/mobile/android` 内执行：
 
+界面验收（真机/模拟器，需 adb 与已连接设备）用仓库根的驱动脚本逐项点按并读屏：
+
+```bash
+node scripts/ui-drive.mjs dump            # 列出当前可见文案
+node scripts/ui-drive.mjs tap <文案>       # 按文案点按（内部先刷新 uiautomator dump）
+node scripts/ui-drive.mjs long <文案> 800  # 长按
+node scripts/ui-drive.mjs key enter        # 回车等按键
+```
+
 ```bash
 ./gradlew assembleDebug
 ./gradlew assembleRelease
