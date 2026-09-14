@@ -93,6 +93,8 @@ interface Props {
   sessionId: string
   onBack: () => void
   onOpenSession?: (sessionId: string) => void
+  /** Enter sends the composer; Shift+Enter keeps the newline. Defaults on. */
+  enterToSend?: boolean
 }
 
 function conversationTailSignature(items: ConversationItem[]): string {
@@ -123,6 +125,13 @@ function activeComposerToken(text: string): { prefix: string; trigger: '/' | '@'
   return null
 }
 
+/** One file or directory the user picked into the composer from the browser. */
+interface InsertedReference {
+  path: string
+  kind: 'file' | 'directory'
+  size?: number
+}
+
 function fileMention(path: string, kind: 'file' | 'directory'): string | null {
   const value = kind === 'directory' ? `${path}/` : path
   const hasUnsafeCharacter = Array.from(value).some((character) => {
@@ -133,7 +142,7 @@ function fileMention(path: string, kind: 'file' | 'directory'): string | null {
   return /\s/u.test(value) ? `@"${value}"` : `@${value}`
 }
 
-export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props): React.JSX.Element {
+export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToSend = true }: Props): React.JSX.Element {
   const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
   const [hasOlderHistory, setHasOlderHistory] = useState(false)
@@ -160,6 +169,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [browserOpen, setBrowserOpen] = useState(false)
+  /** References picked from the browser, shown as composer chips. */
+  const [insertedRefs, setInsertedRefs] = useState<InsertedReference[]>([])
   /** Composer handle: reference picks return focus so they stay sendable. */
   const composerRef = useRef<React.ComponentRef<typeof TextInput> | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
@@ -788,6 +799,32 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
   }, [])
 
+  /**
+   * Picks one browsed path into the draft as an `@` reference and keeps a chip
+   * for it, so the composer shows what the prompt now carries.
+   */
+  const insertReference = useCallback((reference: InsertedReference): void => {
+    const mention = fileMention(reference.path, reference.kind)
+    if (mention === null) return
+    setBrowserOpen(false)
+    setDraft(current => `${current === '' || /\s$/.test(current) ? current : `${current} `}${mention} `)
+    setInsertedRefs(current => [...current.filter(entry => entry.path !== reference.path).slice(-5), reference])
+    composerRef.current?.focus()
+  }, [])
+
+  /** Drops one chip together with the mention it stands for. */
+  const removeReference = useCallback((reference: InsertedReference): void => {
+    const mention = fileMention(reference.path, reference.kind)
+    if (mention !== null) setDraft(current => current.replace(`${mention} `, '').replace(mention, ''))
+    setInsertedRefs(current => current.filter(entry => entry.path !== reference.path))
+  }, [])
+
+  // Chips follow the draft: editing a mention away also retires its chip.
+  const visibleRefs = insertedRefs.filter((reference) => {
+    const mention = fileMention(reference.path, reference.kind)
+    return mention !== null && draft.includes(mention)
+  })
+
   const send = async (): Promise<void> => {
     const client = manager.client
     const text = draft.trim()
@@ -1252,6 +1289,28 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
           </View>
         )}
         <View style={styles.composerRow}>
+          {visibleRefs.length > 0 && (
+            <View style={styles.refRow}>
+              {visibleRefs.map(reference => (
+                <View key={reference.path} style={styles.refChip}>
+                  <Text style={styles.refName} numberOfLines={1}>
+                    {reference.path.split(/[\\/]/).at(-1) ?? reference.path}
+                  </Text>
+                  <Text style={styles.refMeta}>
+                    {reference.kind === 'directory' ? t('common.directory') : reference.size === undefined ? '' : formatBytes(reference.size)}
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.delete')}
+                    onPress={() => removeReference(reference)}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.refRemove}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
           {editingItem === null && (
             <TouchableOpacity
               style={styles.iconButton}
@@ -1278,6 +1337,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
             onKeyPress={(event) => {
               const native = event.nativeEvent as { key?: string; shiftKey?: boolean }
               if (native.key !== 'Enter' || native.shiftKey === true) return
+              if (!enterToSend) return
               // Chat convention: Enter sends, Shift+Enter keeps the newline.
               // Soft keyboards that never report Enter simply keep typing.
               const sendable = editingItem !== null || draft.trim() !== '' || pendingImages.length > 0
@@ -1499,12 +1559,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession }: Props)
         manager={manager}
         onClose={() => setBrowserOpen(false)}
         onOpenFile={(path) => { setBrowserOpen(false); setPreviewPath(path) }}
-        onInsertReference={(path, kind) => {
-          const mention = fileMention(path, kind)
-          if (mention === null) return
-          setBrowserOpen(false)
-          setDraft(current => `${current === '' || /\s$/.test(current) ? current : `${current} `}${mention} `)
-        }}
+        onInsertReference={(reference) => insertReference(reference)}
       />
     </KeyboardAvoidingView>
   )
@@ -2065,6 +2120,26 @@ const styles = StyleSheet.create({
     gap: spacing(1),
     minWidth: 0,
   },
+  refRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing(1),
+    paddingBottom: spacing(0.5),
+  },
+  refChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(1),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(0.5),
+    maxWidth: '100%',
+  },
+  refName: { color: colors.text, fontSize: fontSize.tiny, flexShrink: 1 },
+  refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
+  refRemove: { color: colors.textDim, fontSize: fontSize.tiny },
   input: {
     flex: 1,
     minWidth: 0,

@@ -39,7 +39,7 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
   /** Opens one workspace-relative path in the file preview sheet. */
   onOpenFile: (path: string) => void
   /** Inserts one path into the composer as an `@` reference. */
-  onInsertReference?: (path: string, kind: 'file' | 'directory') => void
+  onInsertReference?: (reference: { path: string; kind: 'file' | 'directory'; size?: number }) => void
 }): React.JSX.Element {
   const { t } = useI18n()
   const client = manager.client
@@ -71,7 +71,7 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
   useEffect(() => {
     if (!visible || client === null || !canBrowse || !canWatch) return
     void client.files.watch({ sessionId }).catch(() => undefined)
-    return manager.store.on('remoteEvent', ({ event, args }) => {
+    const off = manager.store.on('remoteEvent', ({ event, args }) => {
       if (event !== 'workspace-files/change' && event !== 'workspace-files/ready') return
       const payload = args[0]
       if (typeof payload !== 'object' || payload === null) return
@@ -84,6 +84,11 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
       }
       requestReload()
     })
+    return () => {
+      off()
+      // Release the host-side stream: a phone browses one directory at a time.
+      void client.files.unwatch({ sessionId }).catch(() => undefined)
+    }
   }, [canBrowse, canWatch, client, manager, path, requestReload, sessionId, visible])
 
   useEffect(() => {
@@ -181,7 +186,11 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
                           accessibilityRole="button"
                           accessibilityLabel={t('files.insertReference')}
                           hitSlop={8}
-                          onPress={() => onInsertReference(childPath, isDirectory ? 'directory' : 'file')}
+                          onPress={() => onInsertReference({
+                            path: childPath,
+                            kind: isDirectory ? 'directory' : 'file',
+                            ...(entry.size === undefined ? {} : { size: entry.size }),
+                          })}
                         >
                           <Text style={styles.rowAction}>＋</Text>
                         </TouchableOpacity>

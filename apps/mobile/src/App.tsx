@@ -9,6 +9,7 @@ import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, Con
 import { APP_VERSION } from '@dsh-mobile/core'
 import type { MobileHealthSnapshot, MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import { I18nProvider, useI18n, type TranslationKey } from './i18n'
+import { DEFAULT_PREFERENCES, loadPreferences, savePreferences, type Preferences } from './preferences'
 import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
@@ -101,6 +102,7 @@ function AppContent(): React.JSX.Element {
   const [alert, setAlert] = useState<string | null>(null)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [themeMode, setThemeMode] = useState<ThemeMode>('system')
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES)
   const [errors, setErrors] = useState<DiagnosticError[]>([])
   const [events, setEvents] = useState<DiagnosticEvent[]>([])
   const [pendingNewSession, setPendingNewSession] = useState(false)
@@ -144,13 +146,23 @@ function AppContent(): React.JSX.Element {
     setErrors(current => [...current.slice(-7), { at: new Date().toISOString(), message, kind }])
   }, [])
 
+  /** Persist-and-apply one composer preference change. */
+  const updatePreferences = useCallback((patch: Partial<Preferences>) => {
+    setPreferences((current) => {
+      const next = { ...current, ...patch }
+      void savePreferences(next).catch(() => undefined)
+      return next
+    })
+  }, [])
+
   const diagnosticTime = useCallback((value: string | null | undefined): string => value === null || value === undefined
     ? t('diagnostics.never')
     : new Date(value).toLocaleString(locale, { hour12: false }), [locale, t])
 
   useEffect(() => {
-    void loadPairing().then(record => {
+    void Promise.all([loadPairing(), loadPreferences()]).then(([record, stored]) => {
       setPairing(record)
+      setPreferences(stored)
       setBooted(true)
     })
   }, [])
@@ -440,6 +452,8 @@ function AppContent(): React.JSX.Element {
               setTheme={setTheme}
               language={language}
               setLanguage={setLanguage}
+              enterToSend={preferences.enterToSend}
+              setEnterToSend={value => updatePreferences({ enterToSend: value })}
               onOpenDiagnostics={() => setDiagnosticsOpen(true)}
               onBack={() => setRoute({ name: 'list' })}
               appVersion={APP_VERSION}
@@ -450,6 +464,7 @@ function AppContent(): React.JSX.Element {
               sessionId={route.sessionId}
               onBack={() => setRoute({ name: 'list' })}
               onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
+              enterToSend={preferences.enterToSend}
             />
           )}
         </>

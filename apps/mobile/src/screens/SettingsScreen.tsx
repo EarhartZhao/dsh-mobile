@@ -31,6 +31,8 @@ interface SettingsScreenProps {
   setTheme: (mode: ThemeMode) => void
   language: Language
   setLanguage: (language: Language) => void
+  enterToSend: boolean
+  setEnterToSend: (value: boolean) => void
   onOpenDiagnostics: () => void
   onBack: () => void
   appVersion: string
@@ -56,6 +58,8 @@ export function SettingsScreen({
   setTheme,
   language,
   setLanguage,
+  enterToSend,
+  setEnterToSend,
   onOpenDiagnostics,
   onBack,
   appVersion,
@@ -95,6 +99,19 @@ export function SettingsScreen({
               <Text style={styles.settingHint}>{t('app.theme.chooseHint')}</Text>
             </View>
             <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.sectionTitle}>{t('app.composer')}</Text>
+        <View style={styles.sectionCard}>
+          <TouchableOpacity style={styles.settingRow} onPress={() => setEnterToSend(!enterToSend)}>
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>
+                {t('app.enterToSend')}：{enterToSend ? t('app.on') : t('app.off')}
+              </Text>
+              <Text style={styles.settingHint}>{t('app.enterToSendHint')}</Text>
+            </View>
+            <Text style={styles.chevron}>{enterToSend ? '✓' : ''}</Text>
           </TouchableOpacity>
         </View>
 
