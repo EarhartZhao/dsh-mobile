@@ -27,7 +27,9 @@ import {
   View,
 } from 'react-native'
 import { deriveConversation, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView } from '@dsh-mobile/core'
-import type { JobView, QueuedInboxItem, SubagentCatalog } from '@dsh-mobile/protocol'
+import type {
+  JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
+} from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
 import { Circle, Path, Svg } from 'react-native-svg'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
@@ -171,6 +173,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [browserOpen, setBrowserOpen] = useState(false)
   /** References picked from the browser, shown as composer chips. */
   const [insertedRefs, setInsertedRefs] = useState<InsertedReference[]>([])
+  /** Durable per-message feedback of this Session, keyed by assistant message id. */
+  const [feedback, setFeedback] = useState<Record<string, MobileFeedbackItem>>({})
   /** Composer handle: reference picks return focus so they stay sendable. */
   const composerRef = useRef<React.ComponentRef<typeof TextInput> | null>(null)
   const [imageLimits, setImageLimits] = useState<ImageLimitsView | null>(null)
@@ -825,6 +829,63 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     return mention !== null && draft.includes(mention)
   })
 
+  const canRateMessages = (manager.compatibility?.features ?? []).includes('message-feedback')
+
+  /** Re-reads the durable ratings of this Session (list is authoritative). */
+  const loadFeedback = useCallback(async (): Promise<void> => {
+    const client = manager.client
+    if (client === null || !canRateMessages) return
+    const result = await client.feedback.list({ sessionId }).catch(() => null)
+    if (result === null || !result.ok) return
+    setFeedback(Object.fromEntries(result.value.items.map(item => [item.messageId, item])))
+  }, [canRateMessages, manager, sessionId])
+
+  useEffect(() => { void loadFeedback() }, [loadFeedback])
+
+  /**
+   * Writes one rating, or clears it. The host is compare-and-set: a conflict
+   * carries the authoritative item, so one retry is enough.
+   */
+  const rateMessage = async (item: ConversationItem, rating: MobileFeedbackRating | null): Promise<void> => {
+    const client = manager.client
+    const messageId = item.kind === 'assistant' ? item.messageId : undefined
+    if (client === null || messageId === undefined) return
+    const current = feedback[messageId]
+    if (rating === null) {
+      if (current === undefined) return
+      const removed = await client.feedback.delete({ sessionId, messageId, ifVersion: current.version }).catch(() => null)
+      if (removed === null) { showNotice(t('notice.connectionUnavailable')); return }
+      if (!removed.ok) {
+        showNotice(t('notice.feedbackFailed', { message: removed.error.code }))
+        await loadFeedback()
+        return
+      }
+      setFeedback((previous) => {
+        const next = { ...previous }
+        delete next[messageId]
+        return next
+      })
+      showNotice(t('notice.feedbackCleared'))
+      return
+    }
+    let result = await client.feedback.put({
+      sessionId, messageId, rating, ifVersion: current?.version ?? null,
+    }).catch(() => null)
+    if (result !== null && !result.ok && result.error.code === 'version-conflict') {
+      result = await client.feedback.put({
+        sessionId, messageId, rating, ifVersion: result.error.current?.version ?? null,
+      }).catch(() => null)
+    }
+    if (result === null) { showNotice(t('notice.connectionUnavailable')); return }
+    if (!result.ok) {
+      showNotice(t('notice.feedbackFailed', { message: result.error.code }))
+      await loadFeedback()
+      return
+    }
+    setFeedback(previous => ({ ...previous, [messageId]: result.value }))
+    showNotice(t('notice.feedbackSaved'))
+  }
+
   const send = async (): Promise<void> => {
     const client = manager.client
     const text = draft.trim()
@@ -974,6 +1035,18 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     }
     if (item.kind !== 'stream') actions.push({ key: 'fork', label: t('actions.forkHere') })
     if (item.kind === 'user') actions.push({ key: 'resend', label: t('actions.resendNew') })
+    if (canRateMessages && item.kind === 'assistant' && item.messageId !== undefined) {
+      const current = feedback[item.messageId]
+      actions.push({
+        key: 'feedback-up',
+        label: current?.rating === 'positive' ? `${t('actions.feedbackUp')} ✓` : t('actions.feedbackUp'),
+      })
+      actions.push({
+        key: 'feedback-down',
+        label: current?.rating === 'negative' ? `${t('actions.feedbackDown')} ✓` : t('actions.feedbackDown'),
+      })
+      if (current !== undefined) actions.push({ key: 'feedback-clear', label: t('actions.feedbackClear') })
+    }
     return actions
   }
 
@@ -1048,6 +1121,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (key === 'share') { void Share.share({ message: messageText(item) }).catch(() => undefined); return }
     if (key === 'fork') { await forkAtMessage(item); return }
     if (key === 'resend') { await resendToNewSession(item); return }
+    if (key === 'feedback-up') { await rateMessage(item, 'positive'); return }
+    if (key === 'feedback-down') { await rateMessage(item, 'negative'); return }
+    if (key === 'feedback-clear') { await rateMessage(item, null); return }
   }
 
   const jumpToItem = (target: ConversationItem): void => {
@@ -1198,6 +1274,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             sessionId={sessionId}
             onLongPress={() => setMessageAction(item)}
             onPreview={setPreviewPath}
+            rating={item.kind === 'assistant' && item.messageId !== undefined ? feedback[item.messageId] : undefined}
           />
         )}
       />
@@ -1293,12 +1370,18 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             <View style={styles.refRow}>
               {visibleRefs.map(reference => (
                 <View key={reference.path} style={styles.refChip}>
-                  <Text style={styles.refName} numberOfLines={1}>
-                    {reference.path.split(/[\\/]/).at(-1) ?? reference.path}
-                  </Text>
-                  <Text style={styles.refMeta}>
-                    {reference.kind === 'directory' ? t('common.directory') : reference.size === undefined ? '' : formatBytes(reference.size)}
-                  </Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.refBody}
+                    onPress={() => setPreviewPath(reference.path)}
+                  >
+                    <Text style={styles.refName} numberOfLines={1}>
+                      {reference.path.split(/[\\/]/).at(-1) ?? reference.path}
+                    </Text>
+                    <Text style={styles.refMeta}>
+                      {reference.kind === 'directory' ? t('common.directory') : reference.size === undefined ? '' : formatBytes(reference.size)}
+                    </Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel={t('common.delete')}
@@ -1741,13 +1824,15 @@ function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-function Bubble({ item, manager, sessionId, onLongPress, onPreview }: {
+function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
   onLongPress: () => void
   /** Opens the workspace preview sheet for one produced path. */
   onPreview: (path: string) => void
+  /** Durable rating of this assistant message, when one exists. */
+  rating?: MobileFeedbackItem
 }): React.JSX.Element {
   const { t } = useI18n()
   switch (item.kind) {
@@ -1791,6 +1876,11 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview }: {
             </View>
           )}
           {item.kind === 'stream' && <Text style={styles.cursor}>▍</Text>}
+          {item.kind === 'assistant' && rating !== undefined && (
+            <Text style={styles.feedbackBadge}>
+              {rating.rating === 'positive' ? t('feedback.positive') : t('feedback.negative')}
+            </Text>
+          )}
           {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>{t('chat.interrupted')}</Text>}
         </TouchableOpacity>
       )
@@ -2138,8 +2228,10 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   refName: { color: colors.text, fontSize: fontSize.tiny, flexShrink: 1 },
+  refBody: { flexDirection: 'row', alignItems: 'center', gap: spacing(1), flexShrink: 1 },
   refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
   refRemove: { color: colors.textDim, fontSize: fontSize.tiny },
+  feedbackBadge: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   input: {
     flex: 1,
     minWidth: 0,

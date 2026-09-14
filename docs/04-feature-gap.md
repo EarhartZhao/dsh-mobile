@@ -29,6 +29,12 @@
 > 插件仓库补上 CI（含浏览器半端的 `typecheck:client`）；`dev` 已合回 `v0.0.3` 发布提交，
 > 三处版本载体恢复一致（`release-version.mjs check 0.0.3` 通过）。
 
+> 2026-09-14 追加（B 组）：消息反馈（Like/Dislike）已接入——上游 0.1.5-rc.1 的
+> `messageFeedback/list|put|delete` 此前被误记为"宿主无 RPC"，实际早已存在；
+> 现在长按 assistant 消息即可评分/取消，评分作为 durable 事实写入会话日志（不是本地状态）。
+> 同一轮还做了：引用 chip 点开即预览、变更流断开时的显式提示、预览显示并复制宿主机绝对路径。
+> 目录分页（`workspaceFiles/list` 无游标）与 `sessionFeedback/record` 仍是未接入项。
+
 ## 一、移动端现状（已完成）
 
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
@@ -52,7 +58,7 @@
 | 归档会话 | ✅ workspace.archiveSession + host/archived-sessions-changed | ● | 归档操作、归档列表开关和事件同步已接入 |
 | workspace 管理 | ✅ workspace.create/rename/delete/insertBefore/insertSessionBefore | ● | 创建/重命名/删除和工作区、会话排序已接入 |
 | 图片附件 | ✅ session.attachment + PromptContentPart.image | ● | 拍照/相册多选、限制预检、待发送排序、历史图片预览和全屏灯箱已接入 |
-| 消息反馈 | ✅ `messageFeedback/list\|put\|delete` + `sessionFeedback/record`（0.1.5-rc.1 起契约已有） | ○ | 阻塞点已解除：插件白名单与 App 消息动作条待接入（Web 端为客户端本地实现，此前误记为"宿主无 RPC"） |
+| 消息反馈 | ✅ `messageFeedback/list\|put\|delete` | ● | 长按消息 Like/Dislike，已评分显示徽标并可取消；按 `version` compare-and-set，冲突自动重试一次。`sessionFeedback/record`（命令反馈）仍未接入 |
 
 ### B. 会话上下文与投影（中高价值，契约已有）
 

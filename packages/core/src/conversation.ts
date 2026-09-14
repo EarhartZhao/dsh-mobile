@@ -14,6 +14,8 @@ export type ConversationItem =
       kind: 'assistant'
       key: string
       seq: number
+      /** Durable assistant-message identity; absent on synthetic items. */
+      messageId?: string
       text: string
       reasoning: string
       interrupted: boolean
@@ -194,6 +196,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         live.delete(`${turn}:${step}`)
         const message = data['message']
         const content = isObj(message) ? message['content'] : undefined
+        const messageId = isObj(message) && typeof message['id'] === 'string' ? message['id'] : undefined
         const turnFiles = (produced.get(turn) ?? []).filter(file => file.seq <= seq).map(file => file.path)
         const seenFiles = new Set<string>()
         const producedFiles = turnFiles.filter(path => {
@@ -205,6 +208,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           kind: 'assistant',
           key: `a${seq}`,
           seq,
+          ...(messageId === undefined ? {} : { messageId }),
           text: blocksToText(content),
           reasoning: blocksToReasoning(content),
           interrupted: data['interrupted'] === true,
