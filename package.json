@@ -5,6 +5,7 @@
   "scripts": {
     "sync-protocol": "node scripts/sync-protocol.mjs",
     "sync-protocol:check": "node scripts/sync-protocol.mjs --check",
+    "verify-plugin-contract": "node scripts/verify-plugin-contract.mjs",
     "build": "pnpm -r --filter @dsh-mobile/core --filter @dsh-mobile/protocol run build",
     "test": "pnpm -r --filter @dsh-mobile/core --filter @dsh-mobile/protocol run test",
     "typecheck": "pnpm -r --filter @dsh-mobile/core --filter @dsh-mobile/protocol run typecheck"

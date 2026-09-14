@@ -18,6 +18,7 @@ dsh-mobile 是 React Native Android 优先的 monorepo，把 deepseek-harness（
 pnpm --config.verify-deps-before-run=false run typecheck
 pnpm --config.verify-deps-before-run=false run test
 pnpm --config.verify-deps-before-run=false run sync-protocol:check
+pnpm run verify-plugin-contract   # 需要同时检出 ../dsh-mobile-plugin，缺省时自动跳过
 pnpm --config.verify-deps-before-run=false run typecheck
 pnpm --config.verify-deps-before-run=false run lint
 ```
