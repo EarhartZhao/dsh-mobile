@@ -10,6 +10,9 @@ require('./src/vendor/text-decoder-polyfill');
 // nats.ws parses server addresses with `new URL(...)`; Hermes has no URL.
 require('react-native-url-polyfill/auto');
 require('react-native-get-random-values');
+// Keep the device token out of development console output (nats.ws traces
+// every wire frame when `debug` is on; releases never enable it).
+require('./src/dev-log-redaction').installConsoleRedaction();
 // react-native-get-random-values only provides getRandomValues; the vendored
 // carrier mints rpcIds with crypto.randomUUID, so fill the gap (RFC 4122 v4).
 if (typeof globalThis.crypto !== 'object' || globalThis.crypto === null) {
