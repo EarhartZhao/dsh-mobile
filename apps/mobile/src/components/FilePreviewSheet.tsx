@@ -35,6 +35,9 @@ type PreviewState =
       absolutePath?: string
     }
   | { status: 'image'; uri: string; absolutePath?: string }
+  /** The image is larger than one phone-sized byte window; a partial render
+   *  would be a broken picture, so the sheet says so instead. */
+  | { status: 'tooLarge'; absolutePath?: string }
   | { status: 'error'; message: string }
 
 /** One cached preview plus the version that produced it. */
@@ -84,6 +87,14 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
         if (mediaType !== undefined) {
           const window = await client.files.bytes({ sessionId, path, length: MAX_IMAGE_BYTES })
           if (!alive) return
+          if (!window.eof) {
+            const tooLarge: PreviewState = {
+              status: 'tooLarge',
+              ...(typeof window.absolutePath === 'string' ? { absolutePath: window.absolutePath } : {}),
+            }
+            setState(tooLarge)
+            return
+          }
           const image: PreviewState = {
             status: 'image',
             uri: `data:${mediaType};base64,${window.data}`,
@@ -173,7 +184,7 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             </TouchableOpacity>
           </View>
           <Text style={styles.path} numberOfLines={1}>
-            {(state.status === 'text' || state.status === 'image') && state.absolutePath !== undefined
+            {(state.status === 'text' || state.status === 'image' || state.status === 'tooLarge') && state.absolutePath !== undefined
               ? state.absolutePath
               : path ?? ''}
           </Text>
@@ -182,6 +193,9 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             {state.status === 'idle' && <Text style={styles.hint}>{t('common.loading')}</Text>}
             {state.status === 'unsupported' && <Text style={styles.hint}>{t('file.failed', { message: 'workspace-files' })}</Text>}
             {state.status === 'error' && <Text style={styles.hint}>{t('file.failed', { message: state.message })}</Text>}
+            {state.status === 'tooLarge' && (
+              <Text style={styles.hint}>{t('file.imageTooLarge', { limit: `${Math.round(MAX_IMAGE_BYTES / 1024)}KB` })}</Text>
+            )}
             {state.status === 'image' && (
               <Image source={{ uri: state.uri }} style={styles.image} resizeMode="contain" />
             )}
@@ -217,7 +231,7 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             <SheetAction label={t('file.copyPath')} onPress={() => {
               if (path !== null) void Clipboard.setString(path)
             }} />
-            {(state.status === 'text' || state.status === 'image') && state.absolutePath !== undefined && (
+            {(state.status === 'text' || state.status === 'image' || state.status === 'tooLarge') && state.absolutePath !== undefined && (
               <SheetAction label={t('file.copyAbsolutePath')} onPress={() => {
                 if (state.absolutePath !== undefined) void Clipboard.setString(state.absolutePath)
               }} />

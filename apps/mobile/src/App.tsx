@@ -356,6 +356,10 @@ function AppContent(): React.JSX.Element {
         hub: record.hub,
         instance: record.instance,
         caFp: record.caFp,
+        // Recorded from the QR payload, but the transport cannot enforce it:
+        // RN's WebSocket does not expose the peer certificate, so pinning needs
+        // a native implementation. Say so here instead of implying trust.
+        caFpEnforced: false,
         deviceId: record.deviceId,
       },
       recentErrors: errors,
