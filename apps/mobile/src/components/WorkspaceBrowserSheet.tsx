@@ -47,6 +47,8 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
   const [path, setPath] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
   const [state, setState] = useState<BrowserState>({ status: 'loading' })
+  /** Set when the host-side change stream stops, so the UI stops implying live. */
+  const [watchError, setWatchError] = useState<string | null>(null)
   const canBrowse = features.includes('workspace-files')
   const canWatch = features.includes('workspace-watch')
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,10 +74,20 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
     if (!visible || client === null || !canBrowse || !canWatch) return
     void client.files.watch({ sessionId }).catch(() => undefined)
     const off = manager.store.on('remoteEvent', ({ event, args }) => {
-      if (event !== 'workspace-files/change' && event !== 'workspace-files/ready') return
+      if (event !== 'workspace-files/change' && event !== 'workspace-files/ready' && event !== 'workspace-files/watch-error') return
       const payload = args[0]
       if (typeof payload !== 'object' || payload === null) return
       if ((payload as { sessionId?: unknown }).sessionId !== sessionId) return
+      if (event === 'workspace-files/ready') {
+        setWatchError(null)
+        requestReload()
+        return
+      }
+      if (event === 'workspace-files/watch-error') {
+        const message = (payload as { message?: unknown }).message
+        setWatchError(typeof message === 'string' ? message : '')
+        return
+      }
       if (event === 'workspace-files/change') {
         // Reload only when the change lands in the shown directory. A change
         // without a resolvable workspace path refreshes anyway: a stale listing
@@ -145,6 +157,11 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
             ))}
           </ScrollView>
           <ScrollView style={styles.list}>
+            {watchError !== null && (
+              <Text style={styles.watchError}>
+                {t('files.watchError', { message: watchError === '' ? t('common.unknown') : watchError })}
+              </Text>
+            )}
             {state.status === 'loading' && <ActivityIndicator color={colors.accent} style={styles.spinner} />}
             {state.status === 'unsupported' && <Text style={styles.hint}>{t('files.unsupported')}</Text>}
             {state.status === 'error' && <Text style={styles.hint}>{t('files.failed', { message: state.message })}</Text>}
@@ -230,6 +247,7 @@ const styles = StyleSheet.create({
   list: { maxHeight: 420 },
   spinner: { marginVertical: spacing(3) },
   hint: { color: colors.textDim, fontSize: fontSize.small, paddingVertical: spacing(2) },
+  watchError: { color: colors.warning, fontSize: fontSize.tiny, paddingVertical: spacing(1) },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), paddingVertical: spacing(2) },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   rowIcon: { color: colors.textDim, fontSize: fontSize.small, width: spacing(6) },

@@ -27,6 +27,20 @@ describe('deriveConversation', () => {
     expect(items[2]).toMatchObject({ name: 'bash', status: 'done', resultPreview: 'a.txt' })
   })
 
+  it('carries the durable assistant message id for feedback targeting', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'assistant/message', {
+      turn: 1, step: 1, message: { id: 'm-1', content: [{ type: 'text', text: 'hi' }] },
+    })
+    // An event without a message id stays renderable, just not ratable.
+    feed(store, 2, 'assistant/message', { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'plain' }] } })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({ kind: 'assistant', messageId: 'm-1' })
+    expect(items[1]).toMatchObject({ kind: 'assistant', text: 'plain' })
+    expect((items[1] as { messageId?: string }).messageId).toBeUndefined()
+  })
+
   it('renders inline user images and compaction markers', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', {

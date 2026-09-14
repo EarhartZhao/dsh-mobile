@@ -76,6 +76,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `reference.files` / `reference.sessions` | 映射到文件与会话引用候选 Remote |
 | `file.upload` | 移动端以 base64 通过 NATS 调用 dsh `fileUploads/upload`，返回 Agent-scoped receipt 与文件引用 |
 | `goal.get` | 映射到 `goals/get`：读当前目标的 phase 与**进程内 activation**（durable `goal` projection 故意不含 activation） |
+| `feedback.list` / `feedback.put` / `feedback.delete` | 映射到 `messageFeedback/list\|put\|delete`：按消息的持久评分（Like/Dislike）。宿主返回**业务结果**（`{ok:true\|false}`）而不是 Remote 错误，客户端按 `version` 做 compare-and-set，冲突时用返回的 `current.version` 重试一次 |
 | `file.list` / `file.read` / `file.bytes` | 映射到 `workspaceFiles/list|read|readBytes`：workspace 目录列表、有界文本页、有界 base64 字节窗口（路径以 `workspaceFileScopeId` 解析到该会话的 workspace root） |
 | `file.related` | 映射到 `workspaceFiles/readRelated`：以某个文件所在目录为基准读相对路径，供 Markdown 预览拉取文中引用的图片 |
 | `file.stat` | 映射到 `workspaceFiles/stat`：只取 `version`/`bytes` 的轻量探针，版本未变时预览直接复用缓存页，省掉整页重读 |

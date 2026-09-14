@@ -13,6 +13,7 @@
     "workspaceFiles/readRelated", "workspaceFiles/changes",
     "commands/list", "commands/execute", "agentPresets/list", "agentPresets/read", "agentPresets/select",
     "goals/get", "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
+    "messageFeedback/list", "messageFeedback/put", "messageFeedback/delete",
     "subagents/list", "subagents/prompt", "subagents/interruptByParent", "pluginInventory/list",
     "fileReferences/list", "sessionReferenceResolver/candidates", "$events", "$events/result"
   ],
@@ -24,6 +25,10 @@
     {
       "file": "packages/api/workspace-files/src/index.ts",
       "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "async readRelated(", "async stat(", "@Remote({ mode: 'stream' })"]
+    },
+    {
+      "file": "packages/feedback/message-feedback/src/index.ts",
+      "includes": ["super(ctx, 'messageFeedback')", "@Remote('list')", "@Remote('put')", "@Remote('delete')"]
     },
     {
       "file": "packages/api/workspace-controller/src/index.ts",

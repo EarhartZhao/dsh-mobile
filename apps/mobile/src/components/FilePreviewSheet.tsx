@@ -23,8 +23,18 @@ type PreviewState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'unsupported' }
-  | { status: 'text'; text: string; offset: number; lines: number; bytes?: number; eof: boolean; images: string[] }
-  | { status: 'image'; uri: string }
+  | {
+      status: 'text'
+      text: string
+      offset: number
+      lines: number
+      bytes?: number
+      eof: boolean
+      images: string[]
+      /** Host filesystem path of the file, when the host reported one. */
+      absolutePath?: string
+    }
+  | { status: 'image'; uri: string; absolutePath?: string }
   | { status: 'error'; message: string }
 
 /** One cached preview plus the version that produced it. */
@@ -74,7 +84,11 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
         if (mediaType !== undefined) {
           const window = await client.files.bytes({ sessionId, path, length: MAX_IMAGE_BYTES })
           if (!alive) return
-          const image: PreviewState = { status: 'image', uri: `data:${mediaType};base64,${window.data}` }
+          const image: PreviewState = {
+            status: 'image',
+            uri: `data:${mediaType};base64,${window.data}`,
+            ...(typeof window.absolutePath === 'string' ? { absolutePath: window.absolutePath } : {}),
+          }
           cache.current.set(cacheKey, { version: window.version, state: image })
           setState(image)
           return
@@ -101,6 +115,7 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
           ...(page.bytes === undefined ? {} : { bytes: page.bytes }),
           eof: page.eof,
           images,
+          ...(typeof page.absolutePath === 'string' ? { absolutePath: page.absolutePath } : {}),
         }
         cache.current.set(cacheKey, { version: page.version, state: text })
         setState(text)
@@ -157,7 +172,11 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
               <Text style={styles.close}>{t('common.close')}</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.path} numberOfLines={1}>{path ?? ''}</Text>
+          <Text style={styles.path} numberOfLines={1}>
+            {(state.status === 'text' || state.status === 'image') && state.absolutePath !== undefined
+              ? state.absolutePath
+              : path ?? ''}
+          </Text>
           <View style={styles.body}>
             {state.status === 'loading' && <ActivityIndicator color={colors.accent} />}
             {state.status === 'idle' && <Text style={styles.hint}>{t('common.loading')}</Text>}
@@ -198,6 +217,11 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             <SheetAction label={t('file.copyPath')} onPress={() => {
               if (path !== null) void Clipboard.setString(path)
             }} />
+            {(state.status === 'text' || state.status === 'image') && state.absolutePath !== undefined && (
+              <SheetAction label={t('file.copyAbsolutePath')} onPress={() => {
+                if (state.absolutePath !== undefined) void Clipboard.setString(state.absolutePath)
+              }} />
+            )}
             {features.includes('open-path') && (
               <SheetAction label={t('file.openOnHost')} onPress={() => {
                 if (path === null || client === null) return
