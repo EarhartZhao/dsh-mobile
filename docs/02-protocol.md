@@ -80,6 +80,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `file.related` | 映射到 `workspaceFiles/readRelated`：以某个文件所在目录为基准读相对路径，供 Markdown 预览拉取文中引用的图片 |
 | `file.stat` | 映射到 `workspaceFiles/stat`：只取 `version`/`bytes` 的轻量探针，版本未变时预览直接复用缓存页，省掉整页重读 |
 | `file.watch` | 映射到 `workspaceFiles/changes` 流：插件为该会话打开变更流，把它作为 `workspace-files/change` / `-ready` / `-watch-error` 转发事件发到宿主域下行帧 |
+| `file.unwatch` | 插件自有方法：释放该会话的变更流。App 关闭浏览器时调用，属尽力而为——未知会话或缺少 hook 都返回成功，不能因为"关面板"而报错 |
 | `file.reveal` / `host.openPath` | 都映射到 `session/openWorkspacePath`：`file.reveal` 带 `action: 'reveal'` 在宿主机文件管理器定位，`host.openPath` 用默认应用打开 |
 
 ### M3 任务面板
@@ -133,7 +134,11 @@ App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 
 
 插件在开流前用 `session/list` 取该会话的 `cwd`（与 `workspaceFileScope` 解析 workspace root 用的是同一个值），据此把 `absolutePath` 额外换算成 workspace 相对 `path`；拿不到 `cwd` 时该字段缺省，App 视为"位置未知"一律重列。浏览器只有在 `parentPath(path) === 当前目录` 时才刷新——仓库里高频写入时不再每次都整列重拉。
 
+变更流是宿主上的活流，所以插件按 **LRU 上限 4 条**管理：超过上限时释放最早接入的会话；App 关闭浏览器会显式 `file.unwatch`，异常退出则由该上限兜底。Host generation 结束时全部释放，重连后按最近接入顺序重新武装。
+
 预览的读取策略：打开文件先用 `file.stat` 比对 `version`，命中缓存就直接展示上次那页，否则按种类读取（图片取 512 KB 字节窗口，其余按 400 行一页）。文本页在 `eof=false` 时提供"继续读取"，按 `offset + lines` 拉下一页并追加。目录列表没有游标参数——`workspaceFiles/list` 只按宿主 `maxEntries` 截断并回报 `truncated`，因此列表无法续读，只能提示用户进入子目录。
+
+浏览器插入引用后，App 会在输入框上方保留一枚引用 chip（文件名 + 大小/目录），并把焦点交还输入框；chip 跟随草稿——用户把 mention 删掉，chip 也随之消失。回车发送默认开启（Shift+回车换行），可在设置页"输入"分组关闭。
 
 插件在 `features` 中声明 `health-check` 后，App 可调用需要设备 token 的 `mobile.health`。响应包含桥连接状态、插件版本、mobileApi、功能列表、构建 ID、真实加载路径、实例 ID、已配对设备数、启动时间、运行时长、最近连接/重连和最近错误。App 记录调用延迟并在连接诊断页展示；复制的诊断信息不得包含 Hub 密码、配对码或设备 token。
 

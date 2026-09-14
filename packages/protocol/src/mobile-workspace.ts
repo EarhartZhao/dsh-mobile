@@ -80,6 +80,8 @@ export interface MobileFiles {
    * cheap idempotent registration.
    */
   watch(payload: { sessionId: string }): Promise<{ watching: true }>
+  /** Release the watch again when the browser closes (best-effort). */
+  unwatch(payload: { sessionId: string }): Promise<{ watching: false }>
   /** Select one path in the host's file manager (Explorer / Finder). */
   reveal(payload: { sessionId: string; path: string }): Promise<{ opened: true }>
 }
@@ -109,6 +111,7 @@ export function createMobileFiles(
     stat: payload => call('file.stat', payload, 20_000),
     related: payload => call('file.related', payload, 30_000),
     watch: payload => call('file.watch', payload, 20_000),
+    unwatch: payload => call('file.unwatch', payload, 20_000),
     reveal: payload => call('file.reveal', payload, 20_000),
   }
 }
