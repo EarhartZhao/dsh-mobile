@@ -35,6 +35,12 @@
 > 同一轮还做了：引用 chip 点开即预览、变更流断开时的显式提示、预览显示并复制宿主机绝对路径。
 > 目录分页（`workspaceFiles/list` 无游标）与 `sessionFeedback/record` 仍是未接入项。
 
+> 2026-09-14 追加（C 组结论）：C 组四项都受外部条件限制，本轮只落地了"诚实降级"部分——
+> 超出 512KB 窗口的图片不再渲染半张图而是明确提示（这是个真实缺陷，之前会画出截断的图）、
+> 目录截断提示点名宿主 `workspaceFiles.maxEntries` 这个可调项、诊断 payload 标注
+> `caFpEnforced: false`。剩余三项分别卡在：上游 fs seam 的 `listDir` 上限与 Remote 游标（分页）、
+> Hub 中继或局域网端点（大文件）、FCM/APNs 凭据（推送）与原生 TLS pinning（CA 指纹强制）。
+
 ## 一、移动端现状（已完成）
 
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
@@ -95,6 +101,8 @@
 | 宿主机打开/定位 | ✅ `session/openWorkspacePath`（`action: 'reveal'`） | ● | 预览面板可"在电脑上打开"或用文件管理器定位；宿主不支持时回显错误 |
 | 文件导出 | ⚠️ session.export（ZIP，max_payload 1MiB 限制） | ○ | 设计已排除大文件传输；用一次性下载 URL 方案，待宿主支持 |
 | 目录列表分页 | ⚠️ `workspaceFiles/list` 无游标/offset | ○ | 宿主按 `maxEntries` 截断并回报 `truncated`，客户端只能提示进子目录；真续读需上游加 limit/offset |
+| 大文件预览/下载 | ⚠️ `/api/file` 是宿主本机 HTTP 路由 | ○ | 手机经公网 Hub 够不到宿主 `/api`；超出 512KB 窗口的图片改为明确提示（不再渲染半张图）。要支持需 Hub 中继或局域网专用端点 |
+| CA 指纹校验 | ⚠️ 需原生 TLS pinning | ○ | `caFp` 只记录不强制，诊断 payload 带 `caFpEnforced: false` |
 
 ### E. 设置与系统（低-中价值）
 
