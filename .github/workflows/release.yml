@@ -32,7 +32,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # `tools` was removed from the SDK repository, and the action's default
+      # `packages` still lists it, so name the package we actually need.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - uses: pnpm/action-setup@v4
         with:
           version: 11
