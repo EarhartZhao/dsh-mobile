@@ -62,6 +62,18 @@ describe('PairingScreen camera', () => {
     expect(tree!.root.findAllByProps({ children: 'pairing.openScanner' }).length).toBeGreaterThan(0)
   })
 
+  it('keeps the scan launcher down to the button alone', () => {
+    let tree: renderer.ReactTestRenderer
+    act(() => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    // The launcher used to repeat the scan instruction above the button; the
+    // full-screen scanner still carries it, so it must be gone from here.
+    expect(tree!.root.findAllByProps({ children: 'pairing.openScanner' }).length).toBeGreaterThan(0)
+    expect(tree!.root.findAllByProps({ children: 'pairing.scanHint' })).toHaveLength(0)
+  })
+
   it('opens the QR scanner after tapping the open-scanner button', async () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
@@ -201,5 +213,55 @@ describe('PairingScreen camera', () => {
     expect(after).not.toBe(before)
     expect(tree!.root.findAllByProps({ children: 'pairing.cameraFailed' })).toHaveLength(0)
     error.mockRestore()
+  })
+})
+
+describe('PairingScreen hub credential errors', () => {
+  beforeEach(() => {
+    jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    ;(jest.requireMock('nats.ws').connect as jest.Mock).mockReset()
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  /** Paste a QR payload and press 「配对并连接」, as the on-device flow does. */
+  async function pasteAndPair(tree: renderer.ReactTestRenderer, qrText: string): Promise<void> {
+    await act(async () => {
+      tree.root.findAll(node => (node.type as unknown) === 'TextInput')[0].props.onChangeText(qrText)
+    })
+    const button = tree.root.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.findAllByProps({ children: 'pairing.pairAndConnect' }).length > 0,
+    ).at(-1)
+    await act(async () => { await button!.props.onPress() })
+  }
+
+  it('tells the user to configure the hub password when the QR carries no pass', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"","instance":"home","code":"ABCDEFGH"}')
+
+    expect(tree!.root.findAllByProps({ children: 'pairing.missingHubCredential' }).length).toBeGreaterThan(0)
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('maps a hub authorization rejection to an actionable message', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    connect.mockRejectedValueOnce(new Error("'Authorization Violation'"))
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"123456","instance":"home","code":"ABCDEFGH"}')
+
+    expect(connect).toHaveBeenCalledTimes(1)
+    expect(tree!.root.findAllByProps({ children: 'pairing.authFailed' }).length).toBeGreaterThan(0)
   })
 })
