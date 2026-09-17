@@ -4,7 +4,7 @@
  */
 import type { MobilePluginInfo } from '@dsh-mobile/protocol'
 
-export const APP_VERSION = '0.0.3'
+export const APP_VERSION = '0.0.4'
 export const APP_MOBILE_API = 2
 export const SUPPORTED_PLUGIN_RANGE = '>=0.2.2 <0.3.0'
 export const SUPPORTED_MOBILE_APIS = [2] as const

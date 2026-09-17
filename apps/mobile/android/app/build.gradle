@@ -122,8 +122,8 @@ android {
         applicationId "com.dshmobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20002
-        versionName "0.0.3"
+        versionCode 20003
+        versionName "0.0.4"
     }
     signingConfigs {
         debug {
