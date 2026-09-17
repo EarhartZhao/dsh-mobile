@@ -6,8 +6,9 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Alert, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager } from '@dsh-mobile/core'
-import type { DirectoryListing, SessionSummary } from '@dsh-mobile/protocol'
+import { presetSelectionEnabled, type DirectoryListing, type SessionSummary } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from '../components/ModalBackdrop'
+import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { PromptModal } from '../components/PromptModal'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
@@ -55,6 +56,15 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   const [browserError, setBrowserError] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const [creatingSession, setCreatingSession] = useState(false)
+  /** Restoring an archived Session needs the host mapping added in dsh 0.1.6. */
+  const canUnarchive = (manager.compatibility?.features ?? []).includes('workspace-unarchive')
+  /**
+   * Long-press menus run as sheets, not `Alert.alert`: Android shows at most
+   * three Alert buttons, so the previous four- and five-action menus silently
+   * dropped archive/rename/delete (verified on the emulator).
+   */
+  const [sessionMenu, setSessionMenu] = useState<{ sessionId: string; title: string; archived: boolean } | null>(null)
+  const [workspaceMenu, setWorkspaceMenu] = useState<{ workspaceId: string; title: string } | null>(null)
   const visible = store.summaries.filter(s => !s.blank && !store.archivedSessionIds.includes(s.sessionId))
   const archived = store.summaries.filter(s => store.archivedSessionIds.includes(s.sessionId))
   const visibleById = new Map(visible.map(s => [s.sessionId, s]))
@@ -151,9 +161,15 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
   const openPresetPicker = async (): Promise<void> => {
     const client = manager.client
     if (client === null) return
-    const result = await client.agentPresets.list({} as never).catch(() => null)
-    if (result?.result.ok && result.result.value.presets.length > 0) {
-      setPresetPick({ presets: result.result.value.presets as never })
+    const roster = await client.catalog.agentPresets().catch(() => null)
+    // The host hides mode selection as a policy: the saved default governs new
+    // sessions, so offering a picker here would promise a choice that is ignored.
+    if (roster !== null && presetSelectionEnabled(roster) === false) {
+      await newSession(undefined)
+      return
+    }
+    if (roster !== null && roster.presets.length > 0) {
+      setPresetPick({ presets: roster.presets as never })
     } else {
       await newSession(undefined)
     }
@@ -197,6 +213,46 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
         void manager.client?.workspace.archiveSession({ sessionId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
       } },
     ])
+  }
+
+  /** Restore one archived Session; the host answers with the complete archive set. */
+  const unarchive = (sessionId: string): void => {
+    void manager.client?.workspaceAdmin.unarchiveSession({ sessionId })
+      .catch(() => undefined)
+      .finally(() => { void manager.refreshBaseline() })
+  }
+
+  const sessionActions: SheetAction[] = sessionMenu === null
+    ? []
+    : sessionMenu.archived
+      ? [{ key: 'unarchive', label: t('session.unarchive') }]
+      : [
+          { key: 'up', label: t('session.moveUp') },
+          { key: 'down', label: t('session.moveDown') },
+          { key: 'archive', label: t('common.archive'), danger: true },
+        ]
+
+  const runSessionAction = (menu: { sessionId: string; archived: boolean }, key: string): void => {
+    if (key === 'up') moveSession(menu.sessionId, -1)
+    else if (key === 'down') moveSession(menu.sessionId, 1)
+    else if (key === 'archive') archive(menu.sessionId)
+    else if (key === 'unarchive') unarchive(menu.sessionId)
+  }
+
+  const workspaceActions: SheetAction[] = workspaceMenu === null
+    ? []
+    : [
+        { key: 'up', label: t('session.moveUp') },
+        { key: 'down', label: t('session.moveDown') },
+        { key: 'rename', label: t('common.rename') },
+        { key: 'delete', label: t('common.delete'), danger: true },
+      ]
+
+  const runWorkspaceAction = (menu: { workspaceId: string }, key: string): void => {
+    if (key === 'up') moveWorkspace(menu.workspaceId, -1)
+    else if (key === 'down') moveWorkspace(menu.workspaceId, 1)
+    else if (key === 'rename') wsRename(menu.workspaceId)
+    else if (key === 'delete') wsDelete(menu.workspaceId)
   }
 
   return (
@@ -243,15 +299,7 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
             key={ws.workspaceId}
             style={[styles.wsChip, selectedWs === ws.workspaceId && styles.wsChipActive]}
             onPress={() => setSelectedWs(ws.workspaceId)}
-            onLongPress={() => {
-              Alert.alert(ws.title, ws.path, [
-              { text: t('common.cancel'), style: 'cancel' },
-                { text: t('session.moveUp'), onPress: () => moveWorkspace(ws.workspaceId, -1) },
-                { text: t('session.moveDown'), onPress: () => moveWorkspace(ws.workspaceId, 1) },
-                { text: t('common.rename'), onPress: () => wsRename(ws.workspaceId) },
-                { text: t('common.delete'), style: 'destructive', onPress: () => wsDelete(ws.workspaceId) },
-              ])
-            }}
+            onLongPress={() => setWorkspaceMenu({ workspaceId: ws.workspaceId, title: ws.title })}
           >
             <Text style={styles.wsChipText} numberOfLines={1}>{ws.title}</Text>
           </TouchableOpacity>
@@ -266,13 +314,31 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
           keyExtractor={item => item.sessionId}
           ListEmptyComponent={<Text style={styles.empty}>{t('session.noArchived')}</Text>}
           renderItem={({ item }) => (
-            <View style={styles.row}>
+            <TouchableOpacity
+              style={styles.row}
+              onLongPress={() => setSessionMenu({
+                sessionId: item.sessionId,
+                title: manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8),
+                archived: true,
+              })}
+              disabled={!canUnarchive}
+            >
               <View style={styles.rowText}>
                 <Text style={[styles.rowTitle, { color: colors.textDim }]} numberOfLines={1}>
                   {manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)}
                 </Text>
               </View>
-            </View>
+              {canUnarchive && (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.rowAction}
+                  onPress={() => unarchive(item.sessionId)}
+                  hitSlop={8}
+                >
+                  <Text style={styles.rowActionText}>{t('session.unarchive')}</Text>
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
           )}
         />
       ) : (
@@ -320,8 +386,11 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
                       manager={manager}
                       item={s}
                       onOpen={onOpenSession}
-                      onMove={direction => moveSession(s.sessionId, direction)}
-                      onArchive={archive}
+                      onMenu={() => setSessionMenu({
+                        sessionId: s.sessionId,
+                        title: manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(0, 8),
+                        archived: false,
+                      })}
                     />
                   )
               })()}
@@ -432,16 +501,37 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
         onCancel={() => setFolderCreateOpen(false)}
         onConfirm={name => { void createFolder(name) }}
       />
+      <ActionSheet
+        visible={sessionMenu !== null}
+        title={sessionMenu?.title ?? t('session.actions')}
+        actions={sessionActions}
+        onClose={() => setSessionMenu(null)}
+        onAction={(key) => {
+          const menu = sessionMenu
+          setSessionMenu(null)
+          if (menu !== null) runSessionAction(menu, key)
+        }}
+      />
+      <ActionSheet
+        visible={workspaceMenu !== null}
+        title={workspaceMenu?.title ?? ''}
+        actions={workspaceActions}
+        onClose={() => setWorkspaceMenu(null)}
+        onAction={(key) => {
+          const menu = workspaceMenu
+          setWorkspaceMenu(null)
+          if (menu !== null) runWorkspaceAction(menu, key)
+        }}
+      />
     </View>
   )
 }
 
-function SessionRow({ manager, item, onOpen, onMove, onArchive }: {
+function SessionRow({ manager, item, onOpen, onMenu }: {
   manager: ConnectionManager
   item: SessionSummary
   onOpen: (sessionId: string) => void
-  onMove: (direction: -1 | 1) => void
-  onArchive: (sessionId: string) => void
+  onMenu: () => void
 }): React.JSX.Element {
   const { locale, t } = useI18n()
   const title = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
@@ -452,14 +542,7 @@ function SessionRow({ manager, item, onOpen, onMove, onArchive }: {
     <TouchableOpacity
       style={styles.row}
       onPress={() => onOpen(item.sessionId)}
-      onLongPress={() => {
-        Alert.alert(t('session.actions'), title, [
-          { text: t('common.cancel'), style: 'cancel' },
-          { text: t('session.moveUp'), onPress: () => onMove(-1) },
-          { text: t('session.moveDown'), onPress: () => onMove(1) },
-          { text: t('common.archive'), style: 'destructive', onPress: () => onArchive(item.sessionId) },
-        ])
-      }}
+      onLongPress={onMenu}
     >
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>

@@ -82,6 +82,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `file.stat` | 映射到 `workspaceFiles/stat`：只取 `version`/`bytes` 的轻量探针，版本未变时预览直接复用缓存页，省掉整页重读 |
 | `file.watch` | 映射到 `workspaceFiles/changes` 流：插件为该会话打开变更流，把它作为 `workspace-files/change` / `-ready` / `-watch-error` 转发事件发到宿主域下行帧 |
 | `file.unwatch` | 插件自有方法：释放该会话的变更流。App 关闭浏览器时调用，属尽力而为——未知会话或缺少 hook 都返回成功，不能因为"关面板"而报错 |
+| `workspace.unarchiveSession` | 映射到 `workspace/unarchiveSession`（dsh 0.1.6 新增）：把归档会话恢复到列表。插件 0.2.7 起放行并声明可选能力 `workspace-unarchive`；旧插件返回 `mobile-forbidden`，App 据此隐藏"取消归档" |
 | `file.reveal` / `host.openPath` | 都映射到 `session/openWorkspacePath`：`file.reveal` 带 `action: 'reveal'` 在宿主机文件管理器定位，`host.openPath` 用默认应用打开 |
 
 ### M3 任务面板
@@ -154,6 +155,7 @@ App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 
 ## 客户端实现策略
 
 - `packages/protocol/src/vendor/` 是 App 已发布移动端信封的冻结快照，不再从已删除的 ApiProxy 目录复制。
+- **冻结 vendor 会吞掉上游新增字段**：vendor 里的 zod schema 默认 strip 未声明键，所以 `client.skills.list` / `client.agentPresets.list` 拿不到后续 dsh 加的 `SkillEntry.path` 与 `agentPresets/list.modeSelectionEnabled`（真机实测：host 明明返回了，App 侧全是 undefined）。凡是读"快照之后新增的字段"，一律走 `mobile-*.ts` 这一层（`mobile-catalog.ts` 就是为此而设），那里用宽解析保留 host 原样响应；旧 host 缺字段时保持原行为。
 - `packages/protocol/src/REMOTE_ALPHA5.json`（文件名保留历史命名）列出插件实际依赖的 Remote endpoint；`sync-protocol:check` 同时校验冻结 vendor 哈希和当前 dsh 源码中的 Remote 定义，目录重构或方法改名会直接失败。
 - `NatsApiClient extends AbstractApiClient`：官方抽象要求平台子类只提供 `doFetch` 传输环节——我们的 `doFetch` 把请求字节作为 NATS request 发出、把回复字节返回，其余（rpcId、信封编解码、Zod、超时、取消）全部复用。
 - 下行循环：订阅两个事件 subject，帧喂给与浏览器载体相同的 sink 逻辑。

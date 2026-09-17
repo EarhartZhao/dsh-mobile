@@ -22,6 +22,8 @@ export interface PlusReference {
   key: string
   title: string
   subtitle?: string
+  /** Source path a current host reports beside the entry (e.g. a skill's SKILL.md). */
+  meta?: string
   insert: string
 }
 
@@ -43,6 +45,8 @@ interface Props {
   planActive: boolean
   hasGoal: boolean
   modelLabel: string
+  /** Host policy: false means the saved default governs and a picker would lie. */
+  presetSelectionEnabled: boolean
   presetLabel?: string
   pendingImageCount: number
   pendingFileCount: number
@@ -190,8 +194,9 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                 )}
                 {filteredReferences.map(reference => (
                   <TouchableOpacity key={reference.key} style={styles.item} onPress={() => props.onInsertReference(reference)}>
-                    <Text style={styles.itemTitle} numberOfLines={1}>{reference.title}</Text>
-                    {reference.subtitle !== undefined && <Text style={styles.itemSubtitle} numberOfLines={1}>{reference.subtitle}</Text>}
+                  <Text style={styles.itemTitle} numberOfLines={1}>{reference.title}</Text>
+                  {reference.subtitle !== undefined && <Text style={styles.itemSubtitle} numberOfLines={1}>{reference.subtitle}</Text>}
+                  {reference.meta !== undefined && <Text style={styles.itemMeta} numberOfLines={1}>{reference.meta}</Text>}
                   </TouchableOpacity>
                 ))}
               </>
@@ -210,9 +215,17 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                   <Text style={styles.itemTitle}>{props.hasGoal ? t('plus.goalEdit') : t('plus.goalCreate')}</Text>
                   <Text style={styles.itemSubtitle}>{t('plus.goalSubtitle')}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.item} onPress={props.onPresets}>
+                <TouchableOpacity
+                  style={styles.item}
+                  onPress={props.onPresets}
+                  disabled={!props.presetSelectionEnabled}
+                >
                   <Text style={styles.itemTitle}>{t('plus.agentPresets')}</Text>
-                  <Text style={styles.itemSubtitle}>{props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel}</Text>
+                  <Text style={styles.itemSubtitle}>
+                    {!props.presetSelectionEnabled
+                      ? t('plus.presetLockedByHost')
+                      : props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onSubagents}>
                   <Text style={styles.itemTitle}>{t('plus.subagents')}</Text>
@@ -322,6 +335,7 @@ const styles = StyleSheet.create({
   itemActive: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
   itemTitle: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
   itemSubtitle: { color: colors.textDim, fontSize: fontSize.tiny },
+  itemMeta: { color: colors.textDim, fontSize: fontSize.tiny, opacity: 0.7 },
   itemWarning: { color: colors.warning, fontSize: fontSize.tiny },
   meta: { color: colors.textDim, fontSize: fontSize.tiny },
   failedRow: { flexDirection: 'row', gap: spacing(2), alignItems: 'center' },
