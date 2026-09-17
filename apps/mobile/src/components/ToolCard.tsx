@@ -268,11 +268,13 @@ function SubCall({ call, manager, sessionId, depth = 0 }: {
   )
 }
 
-export function ToolCard({ item, manager, sessionId, onLongPress }: {
+export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }: {
   item: ConversationItem & { kind: 'tool' }
   manager: ConnectionManager
   sessionId: string
   onLongPress?: () => void
+  /** Inside a turn's process block the rows are plain lines, not nested cards. */
+  bare?: boolean
 }): React.JSX.Element {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -282,14 +284,18 @@ export function ToolCard({ item, manager, sessionId, onLongPress }: {
   const locations = locationLines(item)
   const summary = summaryOf(item, t)
   return (
-    <View style={styles.card}>
+    <View style={bare ? styles.cardBare : styles.card}>
       <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={styles.header}>
         <View style={styles.titleArea}>
-          <Text style={styles.title} numberOfLines={1}>{titleOf(item, t, toolDisplayName(item.name, t))}</Text>
-          {metaOf(item, t).length > 0 && (
+          {/* One line while collapsed ("Bash · what it is doing"), matching the
+              web's process rows; the detail below still opens in place. */}
+          <Text style={styles.title} numberOfLines={open ? 2 : 1}>
+            {titleOf(item, t, toolDisplayName(item.name, t))}
+            {summary === '' ? '' : ` · ${summary}`}
+          </Text>
+          {open && metaOf(item, t).length > 0 && (
             <Text style={styles.meta} numberOfLines={1}>{metaOf(item, t).join(' · ')}</Text>
           )}
-          <Text style={styles.summary} numberOfLines={2}>{summary}</Text>
         </View>
         <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
       </TouchableOpacity>
@@ -333,6 +339,8 @@ const styles = StyleSheet.create({
     marginVertical: spacing(0.5),
     overflow: 'hidden',
   },
+  /** Plain row form: no card around a row that already sits in one. */
+  cardBare: { marginHorizontal: spacing(1), marginVertical: 0, overflow: 'hidden' },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5), paddingHorizontal: spacing(2), paddingVertical: spacing(1.5) },
   titleArea: { flex: 1 },
   title: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },

@@ -45,4 +45,6 @@ export const fontSize = {
   small: 13,
   tiny: 11,
   title: 17,
+  /** Group headers in the session list, matched to the web sidebar's 14px. */
+  section: 14,
 }

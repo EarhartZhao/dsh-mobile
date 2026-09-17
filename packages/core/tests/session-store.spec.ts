@@ -118,6 +118,76 @@ describe('SessionStore', () => {
       summaries: [{ sessionId: sid, updatedAt: 1, running: false, blank: false } as never],
       workspaces: [],
     })
+
+    store.applyHostFrame({ type: 'host/session-status', sessionId: sid, running: true })
+    expect(store.sessions.get('s-1')!.running).toBe(true)
+    expect(store.summaries[0]!.running).toBe(true)
+    store.applyHostFrame({ type: 'host/workspace-changed', workspace: { workspaceId: 'w1', title: 'W', sessionIds: [] } as never })
+    store.applyHostFrame({ type: 'host/workspace-removed', workspaceId: 'w1' as never })
+    expect(store.workspaces).toEqual([])
+  })
+
+  it('seeds list-row titles from the session.list projection block', () => {
+    const store = new SessionStore()
+    store.applyBaseline({
+      summaries: [{
+        sessionId: sid,
+        updatedAt: 1,
+        running: false,
+        blank: false,
+        projections: { asOfSeq: 7, values: { title: '问候开场2' } },
+      } as never],
+      workspaces: [],
+    })
+
+    // The list renders cold Sessions straight from this baseline, so a title
+    // the host already sent must not be dropped: without it the row fell back
+    // to the cwd and disagreed with the web sidebar.
+    expect(store.title('s-1')).toBe('问候开场2')
+  })
+
+  it('keeps a newer live title over an older baseline projection', () => {
+    const store = new SessionStore()
+    const summary = {
+      sessionId: sid,
+      updatedAt: 1,
+      running: false,
+      blank: false,
+      projections: { asOfSeq: 7, values: { title: 'stale' } },
+    }
+    store.applyBaseline({ summaries: [summary as never], workspaces: [] })
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'title', value: 'live', seq: 9 }))
+
+    store.applyBaseline({ summaries: [summary as never], workspaces: [] })
+
+    expect(store.title('s-1')).toBe('live')
+  })
+
+  it('takes a baseline title that is newer than the live projection', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'title', value: 'live', seq: 3 }))
+    store.applyBaseline({
+      summaries: [{
+        sessionId: sid,
+        updatedAt: 1,
+        running: false,
+        blank: false,
+        projections: { asOfSeq: 8, values: { title: 'renamed-on-web' } },
+      } as never],
+      workspaces: [],
+    })
+
+    expect(store.title('s-1')).toBe('renamed-on-web')
+  })
+
+  it('leaves host frames alone when the baseline carries no projections', () => {
+    const store = new SessionStore()
+    store.applyBaseline({
+      summaries: [{ sessionId: sid, updatedAt: 1, running: false, blank: false } as never],
+      workspaces: [],
+    })
+
+    expect(store.title('s-1')).toBeUndefined()
     store.applyHostFrame({ type: 'host/session-status', sessionId: sid, running: true })
     expect(store.sessions.get('s-1')!.running).toBe(true)
     expect(store.summaries[0]!.running).toBe(true)

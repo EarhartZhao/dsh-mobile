@@ -26,7 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView } from '@dsh-mobile/core'
+import { deriveConversation, groupTurns, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -389,7 +389,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     })
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const listRef = useRef<FlatList<ConversationItem>>(null)
+  const listRef = useRef<FlatList<ListRow>>(null)
   const backHandled = useRef(false)
   const mountedRef = useRef(true)
   const listAtBottom = useRef(true)
@@ -1047,10 +1047,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const messageActions = (item: ConversationItem): SheetAction[] => {
     const text = messageText(item)
     const actions: SheetAction[] = []
-    if (text !== '') {
-      actions.push({ key: 'copy', label: t('actions.copy') })
-      actions.push({ key: 'share', label: t('actions.share') })
-    }
+    // Copy is offered for every message, matching the web action row: an
+    // attachment-only turn still has its args/result text to copy, and a
+    // missing action reads as a missing feature.
+    actions.push({ key: 'copy', label: t('actions.copy') })
+    if (text !== '') actions.push({ key: 'share', label: t('actions.share') })
     if (item.kind !== 'stream') actions.push({ key: 'fork', label: t('actions.forkHere') })
     if (item.kind === 'user') actions.push({ key: 'resend', label: t('actions.resendNew') })
     if (canRateMessages && item.kind === 'assistant' && item.messageId !== undefined) {
@@ -1199,6 +1200,27 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const questions = [...(session?.pendingQuestions.values() ?? [])]
   const title = manager.store.title(sessionId) ?? t('chat.fallbackTitle')
 
+  // One process disclosure per turn — the shape the web uses, so a turn's
+  // reasoning stops competing with its answer. The order comes from core
+  // (prompt → process → answer); building it here is what split the transcript.
+  //
+  // The disclosure rides inside the answer's card (the web's own is chrome-free
+  // and sits in the answer's flow), so only a turn that has no answer yet — a
+  // live turn still calling tools — needs a card of its own.
+  const listRows: ListRow[] = groupTurns(items).flatMap(turn => {
+    const answer = turn.visible.find(item => item.kind === 'assistant' || item.kind === 'stream')
+    return turn.rows
+      .filter(row => row.kind !== 'process' || answer === undefined)
+      .map(row => row.kind === 'process'
+        ? { kind: 'turn' as const, key: `process:${turn.key}`, turn }
+        : {
+            kind: 'item' as const,
+            key: row.item.key,
+            item: row.item,
+            ...(row.item === answer ? { process: turn } : {}),
+          })
+  })
+
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.header}>
@@ -1258,8 +1280,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       )}
       <FlatList
         ref={listRef}
-        data={items}
-        keyExtractor={item => item.key}
+        data={listRows}
+        keyExtractor={row => row.key}
         contentContainerStyle={styles.listContent}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ListHeaderComponent={hasOlderHistory ? (
@@ -1286,14 +1308,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })
         }}
         renderItem={({ item }) => (
-          <Bubble
-            item={item}
-            manager={manager}
-            sessionId={sessionId}
-            onLongPress={() => setMessageAction(item)}
-            onPreview={setPreviewPath}
-            rating={item.kind === 'assistant' && item.messageId !== undefined ? feedback[item.messageId] : undefined}
-          />
+          item.kind === 'turn' ? (
+            <TurnProcessBlock
+              turn={item.turn}
+              manager={manager}
+              sessionId={sessionId}
+              onLongPress={setMessageAction}
+            />
+          ) : (
+            <Bubble
+              item={item.item}
+              manager={manager}
+              sessionId={sessionId}
+              onLongPress={() => setMessageAction(item.item)}
+              onPreview={setPreviewPath}
+              rating={item.item.kind === 'assistant' && item.item.messageId !== undefined ? feedback[item.item.messageId] : undefined}
+              {...(item.process === undefined ? {} : { process: item.process })}
+            />
+          )
         )}
       />
       {planMode !== undefined && <PlanChip mode={planMode} />}
@@ -1782,16 +1814,101 @@ function jobStatusLabel(status: JobView['status'], t: (key: TranslationKey, valu
   }
 }
 
-function ReasoningBlock({ text }: { text: string }): React.JSX.Element {
+/**
+ * One disclosure per turn, the way the web renders a turn's process: every
+ * reasoning block and tool call of the turn collapses under a single row
+ * labelled by what it holds, so the answer is not buried under a column of
+ * per-step "思考过程" headers of assorted widths.
+ */
+function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false }: {
+  turn: Turn
+  manager: ConnectionManager
+  sessionId: string
+  onLongPress: (item: ConversationItem) => void
+  /** Embedded in the answer's own card, so it drops its chrome and reads as
+   *  one module with the answer — the web's disclosure is fully transparent. */
+  bare?: boolean
+}): React.JSX.Element {
   const { t } = useI18n()
-  const [open, setOpen] = useState(false)
+  // Collapsed by default, the way the web renders it. Once the user toggles
+  // it, that choice wins for as long as the row is mounted.
+  const [manual, setManual] = useState<boolean | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  /** Steps open individually: the web shows each as one truncated line and
+   *  expands only the one you tap. */
+  const [openSteps, setOpenSteps] = useState<Set<string>>(() => new Set())
+  const open = manual ?? false
+  const label = turn.toolCallCount > 0
+    ? t('chat.toolCallSummary', { count: turn.toolCallCount })
+    : t('chat.thoughtSummary')
+  const toggleStep = (key: string): void => {
+    setOpenSteps(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   return (
-    <View style={styles.reasoningBlock}>
-      <TouchableOpacity style={styles.reasoningHeader} onPress={() => setOpen(value => !value)}>
-        <Text style={styles.reasoningLabel}>{t('chat.reasoningSummary', { count: text.trim().length })}</Text>
-        <Text style={styles.reasoningChevron}>{open ? '▾' : '▸'}</Text>
+    <View style={bare ? styles.turnProcessBare : styles.turnProcess}>
+      <TouchableOpacity
+        style={styles.turnProcessHeader}
+        onPress={() => setManual(value => !(value ?? false))}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <Text style={styles.turnProcessLabel}>{label}</Text>
+        <Text style={[styles.turnProcessChevron, !open && styles.turnProcessChevronClosed]}>▼</Text>
       </TouchableOpacity>
-      {open && <Text selectable style={styles.reasoning}>{text}</Text>}
+      {open && turn.process.map(step => step.kind === 'thinking'
+        ? (
+          <TouchableOpacity
+            key={step.key}
+            style={styles.processStep}
+            activeOpacity={1}
+            onPress={() => toggleStep(step.key)}
+            onLongPress={() => setCopied(step.key)}
+          >
+            {openSteps.has(step.key) ? (
+              <>
+                <Text style={styles.processStepLabel}>{t('chat.thoughtStep')}</Text>
+                <Text selectable style={styles.processStepText}>{step.text}</Text>
+              </>
+            ) : (
+              <Text style={styles.processStepLine} numberOfLines={1}>
+                <Text style={styles.processStepLabel}>{t('chat.thoughtStep')} · </Text>
+                {step.text.replace(/\s+/g, ' ').trim()}
+              </Text>
+            )}
+          </TouchableOpacity>
+        )
+        : (
+          <ToolCard
+            key={step.key}
+            item={step.item}
+            manager={manager}
+            sessionId={sessionId}
+            onLongPress={() => onLongPress(step.item)}
+            bare
+          />
+        ))}
+      <ActionSheet
+        visible={copied !== null}
+        title={t('chat.thoughtStep')}
+        actions={[
+          { key: 'copy', label: t('actions.copy') },
+          { key: 'share', label: t('actions.share') },
+        ]}
+        onClose={() => setCopied(null)}
+        onAction={key => {
+          const step = turn.process.find(candidate => candidate.key === copied)
+          setCopied(null)
+          if (step === undefined || step.kind !== 'thinking') return
+          if (key === 'copy') Clipboard.setString(step.text)
+          else void Share.share({ message: step.text }).catch(() => undefined)
+        }}
+      />
     </View>
   )
 }
@@ -1839,7 +1956,12 @@ function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating }: {
+/** A transcript row is either a turn's process disclosure or a plain item. */
+type ListRow =
+  | { kind: 'turn'; key: string; turn: Turn }
+  | { kind: 'item'; key: string; item: ConversationItem; process?: Turn }
+
+function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, process }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
@@ -1848,6 +1970,8 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating }: {
   onPreview: (path: string) => void
   /** Durable rating of this assistant message, when one exists. */
   rating?: MobileFeedbackItem
+  /** The turn's process disclosure, merged into the answer's own card. */
+  process?: Turn
 }): React.JSX.Element {
   const { t } = useI18n()
   switch (item.kind) {
@@ -1874,7 +1998,15 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating }: {
           style={[styles.bubble, styles.bubbleAssistant]}
           onLongPress={onLongPress}
         >
-          {item.reasoning !== '' && <ReasoningBlock text={item.reasoning} />}
+          {process !== undefined && (
+            <TurnProcessBlock
+              turn={process}
+              manager={manager}
+              sessionId={sessionId}
+              onLongPress={() => onLongPress()}
+              bare
+            />
+          )}
           <CollapsibleMarkdown text={item.text} />
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
@@ -2083,13 +2215,43 @@ const styles = StyleSheet.create({
   modelFailureMessage: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   bubble: { maxWidth: '92%', borderRadius: radius.bubble, paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
   bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser, paddingVertical: spacing(0.5) },
-  bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: colors.bgBubbleAssistant },
+  // Stretch, not hug: every assistant answer then shares one width, and it
+  // lines up with the process card above it. Hugging made each reply a
+  // different width depending on how much text it happened to contain.
+  bubbleAssistant: { alignSelf: 'stretch', maxWidth: '100%', backgroundColor: colors.bgBubbleAssistant },
   bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
-  reasoningBlock: { marginBottom: spacing(1), borderRadius: radius.card, backgroundColor: colors.bgElevated, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
-  reasoningHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
-  reasoningLabel: { color: colors.textDim, fontSize: fontSize.tiny },
-  reasoningChevron: { color: colors.textDim, fontSize: fontSize.tiny },
-  reasoning: { color: colors.textDim, fontSize: fontSize.small, fontStyle: 'italic', paddingHorizontal: spacing(1.5), paddingBottom: spacing(1.5) },
+  // Full width on purpose: per-step cards sized to their own text produced a
+  // ragged column of different-width blocks.
+  turnProcess: {
+    alignSelf: 'stretch',
+    marginBottom: spacing(1.5),
+    borderRadius: radius.card,
+    backgroundColor: colors.bgElevated,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  /** Standalone form only (a live turn with no answer yet); embedded use has
+   *  no chrome so the disclosure and the answer read as one card. */
+  turnProcessBare: { alignSelf: 'stretch' },
+  turnProcessHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingHorizontal: spacing(3),
+    gap: spacing(2),
+  },
+  turnProcessLabel: { flex: 1, color: colors.textDim, fontSize: fontSize.section },
+  turnProcessChevron: { color: colors.textDim, fontSize: fontSize.small },
+  /** Collapsed points LEFT, matching the web's turn disclosure: its chevron
+   *  sits with the apex on the left and opens to the right. Rotating ▼ by +90°
+   *  lands there; -90° gave a right-pointing arrow and was wrong. */
+  turnProcessChevronClosed: { transform: [{ rotate: '90deg' }] },
+  processStep: { paddingHorizontal: spacing(3), paddingVertical: spacing(1), gap: spacing(1) },
+  processStepLine: { color: colors.textDim, fontSize: fontSize.small },
+  processStepLabel: { color: colors.textDim, fontSize: fontSize.small, fontWeight: '600' },
+  processStepText: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 20 },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
   replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },
