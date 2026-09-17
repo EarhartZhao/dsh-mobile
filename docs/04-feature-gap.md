@@ -35,6 +35,17 @@
 > 同一轮还做了：引用 chip 点开即预览、变更流断开时的显式提示、预览显示并复制宿主机绝对路径。
 > 目录分页（`workspaceFiles/list` 无游标）与 `sessionFeedback/record` 仍是未接入项。
 
+> 2026-09-17 追加（dsh 0.1.5-rc.2 → 0.1.6-alpha.1 核对）：区间 800 个提交，但移动端消费面几乎未动——
+> 51 个 Remote endpoint 门禁通过，会话格式仍是 V3，事件词汇表只**新增** `image/offload`（模型请求侧投影，
+> 图片块只多一个 `offloaded: true` 标记，App 渲染不受影响）。需要知道的行为变化有三处：
+> ① `session/fork` 的切点不再顺延到下一个 `turn/start`，而是在选中边界处精确切开；
+> ② 目标 activation 的解除时机从 `agent/session-start` 改为 `agent/created`（提示出现得更早，更准确）；
+> ③ 子代理结算时写给父会话的通知只保留子代理收尾的**文本**块（非文本块被过滤）。
+> 新可用的增量：`workspace/unarchiveSession`（App 已有归档，尚无取消归档）、`agentPresets/list` 新增
+> `modeSelectionEnabled`（宿主关掉模式选择时会忽略保存的默认 preset，App 的 preset 选择器应据此隐藏或禁用）、
+> `SkillEntry.path`（技能文件绝对路径）。真机复核（模拟器 App 对 0.1.6-alpha.1 宿主）：
+> mobile.info 握手、会话历史渲染、file.watch/list/stat/read、feedback.put/delete 全部通过，logcat 无错误码。
+
 > 2026-09-14 追加（C 组结论）：C 组四项都受外部条件限制，本轮只落地了"诚实降级"部分——
 > 超出 512KB 窗口的图片不再渲染半张图而是明确提示（这是个真实缺陷，之前会画出截断的图）、
 > 目录截断提示点名宿主 `workspaceFiles.maxEntries` 这个可调项、诊断 payload 标注
