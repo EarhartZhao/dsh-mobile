@@ -3,6 +3,7 @@ import { handleSystemBack } from './system-back'
 describe('handleSystemBack', () => {
   it('returns to the list when the current route has a previous page', () => {
     const goToList = jest.fn()
+    const goToSettings = jest.fn()
     const showPrompt = jest.fn()
     const moveToBackground = jest.fn()
 
@@ -11,6 +12,7 @@ describe('handleSystemBack', () => {
       now: 10_000,
       lastBackAt: 0,
       goToList,
+      goToSettings,
       showPrompt,
       moveToBackground,
     })
@@ -21,12 +23,32 @@ describe('handleSystemBack', () => {
     expect(moveToBackground).not.toHaveBeenCalled()
   })
 
+  it('returns from the plugin page to settings, one step back', () => {
+    const goToList = jest.fn()
+    const goToSettings = jest.fn()
+
+    const result = handleSystemBack({
+      route: 'plugins',
+      now: 10_000,
+      lastBackAt: 0,
+      goToList,
+      goToSettings,
+      showPrompt: jest.fn(),
+      moveToBackground: jest.fn(),
+    })
+
+    expect(result).toEqual({ handled: true, lastBackAt: 0 })
+    expect(goToSettings).toHaveBeenCalledTimes(1)
+    expect(goToList).not.toHaveBeenCalled()
+  })
+
   it('shows a prompt on the first root-page back press', () => {
     const result = handleSystemBack({
       route: 'list',
       now: 10_000,
       lastBackAt: 0,
       goToList: jest.fn(),
+      goToSettings: jest.fn(),
       showPrompt: jest.fn(),
       moveToBackground: jest.fn(),
     })
@@ -41,6 +63,7 @@ describe('handleSystemBack', () => {
       now: 11_999,
       lastBackAt: 10_000,
       goToList: jest.fn(),
+      goToSettings: jest.fn(),
       showPrompt: jest.fn(),
       moveToBackground,
     })
@@ -56,6 +79,7 @@ describe('handleSystemBack', () => {
       now: 12_000,
       lastBackAt: 10_000,
       goToList: jest.fn(),
+      goToSettings: jest.fn(),
       showPrompt,
       moveToBackground: jest.fn(),
     })

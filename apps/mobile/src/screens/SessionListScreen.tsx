@@ -16,7 +16,6 @@ import { useI18n } from '../i18n'
 interface Props {
   manager: ConnectionManager
   onOpenSession: (sessionId: string) => void
-  onUnpair: () => void
   onOpenSettings?: () => void
 }
 
@@ -40,7 +39,7 @@ function useStoreVersion(manager: ConnectionManager): number {
 function copyPath(path: string): void { Clipboard.setString(path) }
 function sharePath(path: string): void { void Share.share({ message: path }).catch(() => undefined) }
 
-export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSettings }: Props): React.JSX.Element {
+export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Props): React.JSX.Element {
   const { t } = useI18n()
   useStoreVersion(manager)
   const { store } = manager
@@ -270,9 +269,6 @@ export function SessionListScreen({ manager, onOpenSession, onUnpair, onOpenSett
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowArchived(a => !a)} style={styles.headerButton}>
             <Text style={styles.headerButtonText}>{showArchived ? t('common.back') : t('common.archive')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onUnpair} style={styles.headerButton}>
-            <Text style={[styles.headerButtonText, { color: colors.danger }]}>{t('session.unpair')}</Text>
           </TouchableOpacity>
           {onOpenSettings !== undefined && (
             <TouchableOpacity

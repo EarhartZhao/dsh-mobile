@@ -18,11 +18,12 @@ import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
+import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
 import { handleSystemBack } from './system-back'
 
-type Route = { name: 'list' } | { name: 'chat'; sessionId: string } | { name: 'settings' }
+type Route = { name: 'list' } | { name: 'chat'; sessionId: string } | { name: 'settings' } | { name: 'plugins' }
 
 interface DiagnosticError {
   at: string
@@ -194,6 +195,7 @@ function AppContent(): React.JSX.Element {
       now: Date.now(),
       lastBackAt: lastBackPress.current,
       goToList: () => setRoute({ name: 'list' }),
+      goToSettings: () => setRoute({ name: 'settings' }),
       showPrompt: showBackExitPrompt,
       moveToBackground,
     })
@@ -440,7 +442,6 @@ function AppContent(): React.JSX.Element {
             <SessionListScreen
               manager={managerRef.current}
               onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
-              onUnpair={onUnpair}
               onOpenSettings={() => setRoute({ name: 'settings' })}
             />
           ) : route.name === 'settings' ? (
@@ -450,8 +451,6 @@ function AppContent(): React.JSX.Element {
               errors={errors}
               events={events}
               inventory={inventory}
-              inventoryLoading={inventoryLoading}
-              refreshInventory={refreshInventory}
               themeMode={themeMode}
               setTheme={setTheme}
               language={language}
@@ -459,8 +458,18 @@ function AppContent(): React.JSX.Element {
               enterToSend={preferences.enterToSend}
               setEnterToSend={value => updatePreferences({ enterToSend: value })}
               onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+              onOpenPlugins={() => setRoute({ name: 'plugins' })}
+              onUnpair={onUnpair}
               onBack={() => setRoute({ name: 'list' })}
               appVersion={APP_VERSION}
+            />
+          ) : route.name === 'plugins' ? (
+            <PluginInventoryScreen
+              inventory={inventory}
+              inventoryLoading={inventoryLoading}
+              refreshInventory={refreshInventory}
+              features={managerRef.current.compatibility?.features ?? []}
+              onBack={() => setRoute({ name: 'settings' })}
             />
           ) : (
             <ChatScreen

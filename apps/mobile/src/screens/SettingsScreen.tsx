@@ -4,6 +4,8 @@ import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import { useI18n, type Language, type TranslationKey } from '../i18n'
 import { ModalBackdrop } from '../components/ModalBackdrop'
+import { ConfirmModal } from '../components/ConfirmModal'
+import { inventoryCounts } from '../plugin-inventory'
 import { colors, fontSize, radius, spacing } from '../theme'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
@@ -25,8 +27,6 @@ interface SettingsScreenProps {
   errors: DiagnosticError[]
   events: DiagnosticEvent[]
   inventory: MobileInventorySnapshot | null | undefined
-  inventoryLoading: boolean
-  refreshInventory: () => void
   themeMode: ThemeMode
   setTheme: (mode: ThemeMode) => void
   language: Language
@@ -34,6 +34,8 @@ interface SettingsScreenProps {
   enterToSend: boolean
   setEnterToSend: (value: boolean) => void
   onOpenDiagnostics: () => void
+  onOpenPlugins: () => void
+  onUnpair: () => void
   onBack: () => void
   appVersion: string
 }
@@ -52,8 +54,6 @@ export function SettingsScreen({
   errors,
   events,
   inventory,
-  inventoryLoading,
-  refreshInventory,
   themeMode,
   setTheme,
   language,
@@ -61,12 +61,16 @@ export function SettingsScreen({
   enterToSend,
   setEnterToSend,
   onOpenDiagnostics,
+  onOpenPlugins,
+  onUnpair,
   onBack,
   appVersion,
 }: SettingsScreenProps): React.JSX.Element {
   const { t } = useI18n()
   const [themePickerOpen, setThemePickerOpen] = useState(false)
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false)
+  const [unpairConfirmOpen, setUnpairConfirmOpen] = useState(false)
+  const counts = inventoryCounts(inventory)
 
   return (
     <View style={styles.root}>
@@ -84,11 +88,6 @@ export function SettingsScreen({
           <Text style={styles.aboutMeta}>
             {t('app.plugin')} {manager.compatibility?.pluginVersion ?? t('common.unknown')}
             {manager.compatibility === null ? '' : ` · ${t('app.mobileApi')} ${manager.compatibility?.mobileApi ?? 0}`}
-          </Text>
-          <Text style={styles.featureText}>
-            {manager.compatibility?.features.length
-              ? manager.compatibility.features.join(' · ')
-              : t('app.pluginFeaturesMissing')}
           </Text>
         </View>
 
@@ -128,30 +127,21 @@ export function SettingsScreen({
 
         <Text style={styles.sectionTitle}>{t('app.pluginSettings')}</Text>
         <View style={styles.sectionCard}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>{t('inventory.title')}</Text>
-            {inventory !== null && (
-              <TouchableOpacity onPress={refreshInventory} disabled={inventoryLoading}>
-                <Text style={styles.actionText}>{inventoryLoading ? t('common.loading') : t('inventory.refresh')}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          {inventory === undefined ? (
-            <Text style={styles.metaText}>{t('inventory.loading')}</Text>
-          ) : inventory === null ? (
-            <Text style={styles.metaText}>{t('inventory.unavailable')}</Text>
-          ) : inventory.entries.length === 0 ? (
-            <Text style={styles.metaText}>{t('inventory.empty')}</Text>
-          ) : inventory.entries.map(entry => (
-            <View key={entry.entryId} style={styles.inventoryRow}>
-              <Text style={styles.inventoryName} numberOfLines={1}>{entry.moduleName}</Text>
-              <Text style={styles.metaText} numberOfLines={1}>
-                {entry.enabled ? t('inventory.enabled') : t('inventory.disabled')}
-                {' · '}
-                {t(`inventory.phase.${entry.fiberPhase ?? 'none'}` as TranslationKey)}
+          <TouchableOpacity style={styles.settingRow} onPress={onOpenPlugins} accessibilityRole="button">
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>{t('inventory.title')}</Text>
+              <Text style={styles.settingHint}>
+                {inventory === undefined
+                  ? t('inventory.loading')
+                  : counts === null
+                    ? t('inventory.unavailable')
+                    : counts.total === 0
+                      ? t('inventory.empty')
+                      : t('plugins.summary', { total: counts.total, enabled: counts.enabled })}
               </Text>
             </View>
-          ))}
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionTitle}>{t('app.connectionSettings')}</Text>
@@ -171,9 +161,31 @@ export function SettingsScreen({
           <TouchableOpacity style={styles.primaryButton} onPress={onOpenDiagnostics}>
             <Text style={styles.primaryButtonText}>{t('diagnostics.open')}</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.settingRow, styles.rowDivider]}
+            onPress={() => setUnpairConfirmOpen(true)}
+            accessibilityRole="button"
+          >
+            <View style={styles.rowCopy}>
+              <Text style={[styles.settingLabel, styles.dangerText]}>{t('session.unpair')}</Text>
+              <Text style={styles.settingHint}>{t('settings.unpairHint')}</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
         </View>
         <Text style={styles.footerText}>dsh-mobile · {appVersion}</Text>
       </ScrollView>
+
+      <ConfirmModal
+        visible={unpairConfirmOpen}
+        title={t('settings.unpairConfirmTitle')}
+        message={t('settings.unpairConfirmMessage')}
+        confirmLabel={t('settings.unpairConfirmAction')}
+        cancelLabel={t('common.cancel')}
+        danger
+        onCancel={() => setUnpairConfirmOpen(false)}
+        onConfirm={() => { setUnpairConfirmOpen(false); onUnpair() }}
+      />
 
       <Modal transparent visible={themePickerOpen} animationType="fade" onRequestClose={() => setThemePickerOpen(false)}>
         <ModalBackdrop onClose={() => setThemePickerOpen(false)}>
@@ -230,7 +242,6 @@ const styles = StyleSheet.create({
   },
   aboutTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) },
   aboutMeta: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 19 },
-  featureText: { color: colors.textDim, fontSize: fontSize.tiny, lineHeight: 17, marginTop: spacing(2) },
   sectionTitle: { color: colors.textDim, fontSize: fontSize.tiny, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', marginTop: spacing(2), marginBottom: spacing(1) },
   sectionCard: { backgroundColor: colors.bgElevated, borderRadius: radius.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
   settingRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingVertical: spacing(2.5) },
@@ -245,14 +256,10 @@ const styles = StyleSheet.create({
   optionText: { color: colors.text, fontSize: fontSize.body },
   check: { color: colors.accent, fontSize: 18, fontWeight: '700' },
   hidden: { opacity: 0 },
-  cardHeader: { minHeight: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  cardTitle: { color: colors.text, fontSize: fontSize.body, fontWeight: '600' },
-  actionText: { color: colors.accent, fontSize: fontSize.small },
   metaText: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 19 },
-  inventoryRow: { paddingHorizontal: spacing(4), paddingVertical: spacing(2.5), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  inventoryName: { color: colors.text, fontSize: fontSize.small, fontWeight: '500', marginBottom: 2 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(2.5), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   summaryValue: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
+  dangerText: { color: colors.danger },
   primaryButton: { alignSelf: 'stretch', margin: spacing(3), backgroundColor: colors.accent, borderRadius: radius.card, alignItems: 'center', paddingVertical: spacing(2.5) },
   primaryButtonText: { color: '#fff', fontSize: fontSize.small, fontWeight: '700' },
   footerText: { color: colors.textDim, fontSize: fontSize.tiny, textAlign: 'center', marginTop: spacing(4) },

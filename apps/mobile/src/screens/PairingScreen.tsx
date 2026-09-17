@@ -23,6 +23,9 @@ function pairingErrorMessage(message: string, t: Translate): string {
   const text = message.trim()
   if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
   if (text === 'mobile-device-limit') return t('pairing.deviceLimit')
+  // Hub rejected the account credentials the QR carried. The raw NATS text
+  // ("Authorization Violation") says nothing about which side to fix.
+  if (text.includes('Authorization Violation')) return t('pairing.authFailed')
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
     return t('pairing.networkFailed')
   }
@@ -31,7 +34,14 @@ function pairingErrorMessage(message: string, t: Translate): string {
   }
   if (text.startsWith('console /pair HTTP')) return t('pairing.httpFailed', { status: text.split(' ').at(-1) ?? '' })
   if (text === 'console /pair: no payload') return t('pairing.noPayload')
-  if (text.startsWith('missing-field:')) return t('pairing.missingField', { field: text.slice('missing-field:'.length) })
+  if (text.startsWith('missing-field:')) {
+    const field = text.slice('missing-field:'.length)
+    // hub/user/pass are the Hub credentials the desktop plugin must supply;
+    // an empty one means the QR was minted before the card was configured.
+    return field === 'hub' || field === 'user' || field === 'pass'
+      ? t('pairing.missingHubCredential', { field })
+      : t('pairing.missingField', { field })
+  }
   return t('pairing.failed', { message: text })
 }
 
@@ -225,12 +235,9 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
         {t('pairing.hint')}
       </Text>
       {hasPermission && device !== undefined && device !== null ? (
-        <View style={styles.scanLauncher}>
-          <Text style={styles.scanFallbackText}>{t('pairing.scanHint')}</Text>
-          <TouchableOpacity style={styles.scanOpenButton} onPress={() => setScannerOpen(true)}>
-            <Text style={styles.scanOpenButtonText}>{t('pairing.openScanner')}</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.scanLauncherButton} onPress={() => setScannerOpen(true)}>
+          <Text style={styles.scanOpenButtonText}>{t('pairing.openScanner')}</Text>
+        </TouchableOpacity>
       ) : (
         <View style={styles.scanFallback}>
           <Text style={styles.scanFallbackText}>
@@ -357,15 +364,15 @@ const styles = StyleSheet.create({
     fontSize: fontSize.small,
     textAlign: 'center',
   },
-  scanLauncher: {
-    height: 120,
-    borderWidth: 1,
-    borderColor: colors.border,
+  /** Standalone scan entry: the card that used to frame it only repeated the
+   *  instruction the scanner screen already shows. */
+  scanLauncherButton: {
+    alignSelf: 'center',
+    marginBottom: spacing(4),
+    paddingHorizontal: spacing(6),
+    paddingVertical: spacing(3),
     borderRadius: radius.card,
-    backgroundColor: colors.bgElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing(3),
+    backgroundColor: colors.accent,
   },
   scanOpenButton: {
     paddingHorizontal: spacing(4),

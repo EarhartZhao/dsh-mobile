@@ -8,10 +8,20 @@ def hermesCompilerOutput = providers.exec {
     commandLine "node", "-p", "require.resolve('hermes-compiler/package.json', {paths:[require.resolve('react-native/package.json')]})"
 }.standardOutput.asText.get().trim()
 def hermesCompilerDir = new File(hermesCompilerOutput).parentFile
-def hermesBinaryName = org.gradle.internal.os.OperatingSystem.current().isWindows()
+// The package ships one binary per host platform. Debug builds never invoke
+// hermesc, so a wrong pick here only surfaces on a release bundle — which is
+// why macOS must be matched explicitly rather than folded into the Linux case.
+def hermesHostOS = org.gradle.internal.os.OperatingSystem.current()
+def hermesBinaryName = hermesHostOS.isWindows()
     ? "hermesc/win64-bin/hermesc.exe"
-    : "hermesc/linux64-bin/hermesc"
+    : hermesHostOS.isMacOsX()
+        ? "hermesc/osx-bin/hermesc"
+        : "hermesc/linux64-bin/hermesc"
 def hermesCompiler = new File(hermesCompilerDir, hermesBinaryName)
+if (!hermesCompiler.canExecute()) {
+    logger.lifecycle("WARNING: selected hermesc is missing or not executable: ${hermesCompiler}" +
+        " (release JS bundling will fail; debug builds are unaffected)")
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
