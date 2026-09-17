@@ -19,6 +19,8 @@ import { createMobileReferences } from './mobile-references.ts'
 import { createMobileFileUploads, createMobileFilePrompts } from './mobile-file-uploads.ts'
 import { createMobileFiles, createMobileGoalState } from './mobile-workspace.ts'
 import { createMobileMessageFeedback } from './mobile-feedback.ts'
+import { createMobileWorkspaceAdmin } from './mobile-workspace-admin.ts'
+import { createMobileCatalog } from './mobile-catalog.ts'
 
 export interface NatsApiClientOptions {
   conn: NatsConnLike
@@ -42,6 +44,8 @@ export class NatsApiClient extends AbstractApiClient {
   readonly files: ReturnType<typeof createMobileFiles>
   readonly goalState: ReturnType<typeof createMobileGoalState>
   readonly feedback: ReturnType<typeof createMobileMessageFeedback>
+  readonly workspaceAdmin: ReturnType<typeof createMobileWorkspaceAdmin>
+  readonly catalog: ReturnType<typeof createMobileCatalog>
 
   constructor(options: NatsApiClientOptions) {
     super(options.timeoutMs)
@@ -56,6 +60,8 @@ export class NatsApiClient extends AbstractApiClient {
     this.files = createMobileFiles(options.conn, options.headers, options.instanceId, options.getToken)
     this.goalState = createMobileGoalState(options.conn, options.headers, options.instanceId, options.getToken)
     this.feedback = createMobileMessageFeedback(options.conn, options.headers, options.instanceId, options.getToken)
+    this.workspaceAdmin = createMobileWorkspaceAdmin(options.conn, options.headers, options.instanceId, options.getToken)
+    this.catalog = createMobileCatalog(options.conn, options.headers, options.instanceId, options.getToken)
   }
 
   /**

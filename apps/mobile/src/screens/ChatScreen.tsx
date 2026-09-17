@@ -30,6 +30,7 @@ import { deriveConversation, placementLabel, queuePreview, sessionStatsView, typ
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
+import { presetSelectionEnabled } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
 import { Circle, Path, Svg } from 'react-native-svg'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
@@ -186,6 +187,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [presets, setPresets] = useState<PlusPreset[]>([])
   const [presetStatus, setPresetStatus] = useState<PlusMenuStatus>('idle')
   const [presetError, setPresetError] = useState('')
+  /** Host policy: when selection is off, offering a picker promises a choice the host ignores. */
+  const [presetSelectionOn, setPresetSelectionOn] = useState(true)
   const [references, setReferences] = useState<PlusReference[]>([])
   const [referenceStatus, setReferenceStatus] = useState<PlusMenuStatus>('idle')
   const [lightbox, setLightbox] = useState<{ source: string; name?: string } | null>(null)
@@ -206,7 +209,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [pendingModel, setPendingModel] = useState<{ providerId: string; modelId: string; efforts: { id: string; name: string }[] } | null>(null)
   const [modelLabel, setModelLabel] = useState(t('chat.model'))
   const [candidates, setCandidates] = useState<Candidate[]>([])
-  const skillsCache = useRef<{ sessionId: string; skills: { name: string; description: string }[] } | null>(null)
+  const skillsCache = useRef<{
+    sessionId: string
+    skills: { name: string; description: string; path?: string }[]
+  } | null>(null)
   const candidateGeneration = useRef(0)
 
   /** Trailing-token detection: /skill and @file/session triggers (ui-input-trigger lite). */
@@ -227,9 +233,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (client === null) return
     let skills = skillsCache.current?.sessionId === sessionId ? skillsCache.current.skills : null
     if (skills === null) {
-      const result = await client.skills.list({ sessionId } as never).catch(() => null)
-      if (result?.result.ok) {
-        skills = (result.result.value.skills as never) as { name: string; description: string }[]
+      const result = await client.catalog.skills({ sessionId }).catch(() => null)
+      if (result !== null) {
+        skills = result.skills.map(skill => ({
+          name: skill.name,
+          description: skill.description,
+          ...(skill.path === undefined ? {} : { path: skill.path }),
+        }))
         skillsCache.current = { sessionId, skills }
       }
     }
@@ -606,14 +616,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (client === null || (!force && presetStatus === 'ready')) return
     setPresetStatus('loading')
     setPresetError('')
-    const result = await client.agentPresets.list({} as never).catch(() => null)
-    if (result?.result.ok !== true) {
+    const roster = await client.catalog.agentPresets().catch(() => null)
+    if (roster === null) {
       setPresets([])
       setPresetStatus('failed')
-      setPresetError(result?.result.ok === false ? t('chat.loadFailed', { message: result.result.error.message }) : t('chat.loadConnection'))
+      setPresetError(t('chat.loadConnection'))
       return
     }
-    setPresets(result.result.value.presets.filter(preset => preset.broken === undefined))
+    setPresets(roster.presets.filter(preset => preset.broken === undefined))
+    setPresetSelectionOn(presetSelectionEnabled(roster))
     setPresetStatus('ready')
   }, [manager, presetStatus, t])
 
@@ -638,10 +649,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       insert: `${entry.mention} `,
     }))
     const skills: PlusReference[] = []
-    const skillResult = await client.skills.list({ sessionId } as never).catch(() => null)
-    if (skillResult?.result.ok) {
-      for (const skill of skillResult.result.value.skills) {
-        skills.push({ key: `skill:${skill.name}`, title: `/${skill.name}`, subtitle: skill.description, insert: `/${skill.name} ` })
+    const skillResult = await client.catalog.skills({ sessionId }).catch(() => null)
+    if (skillResult !== null) {
+      for (const skill of skillResult.skills) {
+        const source = skill.path
+        skills.push({
+          key: `skill:${skill.name}`,
+          title: `/${skill.name}`,
+          subtitle: skill.description,
+          ...(source === undefined ? {} : { meta: source }),
+          insert: `/${skill.name} `,
+        })
       }
     }
     setReferences([...skills.slice(0, 12), ...files.slice(0, 12), ...sessions])
@@ -1548,6 +1566,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         permissionValue={permissions?.currentValue}
         planActive={planMode !== undefined && planMode !== 'off'}
         hasGoal={goal !== null}
+        presetSelectionEnabled={presetSelectionOn}
         modelLabel={modelLabel}
         presetLabel={manager.store.summaries.find(item => item.sessionId === sessionId)?.agentPreset}
         pendingImageCount={pendingImages.length}

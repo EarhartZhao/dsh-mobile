@@ -46,6 +46,15 @@
 > `SkillEntry.path`（技能文件绝对路径）。真机复核（模拟器 App 对 0.1.6-alpha.1 宿主）：
 > mobile.info 握手、会话历史渲染、file.watch/list/stat/read、feedback.put/delete 全部通过，logcat 无错误码。
 
+> 2026-09-17 追加（三处新增能力落地）：① 归档会话现在可以**取消归档**（插件 0.2.7 的
+> `workspace-unarchive` + `workspace/unarchiveSession`）；② Agent preset 选择器按宿主的
+> `modeSelectionEnabled` 策略禁用并给出说明，新建会话的长按选择器在关闭时直接走默认；
+> ③ 技能行显示 SKILL.md 来源路径。顺带修掉一个真机才暴露的旧缺陷：会话行与工作区 chip 的
+> 长按菜单用 `Alert.alert` 摆 4–5 个按钮，而 **Android 的 Alert 只显示 3 个**，导致"归档"
+> 以及工作区的"重命名/删除"在手机上根本点不到——现在两者都改用底部 ActionSheet。
+> 另外查明：冻结 vendor 的 zod schema 会 strip 上游新增字段，新增字段必须走 `mobile-*.ts`
+> 宽解析层读取（`mobile-catalog.ts`），否则 host 返回了 App 也看不见。
+
 > 2026-09-14 追加（C 组结论）：C 组四项都受外部条件限制，本轮只落地了"诚实降级"部分——
 > 超出 512KB 窗口的图片不再渲染半张图而是明确提示（这是个真实缺陷，之前会画出截断的图）、
 > 目录截断提示点名宿主 `workspaceFiles.maxEntries` 这个可调项、诊断 payload 标注
