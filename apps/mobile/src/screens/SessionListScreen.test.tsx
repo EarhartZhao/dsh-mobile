@@ -29,6 +29,8 @@ const manager = {
   },
 } as unknown as ConnectionManager
 
+const trees: renderer.ReactTestRenderer[] = []
+
 function render() {
   let tree!: renderer.ReactTestRenderer
   act(() => {
@@ -36,8 +38,19 @@ function render() {
       <SessionListScreen manager={manager} onOpenSession={jest.fn()} onOpenSettings={jest.fn()} />,
     )
   })
+  trees.push(tree)
   return tree
 }
+
+// VirtualizedList schedules a cells-to-render timeout. Left mounted, it fires
+// after Jest tears the environment down and reports "Cannot log after tests
+// are done", which can fail an otherwise passing run.
+afterEach(() => {
+  act(() => {
+    for (const tree of trees) tree.unmount()
+  })
+  trees.length = 0
+})
 
 describe('SessionListScreen header', () => {
   it('no longer offers unpairing outside of settings', () => {
