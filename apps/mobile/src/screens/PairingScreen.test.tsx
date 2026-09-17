@@ -264,4 +264,19 @@ describe('PairingScreen hub credential errors', () => {
     expect(connect).toHaveBeenCalledTimes(1)
     expect(tree!.root.findAllByProps({ children: 'pairing.authFailed' }).length).toBeGreaterThan(0)
   })
+
+  it('explains an unanswered bridge instead of showing the raw no-responders 503', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    // NATS answers a request to a subject nobody serves with code AND message
+    // "503" — the QR then points at a machine whose dsh is not on the Hub.
+    connect.mockRejectedValueOnce(Object.assign(new Error('503'), { code: '503' }))
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
+
+    expect(tree!.root.findAllByProps({ children: 'pairing.bridgeOffline' }).length).toBeGreaterThan(0)
+  })
 })

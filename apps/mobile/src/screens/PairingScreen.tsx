@@ -26,6 +26,10 @@ function pairingErrorMessage(message: string, t: Translate): string {
   // Hub rejected the account credentials the QR carried. The raw NATS text
   // ("Authorization Violation") says nothing about which side to fix.
   if (text.includes('Authorization Violation')) return t('pairing.authFailed')
+  // NATS reports a request to a subject nobody serves with code and message
+  // "503". At pairing time that means the QR came from a machine whose dsh is
+  // not on the Hub — the phone reaches the Hub fine, the host is simply absent.
+  if (text === '503' || text.includes('no responders')) return t('pairing.bridgeOffline')
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
     return t('pairing.networkFailed')
   }
