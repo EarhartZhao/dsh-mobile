@@ -133,7 +133,21 @@ export class SessionStore extends Emitter<StoreEvents> {
     this.workspaces = input.workspaces
     if (input.archivedSessionIds !== undefined) this.archivedSessionIds = input.archivedSessionIds
     for (const summary of input.summaries) {
-      this.session(summary.sessionId).running = summary.running
+      const session = this.session(summary.sessionId)
+      session.running = summary.running
+      // Rows carry their projection block (titles ride the `title` key), and
+      // the list renders cold Sessions straight from this baseline — a session
+      // never opened here has no live frame to fall back on. Same
+      // higher-seq-wins rule as live `session/projection` frames, so a
+      // reconnect baseline can never roll back a newer title.
+      const projections = summary.projections
+      if (projections === undefined) continue
+      for (const [key, value] of Object.entries(projections.values)) {
+        const known = session.projectionSeqs[key]
+        if (known !== undefined && known >= projections.asOfSeq) continue
+        session.projections[key] = value
+        session.projectionSeqs[key] = projections.asOfSeq
+      }
     }
     this.emit('changed', { sessionId: undefined })
     this.emit('workspacesChanged', undefined)

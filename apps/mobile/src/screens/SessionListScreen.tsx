@@ -10,8 +10,15 @@ import { presetSelectionEnabled, type DirectoryListing, type SessionSummary } fr
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { PromptModal } from '../components/PromptModal'
+import { sessionSections } from '../session-sections'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
+
+/** One rendered line: a collapsible section header, or a session row. */
+type ListEntry =
+  | { kind: 'header'; key: string; sectionKey: string; title: string; workspaceId: string | null; count: number }
+  | { kind: 'session'; key: string; session: SessionSummary }
+  | { kind: 'hit'; key: string; sessionId: string; snippet: string }
 
 interface Props {
   manager: ConnectionManager
@@ -55,6 +62,9 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
   const [browserError, setBrowserError] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const [creatingSession, setCreatingSession] = useState(false)
+  const [sessionRenameId, setSessionRenameId] = useState<string | null>(null)
+  /** Collapsed section keys; a section collapses only when explicitly closed. */
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   /** Restoring an archived Session needs the host mapping added in dsh 0.1.6. */
   const canUnarchive = (manager.compatibility?.features ?? []).includes('workspace-unarchive')
   /**
@@ -79,6 +89,48 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
     : (store.workspaces.find(w => w.workspaceId === selectedWs)?.sessionIds ?? [])
         .map(id => visibleById.get(id))
         .filter((s): s is SessionSummary => s !== undefined)
+
+  /**
+   * The list is grouped by workspace on the 「全部」 view, one collapsible
+   * header per workspace plus a trailing 未分组 bucket — the same shape the
+   * web sidebar uses. Picking a workspace chip still narrows to a flat list.
+   */
+  const listEntries: ListEntry[] = searchHits !== null
+    ? searchHits.map(hit => ({ kind: 'hit', key: hit.sessionId, sessionId: hit.sessionId, snippet: hit.snippet }))
+    : selectedWs !== null
+      ? inWorkspace.map(session => ({ kind: 'session', key: session.sessionId, session }))
+      : sessionSections({
+          workspaces: store.workspaces,
+          summaries: store.summaries,
+          archivedSessionIds: store.archivedSessionIds,
+        }).flatMap(section => {
+          const sectionKey = section.workspaceId ?? 'ungrouped'
+          const header: ListEntry = {
+            kind: 'header',
+            key: `header:${sectionKey}`,
+            sectionKey,
+            title: section.title ?? t('session.ungrouped'),
+            workspaceId: section.workspaceId,
+            count: section.sessionIds.length,
+          }
+          if (collapsedSections.has(sectionKey)) return [header]
+          return [
+            header,
+            ...section.sessionIds
+              .map(id => visibleById.get(id as never))
+              .filter((s): s is SessionSummary => s !== undefined)
+              .map(session => ({ kind: 'session' as const, key: session.sessionId, session })),
+          ]
+        })
+
+  const toggleSection = (sectionKey: string): void => {
+    setCollapsedSections(current => {
+      const next = new Set(current)
+      if (next.has(sectionKey)) next.delete(sectionKey)
+      else next.add(sectionKey)
+      return next
+    })
+  }
 
   const wsRename = (workspaceId: string): void => {
     setWsRenameId(workspaceId)
@@ -221,18 +273,35 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
       .finally(() => { void manager.refreshBaseline() })
   }
 
+  const renameSession = (sessionId: string, title: string): void => {
+    void manager.client?.sessions.rename({ sessionId, title } as never)
+      .catch(() => undefined)
+      .finally(() => { void manager.refreshBaseline() })
+  }
+
+  /** Fork the whole Session; the copy lands in the same workspace as its source. */
+  const forkSession = (sessionId: string): void => {
+    void manager.client?.sessions.fork({ sessionId } as never)
+      .catch(() => undefined)
+      .finally(() => { void manager.refreshBaseline() })
+  }
+
   const sessionActions: SheetAction[] = sessionMenu === null
     ? []
     : sessionMenu.archived
       ? [{ key: 'unarchive', label: t('session.unarchive') }]
       : [
+          { key: 'rename', label: t('common.rename') },
+          { key: 'fork', label: t('session.fork') },
           { key: 'up', label: t('session.moveUp') },
           { key: 'down', label: t('session.moveDown') },
           { key: 'archive', label: t('common.archive'), danger: true },
         ]
 
   const runSessionAction = (menu: { sessionId: string; archived: boolean }, key: string): void => {
-    if (key === 'up') moveSession(menu.sessionId, -1)
+    if (key === 'rename') setSessionRenameId(menu.sessionId)
+    else if (key === 'fork') forkSession(menu.sessionId)
+    else if (key === 'up') moveSession(menu.sessionId, -1)
     else if (key === 'down') moveSession(menu.sessionId, 1)
     else if (key === 'archive') archive(menu.sessionId)
     else if (key === 'unarchive') unarchive(menu.sessionId)
@@ -356,14 +425,13 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
             )}
           </View>
           <FlatList
-            data={searchHits !== null
-              ? searchHits.map(h => ({ sessionId: h.sessionId, snippet: h.snippet }))
-              : inWorkspace.map(s => ({ sessionId: s.sessionId, snippet: '' }))}
-            keyExtractor={item => item.sessionId}
+            data={listEntries}
+            keyExtractor={item => item.key}
             contentContainerStyle={searchHits === null && visible.length === 0 ? styles.emptyContainer : undefined}
             ListEmptyComponent={<Text style={styles.empty}>{searchHits !== null ? t('session.noMatches') : t('session.noSessions')}</Text>}
-            renderItem={({ item }) => searchHits !== null
-              ? (
+            renderItem={({ item }) => {
+              if (item.kind === 'hit') {
+                return (
                 <TouchableOpacity style={styles.row} onPress={() => onOpenSession(item.sessionId)}>
                   <View style={styles.rowText}>
                     <Text style={styles.rowTitle} numberOfLines={1}>
@@ -372,24 +440,39 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
                     <Text style={styles.rowSub} numberOfLines={2}>{item.snippet}</Text>
                   </View>
                 </TouchableOpacity>
-              )
-              : (() => {
-                const s = inWorkspace.find(v => v.sessionId === item.sessionId)
-                return s === undefined
-                  ? <View />
-                  : (
+                )
+              }
+              if (item.kind === 'header') {
+                const collapsed = collapsedSections.has(item.sectionKey)
+                return (
+                  <TouchableOpacity
+                    style={styles.sectionHeader}
+                    onPress={() => toggleSection(item.sectionKey)}
+                    onLongPress={item.workspaceId === null
+                      ? undefined
+                      : () => setWorkspaceMenu({ workspaceId: item.workspaceId as string, title: item.title })}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.title}
+                  >
+                    <Text style={[styles.sectionChevron, collapsed && styles.sectionChevronCollapsed]}>▼</Text>
+                    <Text style={styles.sectionTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.sectionCount}>{item.count}</Text>
+                  </TouchableOpacity>
+                )
+              }
+              return (
                     <SessionRow
                       manager={manager}
-                      item={s}
+                      item={item.session}
                       onOpen={onOpenSession}
                       onMenu={() => setSessionMenu({
-                        sessionId: s.sessionId,
-                        title: manager.store.title(s.sessionId) ?? s.cwd ?? s.sessionId.slice(0, 8),
+                        sessionId: item.session.sessionId,
+                        title: manager.store.title(item.session.sessionId) ?? item.session.cwd ?? item.session.sessionId.slice(0, 8),
                         archived: false,
                       })}
                     />
-                  )
-              })()}
+              )
+            }}
           />
         </>
       )}
@@ -496,6 +579,20 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
         confirmLabel={t('common.create')}
         onCancel={() => setFolderCreateOpen(false)}
         onConfirm={name => { void createFolder(name) }}
+      />
+      <PromptModal
+        visible={sessionRenameId !== null}
+        title={t('session.renameSession')}
+        initial={sessionRenameId === null
+          ? ''
+          : manager.store.title(sessionRenameId) ?? visibleById.get(sessionRenameId as never)?.cwd ?? ''}
+        confirmLabel={t('common.rename')}
+        onCancel={() => setSessionRenameId(null)}
+        onConfirm={title => {
+          const sessionId = sessionRenameId
+          setSessionRenameId(null)
+          if (sessionId !== null) renameSession(sessionId, title)
+        }}
       />
       <ActionSheet
         visible={sessionMenu !== null}
@@ -621,6 +718,23 @@ const styles = StyleSheet.create({
     gap: spacing(2),
   },
   rowText: { flex: 1 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(1.5),
+    minHeight: 36,
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(2),
+    backgroundColor: colors.bg,
+  },
+  /** The disclosure doubles as the section icon. Full-size triangles (not the
+   *  small ▾/▸ variants) so it reads as an affordance at the 14px label size. */
+  sectionChevron: { color: colors.textDim, fontSize: 14, width: 16, textAlign: 'center' },
+  /** Rotating one glyph keeps both states the same size: ▼ and ▶ are different
+   *  characters and their glyphs do not match in the same font. */
+  sectionChevronCollapsed: { transform: [{ rotate: '-90deg' }] },
+  sectionTitle: { flex: 1, color: colors.text, fontSize: fontSize.section, fontWeight: '600' },
+  sectionCount: { color: colors.textDim, fontSize: fontSize.small },
   rowAction: { paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
   rowActionText: { color: colors.accent, fontSize: fontSize.small },
   rowTitle: { color: colors.text, fontSize: fontSize.body },
