@@ -76,6 +76,7 @@ pnpm test
 | 0.1.1-rc.2 及以下 | `packages/host/apiproxy` 存在 | 0.1.x–0.2.x 直接兼容 |
 | 0.1.2-alpha.2–0.1.3-alpha.2 | 已移除，替换为 Typert Gateway/Remote | 插件 0.2.1+，mobileApi 2 |
 | 0.1.5-rc.1（2026-09-10 核对） | 同上；`connection` / `typertGateway` 服务名与 `createSharedFetchHandler('/api')` 未变 | 插件 0.2.2 + App 0.0.3 直接兼容；PTC 事件改名已由 App 归一层兼容 |
+| 0.1.6-alpha.2（2026-09-22 核对） | 同上；删除 `session/control` 的 `queues` 与 `queue` 帧，改由会话 `inbox` 投影提供待处理输入 | 插件 0.2.8+ 把 `inbox` 翻译回 `session/queue`，App 与冻结 wire 不变；新增面：引用候选 `displayTitle`、插件清单 `managementAvailable`、转发的 `plugin-manager/*` 事件 |
 
 ## 防止遗漏
 

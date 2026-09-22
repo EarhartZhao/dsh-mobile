@@ -21,3 +21,14 @@ export function inventoryCounts(snapshot: MobileInventorySnapshot | null | undef
     enabled: snapshot.entries.filter(entry => entry.enabled).length,
   }
 }
+
+/**
+ * Whether one forwarded host event invalidates the inventory snapshot. dsh
+ * 0.1.6-alpha.2 started forwarding `plugin-manager/changed` with the in-flight
+ * `install-state`/`install-log` pair, so an install started from the desktop no
+ * longer needs the phone's manual refresh. The frame's own arrival is the
+ * capability signal: a bridge that does not relay them simply sends nothing.
+ */
+export function inventoryChangedByEvent(event: string): boolean {
+  return event.startsWith('plugin-manager/')
+}

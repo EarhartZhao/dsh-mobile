@@ -48,6 +48,7 @@ import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
+import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
 
 interface PermissionSelectView {
@@ -266,8 +267,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     })
     const sessions: Candidate[] = sessionValues.map(entry => ({
       key: `session:${entry.sessionId}`,
-      title: entry.label,
-      subtitle: entry.sameWorkspace ? t('chat.session') : entry.cwd ?? t('chat.session'),
+      ...sessionReferenceText(entry, t('chat.session')),
       insert: `${entry.mention} `,
     }))
     setCandidates([...files.slice(0, 8), ...sessions.slice(0, 8)])
@@ -644,8 +644,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     })
     const sessions: PlusReference[] = sessionValues.map(entry => ({
       key: `session:${entry.sessionId}`,
-      title: entry.label,
-      subtitle: entry.sameWorkspace ? t('chat.session') : entry.cwd ?? t('chat.session'),
+      ...sessionReferenceText(entry, t('chat.session')),
       insert: `${entry.mention} `,
     }))
     const skills: PlusReference[] = []

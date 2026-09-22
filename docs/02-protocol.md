@@ -105,7 +105,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 - durable 事件名会随 dsh 版本改名（`tool/code-dispatch*` → `tool/ptc-dispatch*` 即 0.1.5 的改动，历史会话由 v2→v3 迁移重写为新名）。App 的事件归一层 `normalizeEventType` 把两套名字折到同一套语义，新增改名时在此登记，不要各自打补丁。
 - `session/projection` 帧（`{sessionId, key, value, seq}`）：按会话维护通用值仓，seq 高者胜；标题在 `title` 键下。
 - `session/jobs`：完整快照语义（非差分），直接替换本地集合；没有 baseline 即空集。
-- `session/queue`：权威队列快照，不要从轮次事件推断队列。
+- `session/queue`：权威队列快照，不要从轮次事件推断队列。dsh 0.1.6-alpha.2 删掉了宿主侧的 `queues` baseline 表与 `queue` 控制帧，待处理输入改由会话 `inbox` 投影表达；插件 0.2.8 把该投影翻译回同一帧型（`next-turn` → `queued`，`next-step` 按来源分 `steering`/`context`），App 侧契约不变。`inbox` 只在会话挂着活动 Agent 时存在，与 alpha.1 的 `queues` 是同一个门禁——空闲宿主上观察不到队列帧属于预期。
 
 ### events.host（宿主域）
 
@@ -129,6 +129,12 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 App 在建立会话基线前调用插件自有 `mobile.info`。App 0.0.3 要求 `dsh-mobile-plugin >=0.2.2 <0.3.0`、`mobileApi=2`，并校验 Remote v2、分页历史、control/follow 与事件回答能力位。`host.describe.version` 是宿主 dsh 版本，不代表插件能力。命令目录失败会明确报错，不再伪造旧命令或静默退回普通 prompt。
 
 能力位分两级：`mobile.info.features` 里插件必须提供的门禁能力（见 `packages/core/src/compatibility.ts` 的 `REQUIRED_PLUGIN_FEATURES`），以及**可选能力**——`workspace-files`（工作区文件目录浏览与文件预览）、`goal-state`（目标 activation）、`open-path`（宿主机打开/定位）。可选能力缺席时 App 只隐藏对应入口（会话菜单不出现"工作区文件"、文件 chip 点击降级为复制路径、目标条只显示 durable phase），不会判为不兼容；因此旧插件仍可与 App 0.0.3+ 共存。
+
+dsh 0.1.6-alpha.2 另有三处新面，App 按可选路径接入，旧宿主缺席时自然退化，都不进 `REQUIRED_PLUGIN_FEATURES`：
+
+1. **引用候选的 `displayTitle`**（`sessionReferenceResolver/candidates`）：子代理会话用自身 label 呈现，行文案统一在 `apps/mobile/src/session-references.ts`（标题取 `displayTitle ?? label`，两者不同时把会话标题拼在工作目录前），`@` 补全与加号菜单共用。旧宿主不发该字段时退回 `label`。alpha.2 起冷会话也能从投影缓存回答标题，所以这一列不再普遍退化成会话 id。
+2. **插件清单的 `managementAvailable`**（`pluginInventory/list`）：表示本机是否具备持久化的当前配置管理能力（宿主挂了 `pluginManager` 才为 true）。插件页据此显示"具备插件管理能力"或"只读清单"，`fetchMobileInventory` 把非布尔值归一为缺省。
+3. **`plugin-manager/changed|install-state|install-log` 转发事件**：宿主 0.1.6-alpha.2 起转发，插件以既有的 `host/remote-event` 透传任意 emit 事件，App 订阅 store 的 `remoteEvent` 后按前缀静默重读清单（不整页清空），桌面端装插件时手机不再需要手动刷新。事件自身到达就是能力信号，因此没有新增 feature 位。
 
 工作区浏览器只走 workspace 相对路径：`file.list` 返回的条目只带 basename，客户端自己拼接/回退/构建面包屑（`apps/mobile/src/workspace-path.ts`），路径以 `workspaceFileScopeId` 交给宿主解析成会话 workspace root，因此手机端既不需要知道绝对前缀，也无法越出工作区。图片按字节窗口读（上限 512 KB），文本按行页读（默认 400 行），两者都受宿主 `workspaceFiles` 的 `maxBytes`/`maxLines` 上限再裁一次。
 

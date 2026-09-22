@@ -109,6 +109,12 @@ export interface MobileInventoryEntry {
 }
 
 export interface MobileInventorySnapshot {
+  /**
+   * Whether the Host exposes persistent current-profile management. Absent on
+   * dsh releases before 0.1.6-alpha.2 and on hosts without the plugin manager,
+   * which is why the page treats "not true" as read-only.
+   */
+  managementAvailable?: boolean
   entries: MobileInventoryEntry[]
 }
 
@@ -213,7 +219,11 @@ export async function fetchMobileInventory(
   try {
     const value = await callPlugin(conn, headersFactory, instanceId, 'mobile.inventory', {}, token, timeoutMs)
     if (typeof value !== 'object' || value === null || !Array.isArray((value as { entries?: unknown }).entries)) return null
-    return value as MobileInventorySnapshot
+    const snapshot = value as MobileInventorySnapshot & { managementAvailable?: unknown }
+    return {
+      entries: snapshot.entries,
+      ...(typeof snapshot.managementAvailable === 'boolean' ? { managementAvailable: snapshot.managementAvailable } : {}),
+    }
   } catch {
     return null
   }

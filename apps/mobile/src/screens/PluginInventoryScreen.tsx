@@ -52,18 +52,27 @@ export function PluginInventoryScreen({
             <Text style={styles.metaText}>{t('inventory.loading')}</Text>
           ) : inventory === null ? (
             <Text style={styles.metaText}>{t('inventory.unavailable')}</Text>
-          ) : inventory.entries.length === 0 ? (
-            <Text style={styles.metaText}>{t('inventory.empty')}</Text>
-          ) : inventory.entries.map(entry => (
-            <View key={entry.entryId} style={styles.inventoryRow}>
-              <Text style={styles.inventoryName} numberOfLines={1}>{entry.moduleName}</Text>
-              <Text style={styles.metaText} numberOfLines={1}>
-                {entry.enabled ? t('inventory.enabled') : t('inventory.disabled')}
-                {' · '}
-                {t(`inventory.phase.${entry.fiberPhase ?? 'none'}` as TranslationKey)}
+          ) : (
+            <>
+              <Text style={styles.metaText}>
+                {inventory.managementAvailable === true
+                  ? t('inventory.management.available')
+                  : t('inventory.management.readonly')}
               </Text>
-            </View>
-          ))}
+              {inventory.entries.length === 0
+                ? <Text style={styles.metaText}>{t('inventory.empty')}</Text>
+                : inventory.entries.map(entry => (
+                  <View key={entry.entryId} style={styles.inventoryRow}>
+                    <Text style={styles.inventoryName} numberOfLines={1}>{entry.moduleName}</Text>
+                    <Text style={styles.metaText} numberOfLines={1}>
+                      {entry.enabled ? t('inventory.enabled') : t('inventory.disabled')}
+                      {' · '}
+                      {t(`inventory.phase.${entry.fiberPhase ?? 'none'}` as TranslationKey)}
+                    </Text>
+                  </View>
+                ))}
+            </>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>{t('plugins.capabilities')}</Text>
