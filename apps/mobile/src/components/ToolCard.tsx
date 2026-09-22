@@ -1,9 +1,9 @@
 /** Structured tool presentation backed by host ToolCallView / ToolResultView. */
-import React, { useEffect, useState } from 'react'
-import { Clipboard, Image, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import type { ConnectionManager, ConversationImage, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
+import React, { useState } from 'react'
+import { Clipboard, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
-import { ImageLightbox } from './ImageLightbox'
+import { AttachmentImage } from './AttachmentImage'
 import { toolDisplayName } from '../ui-labels'
 import { useI18n, type TranslationKey } from '../i18n'
 
@@ -199,46 +199,6 @@ function WebView({ view }: { view: Record<string, unknown> }): React.JSX.Element
   )
 }
 
-function ToolImage({ image, manager, sessionId }: {
-  image: ConversationImage
-  manager: ConnectionManager
-  sessionId: string
-}): React.JSX.Element {
-  const { t } = useI18n()
-  const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
-  const [aspect, setAspect] = useState(4 / 3)
-  const [lightboxOpen, setLightboxOpen] = useState(false)
-
-  useEffect(() => {
-    if (image.kind !== 'attachment') return
-    let alive = true
-    void manager.client?.sessions.attachment({ sessionId, attachmentId: image.attachmentId } as never)
-      .then(result => {
-        if (!alive || !result.result.ok) return
-        const value = result.result.value as {
-          attachment: { mediaType: string; width: number; height: number }
-          data: string
-        }
-        setSource(`data:${value.attachment.mediaType};base64,${value.data}`)
-        if (value.attachment.width > 0 && value.attachment.height > 0) {
-          setAspect(value.attachment.width / value.attachment.height)
-        }
-      })
-      .catch(() => undefined)
-    return () => { alive = false }
-  }, [image, manager, sessionId])
-
-  if (source === null) return <Text style={styles.imageFallback}>{t('chat.imageLoading')}</Text>
-  return (
-    <>
-      <TouchableOpacity onPress={() => setLightboxOpen(true)}>
-        <Image source={{ uri: source }} style={[styles.toolImage, { aspectRatio: aspect }]} />
-      </TouchableOpacity>
-      <ImageLightbox visible={lightboxOpen} source={source} name={image.name} onClose={() => setLightboxOpen(false)} />
-    </>
-  )
-}
-
 function SubCall({ call, manager, sessionId, depth = 0 }: {
   call: ToolSubCall
   manager: ConnectionManager
@@ -259,7 +219,7 @@ function SubCall({ call, manager, sessionId, depth = 0 }: {
           {call.args !== '' && <Text style={styles.mono} numberOfLines={4}>{call.args}</Text>}
           {call.resultText !== '' && <Text style={styles.subCallResult} numberOfLines={6}>{call.resultText}</Text>}
           {call.resultImages.map(image => (
-            <ToolImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+            <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.toolImage} fallbackStyle={styles.imageFallback} />
           ))}
           {call.subCalls.map(child => <SubCall key={child.callId} call={child} manager={manager} sessionId={sessionId} depth={depth + 1} />)}
         </View>
@@ -310,7 +270,7 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
           )}
           {item.resultText === '' && item.args !== '' && <Mono text={item.args} />}
           {item.resultImages.map(image => (
-            <ToolImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+            <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.toolImage} fallbackStyle={styles.imageFallback} />
           ))}
           {locations.length > 0 && (
             <View style={styles.locations}>

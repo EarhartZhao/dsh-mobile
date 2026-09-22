@@ -153,6 +153,14 @@ export class SessionStore extends Emitter<StoreEvents> {
     this.emit('workspacesChanged', undefined)
   }
 
+  /** Optimistically clear one pending question (client-initiated answer/cancel). */
+  resolveQuestion(sessionId: string, rpcId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session === undefined) return
+    session.pendingQuestions.delete(rpcId)
+    this.emit('changed', { sessionId })
+  }
+
   /** Drop generation-scoped state before a reconnect baseline is consumed. */
   resetLiveSnapshots(): void {
     for (const session of this.sessions.values()) {
