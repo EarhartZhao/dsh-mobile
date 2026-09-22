@@ -74,3 +74,32 @@ pnpm --config.verify-deps-before-run=false run test -- --spec user-journey
 | 2026-09-22 | 图片 payload 组装与校验无单测 | 纯函数 `chat-images.ts` + 11 条单测 | `chat-images.test.ts` |
 | 2026-09-22 | 问答弹窗提交后永远禁用 | `resolveQuestion` 乐观清除 + `accepted` 检查 | `session-store.spec.ts` 新增 1 条 |
 
+## 模拟器 UI 测试记录（2026-09-22）
+
+环境：Android 模拟器 `dsh_test`（API 36，1080×2400）+ Metro dev server + debug APK。
+截图存于 `docs/test-plan/ui-*.png`。
+
+| 步骤 | 操作 | 结果 | 截图 |
+|---|---|---|---|
+| 1 | 启动 App → 会话列表渲染 | ✅ 标题/筛选/搜索/空态提示正确 | ui-01-launch.png |
+| 2 | 点"设置"齿轮 → 设置页 | ✅ 版本/主题/回车发送/语言/插件/连接诊断全部可见 | ui-02-settings.png |
+| 3 | 按返回键 → 回到列表 | ✅ | ui-03-back-to-list.png |
+| 4 | 点"+ 新会话"（未连接状态） | ⚠️ 无响应，无提示——发现：断连时新会话按钮静默失败 | ui-04-new-session.png |
+| 5 | 点搜索框输入 "hello test" | ✅ 文本回显，键盘弹出 | ui-05-search.png |
+| 6 | 设置 → 主题 → 选"暗色" | ✅ 整体切换暗色（状态栏/背景/文字） | ui-07-dark-theme.png |
+| 7 | 切回"亮色" | ✅ | ui-08-check.png |
+| 8 | 主列表按返回键 | ✅ App 不退出，弹出"再按一次返回键将应用退到后台"提示 | ui-11-final.png |
+| 9 | 设置 → 语言 → English | ✅ 全部文案切英文（Settings/Theme/Language/Plugin/Unpair 等） | ui-10-english.png |
+| 10 | 切回中文 | ✅ | ui-11-final.png |
+
+发现的问题：
+
+1. **"新会话"按钮在未连接时无反馈**（B4）——用户不知道为什么没反应。
+   建议加 toast "请先连接"或禁用按钮。
+
+以下场景因无宿主连接无法在模拟器上验证，需真机+宿主：
+- 创建会话后进入聊天页（依赖宿主 session.create）
+- 发送消息/流式渲染/取消（依赖宿主）
+- 审批/提问弹窗（依赖宿主 user-questions）
+- 工作区文件浏览（依赖宿主文件系统）
+
