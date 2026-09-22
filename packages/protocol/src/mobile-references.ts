@@ -9,7 +9,14 @@ export interface MobileFileReference {
 
 export interface MobileSessionReference {
   sessionId: string
+  /** Session title, or the session id when no projection holds a title. */
   label: string
+  /**
+   * Presentation title a current host resolves for the row: a subagent's own
+   * label wins over the session title. Added in dsh 0.1.6-alpha.2, so an older
+   * host leaves it absent and the row falls back to `label`.
+   */
+  displayTitle?: string
   cwd?: string
   sameWorkspace: boolean
   createdAt: number

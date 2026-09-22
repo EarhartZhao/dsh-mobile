@@ -1,4 +1,4 @@
-import { inventoryCounts } from './plugin-inventory'
+import { inventoryChangedByEvent, inventoryCounts } from './plugin-inventory'
 
 function entry(enabled: boolean) {
   return { entryId: String(enabled), moduleName: 'plugin', enabled, fiberPhase: 'active' as const }
@@ -17,5 +17,19 @@ describe('inventoryCounts', () => {
   it('distinguishes a bridge that serves no inventory from an empty one', () => {
     expect(inventoryCounts(null)).toBeNull()
     expect(inventoryCounts(undefined)).toBeNull()
+  })
+})
+
+describe('inventoryChangedByEvent', () => {
+  it('accepts every event the plugin manager forwards', () => {
+    expect(inventoryChangedByEvent('plugin-manager/changed')).toBe(true)
+    expect(inventoryChangedByEvent('plugin-manager/install-state')).toBe(true)
+    expect(inventoryChangedByEvent('plugin-manager/install-log')).toBe(true)
+  })
+
+  it('ignores unrelated forwarded events', () => {
+    expect(inventoryChangedByEvent('api-session/activity')).toBe(false)
+    expect(inventoryChangedByEvent('settings/document-updated')).toBe(false)
+    expect(inventoryChangedByEvent('plugin-managers/changed')).toBe(false)
   })
 })

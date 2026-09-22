@@ -15,6 +15,7 @@ import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
 import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
 import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
+import { inventoryChangedByEvent } from './plugin-inventory'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
@@ -313,6 +314,24 @@ function AppContent(): React.JSX.Element {
       .catch(() => setInventory(null))
       .finally(() => setInventoryLoading(false))
   }, [connState])
+
+  /**
+   * Reloads the inventory for a `plugin-manager/*` frame without blanking the
+   * page, so an install the desktop started updates in place.
+   */
+  const syncInventory = useCallback(() => {
+    if (connState !== 'online') return
+    void managerRef.current?.loadInventory().then(snapshot => setInventory(snapshot))
+      .catch(() => undefined)
+  }, [connState])
+
+  useEffect(() => {
+    const store = managerRef.current?.store
+    if (connState !== 'online' || store === undefined) return
+    return store.on('remoteEvent', ({ event }) => {
+      if (inventoryChangedByEvent(event)) syncInventory()
+    })
+  }, [connState, syncInventory])
 
   const refreshHealth = useCallback(() => {
     const manager = managerRef.current
