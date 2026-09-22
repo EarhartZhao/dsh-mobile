@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-22T06:11:08.036Z",
+  "results": [
+    {
+      "name": "core-tests",
+      "status": "PASS",
+      "detail": "Tests  71 passed"
+    },
+    {
+      "name": "mobile-tests",
+      "status": "PASS",
+      "detail": "ok"
+    }
+  ]
+}

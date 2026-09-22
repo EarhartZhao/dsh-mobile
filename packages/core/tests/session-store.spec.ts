@@ -98,6 +98,24 @@ describe('SessionStore', () => {
     expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(0)
   })
 
+  it('resolveQuestion optimistically clears one pending question', () => {
+    const store = new SessionStore()
+    const q1 = RpcId(crypto.randomUUID())
+    const q2 = RpcId(crypto.randomUUID())
+    store.applyMuxFrame(q1, { type: 'question/requested', sessionId: sid, questions: [{ text: 'a' }] as never })
+    store.applyMuxFrame(q2, { type: 'question/requested', sessionId: sid, questions: [{ text: 'b' }] as never })
+    expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(2)
+
+    store.resolveQuestion('s-1', q1)
+    expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(1)
+    expect(store.sessions.get('s-1')!.pendingQuestions.has(q2)).toBe(true)
+
+    // Idempotent for an unknown rpcId or session.
+    store.resolveQuestion('s-1', q1)
+    store.resolveQuestion('s-404', q2)
+    expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(1)
+  })
+
   it('history baseline seeds projections and merges without duplicates', () => {
     const store = new SessionStore()
     store.applyHistory('s-1', [

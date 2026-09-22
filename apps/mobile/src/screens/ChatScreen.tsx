@@ -26,7 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, groupTurns, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationImage, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { deriveConversation, groupTurns, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -34,6 +34,7 @@ import { presetSelectionEnabled } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
 import { Circle, Path, Svg } from 'react-native-svg'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
+import { AttachmentImage } from '../components/AttachmentImage'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
@@ -50,18 +51,11 @@ import { colors, fontSize, radius, spacing } from '../theme'
 import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
+import { appendPendingImage, buildPromptContent, formatBytes, type ImageLimitsView, type ImageRejection, type PendingImage } from '../chat-images'
 
 interface PermissionSelectView {
   options: { value: string; name: string; description?: string }[]
   currentValue: string
-}
-
-interface PendingImage {
-  mediaType: string
-  data: string
-  width: number
-  height: number
-  name?: string | null
 }
 
 interface PickedFile {
@@ -82,15 +76,6 @@ interface PendingFile {
 }
 
 const MAX_MOBILE_FILE_BYTES = 512 * 1024
-
-interface ImageLimitsView {
-  maxImageBytes: number
-  maxImagesPerMessage: number
-  maxMessageImageBytes: number
-  maxImagePixels: number
-  maxImageDimension: number
-  mediaTypes: string[]
-}
 
 interface Props {
   manager: ConnectionManager
@@ -354,37 +339,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     }
   }
 
-  const validateImage = (image: PendingImage): string | null => {
-    if (imageLimits === null) return null
-    const bytes = Math.floor(image.data.length * 3 / 4)
-    if (!imageLimits.mediaTypes.includes(image.mediaType)) return t('chat.unsupportedImageFormat')
-    if (bytes > imageLimits.maxImageBytes) return t('chat.imageTooLarge', { size: formatBytes(imageLimits.maxImageBytes) })
-    if (image.width > imageLimits.maxImageDimension || image.height > imageLimits.maxImageDimension) {
-      return t('chat.imageTooWide', { size: imageLimits.maxImageDimension })
+  const rejectionNotice = (rejection: ImageRejection): string => {
+    switch (rejection.kind) {
+      case 'format': return t('chat.unsupportedImageFormat')
+      case 'perImageSize': return t('chat.imageTooLarge', { size: rejection.sizeLabel })
+      case 'dimension': return t('chat.imageTooWide', { size: rejection.size })
+      case 'pixels': return t('chat.imageTooManyPixels')
+      case 'count': return t('chat.maxImages', { count: rejection.count })
+      case 'totalSize': return t('chat.imagesTooLarge', { size: rejection.sizeLabel })
     }
-    if (image.width * image.height > imageLimits.maxImagePixels) return t('chat.imageTooManyPixels')
-    return null
   }
 
   const appendImage = (image: PendingImage): void => {
-    const invalid = validateImage(image)
-    if (invalid !== null) {
-      showNotice(invalid)
-      return
-    }
     setPendingImages(current => {
-      const next = [...current, image]
-      if (imageLimits !== null && next.length > imageLimits.maxImagesPerMessage) {
-        showNotice(t('chat.maxImages', { count: imageLimits.maxImagesPerMessage }))
-        return current
-      }
-      if (imageLimits !== null) {
-        const total = next.reduce((sum, item) => sum + Math.floor(item.data.length * 3 / 4), 0)
-        if (total > imageLimits.maxMessageImageBytes) {
-          showNotice(t('chat.imagesTooLarge', { size: formatBytes(imageLimits.maxMessageImageBytes) }))
-          return current
-        }
-      }
+      const { next, rejection } = appendPendingImage(current, image, imageLimits)
+      if (rejection !== null) showNotice(rejectionNotice(rejection))
       return next
     })
   }
@@ -930,16 +899,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const clientTimeZone = typeof tz === 'string' && (tz === 'UTC' || tz.includes('/')) ? tz : undefined
     if (clientTimeZone === undefined) console.warn('[prompt] non-IANA timeZone omitted:', tz)
     let result: any = null
-    const content = [
-      ...(text !== '' ? [{ type: 'text' as const, text }] : []),
-      ...pendingImages.map(image => ({
-        type: 'image' as const,
-        mediaType: image.mediaType,
-        data: image.data,
-        ...(image.name === null ? {} : { name: image.name ?? undefined }),
-      })),
-      ...readyFiles.map(file => ({ type: 'file' as const, receiptId: file.receiptId as string })),
-    ]
+    const content = buildPromptContent(text, pendingImages, readyFiles.map(file => ({ receiptId: file.receiptId as string })))
     try {
       const payload = { sessionId, mode: 'queue' as const, content, clientTimeZone }
       if (readyFiles.length > 0) {
@@ -1176,15 +1136,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }
 
   const answerQuestion = useCallback(async (rpcId: string, answer: QuestionAnswerPayload): Promise<void> => {
-    await manager.client?.respond({
+    const receipt = await manager.client?.respond({
       type: 'client-response',
       rpcId: rpcId as never,
       result: { ok: true, value: { sessionId, answer } },
     })
-  }, [manager, sessionId])
+    if (receipt !== undefined && !receipt.accepted) {
+      throw new Error(t('chat.questionStale'))
+    }
+    manager.store.resolveQuestion(sessionId, rpcId)
+  }, [manager, sessionId, t])
 
   const cancelQuestion = useCallback(async (rpcId: string): Promise<void> => {
-    await manager.client?.respond({
+    const receipt = await manager.client?.respond({
       type: 'client-response',
       rpcId: rpcId as never,
       result: {
@@ -1192,7 +1156,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         error: { code: 'cancelled', message: t('chat.questionCancelled'), details: {} },
       },
     })
-  }, [manager, t])
+    if (receipt !== undefined && !receipt.accepted) {
+      throw new Error(t('chat.questionStale'))
+    }
+    manager.store.resolveQuestion(sessionId, rpcId)
+  }, [manager, sessionId, t])
 
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
@@ -1694,11 +1662,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   )
 }
 
-function formatBytes(size: number): string {
-  if (size >= 1024 * 1024) return `${Math.round(size / (1024 * 1024) * 10) / 10}MB`
-  return `${Math.round(size / 1024)}KB`
-}
-
 function imageLimitsSummary(limits: ImageLimitsView, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
   const mediaTypes = limits.mediaTypes
     .map(type => type.replace('image/', '').toUpperCase())
@@ -1978,7 +1941,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
       return (
         <TouchableOpacity activeOpacity={1} style={[styles.bubble, styles.bubbleUser]} onLongPress={onLongPress}>
           {item.images.map(image => (
-            <MessageImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} />
+            <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.messageImage} fallbackStyle={styles.imageFallback} />
           ))}
           <CollapsibleMarkdown text={item.text} />
         </TouchableOpacity>
@@ -2061,44 +2024,6 @@ function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }
         <Text selectable style={codeStyles.code}>{content}</Text>
       </ScrollView>
     </View>
-  )
-}
-
-function MessageImage({ image, manager, sessionId }: {
-  image: ConversationImage
-  manager: ConnectionManager
-  sessionId: string
-}): React.JSX.Element {
-  const { t } = useI18n()
-  const [source, setSource] = useState<string | null>(image.kind === 'data' ? image.uri : null)
-  const [aspect, setAspect] = useState(4 / 3)
-  const [lightboxOpen, setLightboxOpen] = useState(false)
-
-  useEffect(() => {
-    if (image.kind !== 'attachment') return
-    let alive = true
-    void manager.client?.sessions.attachment({ sessionId, attachmentId: image.attachmentId } as never)
-      .then(result => {
-        if (!alive || !result.result.ok) return
-        const value = result.result.value as {
-          attachment: { mediaType: string; width: number; height: number }
-          data: string
-        }
-        setSource(`data:${value.attachment.mediaType};base64,${value.data}`)
-        setAspect(value.attachment.width / value.attachment.height)
-      })
-      .catch(() => undefined)
-    return () => { alive = false }
-  }, [image, manager, sessionId])
-
-  if (source === null) return <Text style={styles.imageFallback}>{t('chat.imageLoading')}</Text>
-  return (
-    <>
-      <TouchableOpacity onPress={() => setLightboxOpen(true)}>
-        <Image source={{ uri: source }} style={[styles.messageImage, { aspectRatio: aspect }]} />
-      </TouchableOpacity>
-      <ImageLightbox visible={lightboxOpen} source={source} name={image.name} onClose={() => setLightboxOpen(false)} />
-    </>
   )
 }
 
