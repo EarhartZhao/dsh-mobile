@@ -228,7 +228,11 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
 
   const newSession = async (agentPreset?: string): Promise<void> => {
     const client = manager.client
-    if (client === null || creatingSession) return
+    if (creatingSession) return
+    if (client === null) {
+      Alert.alert(t('session.notConnected'))
+      return
+    }
     setCreatingSession(true)
     try {
       const result = await client.sessions.create(agentPreset === undefined ? {} : { agentPreset } as never)
