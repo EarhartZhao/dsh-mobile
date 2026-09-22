@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-22T06:11:08.036Z",
+  "date": "2026-09-22T06:43:09.132Z",
   "results": [
     {
       "name": "core-tests",
@@ -7,7 +7,22 @@
       "detail": "Tests  71 passed"
     },
     {
+      "name": "core-typecheck",
+      "status": "PASS",
+      "detail": "ok"
+    },
+    {
       "name": "mobile-tests",
+      "status": "PASS",
+      "detail": "ok"
+    },
+    {
+      "name": "mobile-typecheck",
+      "status": "PASS",
+      "detail": "ok"
+    },
+    {
+      "name": "mobile-lint",
       "status": "PASS",
       "detail": "ok"
     }
