@@ -134,6 +134,30 @@ describe('SessionStore', () => {
     expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(1)
   })
 
+  it('keeps live transient frames at the tail when a history page merges in', () => {
+    const store = new SessionStore()
+    // The live turn streams before the chat opens, so its transient chunks land
+    // first: they carry no seq, and sorting them as -1 hoisted them in front of
+    // the whole loaded log — which rendered the running turn's process block
+    // above the prompt it belongs to.
+    store.applyMuxFrame(...mux({
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 9,
+        data: { turn: 2, step: 1, transient: true, attemptId: 'attempt-1', index: 0, chunk: { type: 'text-delta', text: 'live' } },
+      } as never,
+    }))
+    store.applyHistory(sid, [
+      { event: { seq: 1, type: 'user/message', time: 1, data: { message: { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } } } } as never },
+      { event: { seq: 2, type: 'assistant/message', time: 2, data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'ok' }] } } } as never },
+    ])
+
+    const events = store.sessions.get(sid)!.events
+    expect(events.map(entry => (entry.event as { type?: string }).type)).toEqual([
+      'user/message', 'assistant/message', 'assistant/chunk',
+    ])
+  })
+
   it('history baseline seeds projections and merges without duplicates', () => {
     const store = new SessionStore()
     store.applyHistory('s-1', [

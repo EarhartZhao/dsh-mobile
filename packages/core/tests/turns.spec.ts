@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupTurns } from '../src/turns.ts'
+import { groupTurns, processOwnerItem } from '../src/turns.ts'
 import type { ConversationItem } from '../src/conversation.ts'
 
 function user(seq: number, text: string) {
@@ -36,6 +36,24 @@ const rowShape = (turn: { rows: unknown[] }) => turn.rows.map(row => {
 })
 
 describe('groupTurns', () => {
+  it('discloses only turns that reasoned or called a tool', () => {
+    const plain = groupTurns(items(user(1, 'hi'), assistant(2, 'hello')))[0]!
+    expect(plain.process).toEqual([])
+    // A plain answer must not render a disclosure: an empty one opens into
+    // nothing, so tapping it looks like a broken control.
+    expect(processOwnerItem(plain)).toBeUndefined()
+
+    const reasoned = groupTurns(items(
+      user(1, 'hi'),
+      assistant(2, '', 'thinking'),
+      tool(3, 'Bash'),
+      assistant(4, 'hello'),
+    ))[0]!
+    // The disclosure rides the turn's answer row, which is what the transcript
+    // renders as one card: reasoning above the text it produced.
+    expect(processOwnerItem(reasoned)).toMatchObject({ kind: 'assistant', text: 'hello' })
+  })
+
   it('opens a turn at every user message', () => {
     const turns = groupTurns(items(user(1, 'hi'), assistant(2, 'one'), user(3, 'again'), assistant(4, 'two')))
 

@@ -26,7 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, groupTurns, placementLabel, queuePreview, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { deriveConversation, groupTurns, placementLabel, processOwnerItem, queuePreview, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -1175,7 +1175,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   // and sits in the answer's flow), so only a turn that has no answer yet — a
   // live turn still calling tools — needs a card of its own.
   const listRows: ListRow[] = groupTurns(items).flatMap(turn => {
-    const answer = turn.visible.find(item => item.kind === 'assistant' || item.kind === 'stream')
+    const answer = processOwnerItem(turn)
     return turn.rows
       .filter(row => row.kind !== 'process' || answer === undefined)
       .map(row => row.kind === 'process'

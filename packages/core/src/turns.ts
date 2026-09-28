@@ -40,6 +40,17 @@ export type TurnRow =
   | { kind: 'process' }
   | { kind: 'item'; item: ConversationItem }
 
+/**
+ * The row that carries a turn's process disclosure, or undefined when the turn
+ * has nothing to disclose. A turn with no reasoning and no tool calls — a plain
+ * question and answer — must not render a disclosure at all: an empty one opens
+ * into nothing, so tapping it looks like a control that does not work.
+ */
+export function processOwnerItem(turn: Turn): ConversationItem | undefined {
+  if (turn.process.length === 0) return undefined
+  return turn.visible.find(item => item.kind === 'assistant' || item.kind === 'stream')
+}
+
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>
 
 function isRunning(item: ConversationItem): boolean {

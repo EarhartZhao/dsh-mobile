@@ -201,7 +201,12 @@ export class SessionStore extends Emitter<StoreEvents> {
       if (seq !== undefined) known.add(seq)
       session.events.push(entry)
     }
-    session.events.sort((a, b) => (eventSeq(a) ?? -1) - (eventSeq(b) ?? -1))
+    // Seq-less entries are live transient chunks, which are always the newest
+    // events: sorting them as -1 hoisted them in front of the whole loaded log,
+    // which rendered a running turn's reasoning and cursor *above* the prompt
+    // they belong to. They keep their arrival order at the tail instead.
+    session.events.sort((a, b) =>
+      (eventSeq(a) ?? Number.MAX_SAFE_INTEGER) - (eventSeq(b) ?? Number.MAX_SAFE_INTEGER))
     const last = session.events.at(-1)
     const lastSeq = last === undefined ? -1 : (eventSeq(last) ?? session.lastSeq)
     if (lastSeq > session.lastSeq) session.lastSeq = lastSeq
