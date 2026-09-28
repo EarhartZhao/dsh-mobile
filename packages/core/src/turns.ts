@@ -112,7 +112,16 @@ function isRunning(item: ConversationItem): boolean {
  */
 function isVisible(item: ConversationItem): boolean {
   if (item.kind === 'user' || item.kind === 'compaction') return true
-  if (item.kind === 'stream') return true
+  /**
+   * A live buffer that has not produced text yet must not render a bubble: the
+   * host opens the buffer on the first chunk of a step, and a step that starts
+   * with reasoning (or with a tool-call delta) leaves the text empty. That bubble
+   * was an empty card with nothing but a cursor, sitting below the previous
+   * answer until the new text arrived. Its reasoning still reaches the reader —
+   * `stepsOf` puts it in the process block — and liveness is already carried by
+   * the transcript's running indicator, so nothing is lost by hiding the shell.
+   */
+  if (item.kind === 'stream') return item.text !== ''
   // Content with no renderer still gets its own row: hiding it is the failure
   // mode this row exists to prevent.
   if (item.kind === 'unknown') return true

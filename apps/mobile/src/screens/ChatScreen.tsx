@@ -11,6 +11,7 @@ import {
   Clipboard,
   Image,
   FlatList,
+  Linking,
   Keyboard,
   KeyboardAvoidingView,
   NativeModules,
@@ -37,6 +38,7 @@ import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { AttachmentImage } from '../components/AttachmentImage'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
+import { linkTarget } from '../link-targets'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
 import { ModalBackdrop } from '../components/ModalBackdrop'
@@ -673,6 +675,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
     noticeTimer.current = setTimeout(() => setNotice(null), 4000)
   }, [])
+
+  /**
+   * A tapped link: URLs leave the app, file references open the workspace
+   * preview, and this build's own vocabularies (`dsh-session:`, anchors) are
+   * ignored. Without this the renderer's default `Linking.openURL` swallowed
+   * every relative path the model cites — which is most of them.
+   */
+  const openTranscriptLink = useCallback((href: string): void => {
+    const target = linkTarget(href)
+    if (target.kind === 'ignore') return
+    if (target.kind === 'file') {
+      setPreviewPath(target.path)
+      return
+    }
+    void Linking.openURL(target.url).catch(() => {
+      showNotice(t('chat.linkFailed', { url: target.url }))
+    })
+  }, [showNotice, t])
 
   const loadOlderHistory = useCallback(async (): Promise<void> => {
     const client = manager.client
@@ -1318,6 +1338,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
               sessionId={sessionId}
               onLongPress={() => setMessageAction(item.item)}
               onPreview={setPreviewPath}
+              onOpenLink={openTranscriptLink}
               rating={item.item.kind === 'assistant' && item.item.messageId !== undefined ? feedback[item.item.messageId] : undefined}
               {...(item.process === undefined ? {} : { process: item.process })}
             />
@@ -1968,7 +1989,15 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
 const LONG_REPLY_LIMIT = 6000
 const REPLY_PREVIEW_LIMIT = 1200
 
-function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
+function CollapsibleMarkdown({ text, onOpenLink }: {
+  text: string
+  /**
+   * Handles a tapped link. Returning nothing (rather than a boolean) also
+   * suppresses the renderer's own `Linking.openURL`, which is what we want for
+   * the relative file paths these transcripts are full of.
+   */
+  onOpenLink?: (href: string) => void
+}): React.JSX.Element {
   const { t } = useI18n()
   const collapsible = text.length > LONG_REPLY_LIMIT
   const [expanded, setExpanded] = useState(!collapsible)
@@ -1994,7 +2023,15 @@ function CollapsibleMarkdown({ text }: { text: string }): React.JSX.Element {
             <Text style={styles.replyToggleText}>{t('chat.replyCollapse')}</Text>
           </TouchableOpacity>
         )}
-        <Markdown style={markdownStyles} rules={markdownRules}>{text}</Markdown>
+        <Markdown
+          style={markdownStyles}
+          rules={markdownRules}
+          {...onOpenLink === undefined
+            ? {}
+            : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+        >
+          {text}
+        </Markdown>
       </>
     )
   }
@@ -2051,13 +2088,15 @@ function UnknownEventCard({ item }: { item: Extract<ConversationItem, { kind: 'u
   )
 }
 
-function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, process }: {
+function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, rating, process }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
   onLongPress: () => void
   /** Opens the workspace preview sheet for one produced path. */
   onPreview: (path: string) => void
+  /** Handles a tapped Markdown link (URLs leave the app, file refs preview). */
+  onOpenLink: (href: string) => void
   /** Durable rating of this assistant message, when one exists. */
   rating?: MobileFeedbackItem
   /** The turn's process disclosure, merged into the answer's own card. */
@@ -2071,7 +2110,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
           {item.images.map(image => (
             <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.messageImage} fallbackStyle={styles.imageFallback} />
           ))}
-          <CollapsibleMarkdown text={item.text} />
+          <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
         </TouchableOpacity>
       )
     case 'compaction':
@@ -2099,7 +2138,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
               bare
             />
           )}
-          <CollapsibleMarkdown text={item.text} />
+          <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
             <View style={styles.deliverableRow}>
               {item.producedFiles.map(path => (

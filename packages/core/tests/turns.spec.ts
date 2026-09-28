@@ -114,6 +114,21 @@ describe('groupTurns', () => {
     expect(groupTurns(items(user(1, 'x'), tool(2, 'a'), assistant(3, 'done')))[0]!.running).toBe(false)
   })
 
+  it('gives a live buffer with no text yet no bubble of its own', () => {
+    // The host opens a step's buffer on its first chunk, which can be reasoning
+    // or a tool-call delta. An empty bubble with just a cursor then sat below the
+    // previous answer until the text arrived; the reasoning still shows in the
+    // process block, so the shell is pure noise.
+    const reasoningOnly = groupTurns(items(user(1, 'q'), stream(2, '', 'thinking about it')))[0]!
+    expect(kinds(reasoningOnly)).toEqual(['user'])
+    expect(reasoningOnly.process.map(step => step.kind)).toEqual(['thinking'])
+    expect(reasoningOnly.running).toBe(true)
+
+    // Once the answer starts streaming, the bubble comes back with the cursor.
+    const streaming = groupTurns(items(user(1, 'q'), stream(2, 'partial answer', 'thinking')))[0]!
+    expect(kinds(streaming)).toEqual(['user', 'stream'])
+  })
+
   it('keeps content that arrived before any user message in a leading turn', () => {
     const turns = groupTurns(items(stream(1, 'greeting')))
 
