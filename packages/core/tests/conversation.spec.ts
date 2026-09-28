@@ -32,6 +32,23 @@ describe('deriveConversation', () => {
     expect(items[1]).toMatchObject({ reasoning: '先看目录' })
   })
 
+  it('keeps a live stream item behind the prompt even before any durable turn event', () => {
+    const store = new SessionStore()
+    // The first chunks of a fresh turn can outrun the prompt's own durable
+    // frame; the placeholder seq must not hoist them above it once it lands.
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 1,
+        data: { turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0, chunk: { type: 'reasoning-delta', text: '先想一下' } },
+      } as never,
+    })
+    feed(store, 8, 'user/message', { message: { content: [{ type: 'text', text: '你好' }] } })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['user', 'stream'])
+  })
+
   it('renders user/assistant/tool items in order', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '你好' }] } })

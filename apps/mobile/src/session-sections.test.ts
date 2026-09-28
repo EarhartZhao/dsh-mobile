@@ -45,6 +45,19 @@ describe('sessionSections', () => {
     expect(sections.map(section => section.sessionIds)).toEqual([['s1'], ['loose']])
   })
 
+  it('keeps the one provisional blank row the user is in, like the Web sidebar', () => {
+    const sections = sessionSections({
+      workspaces: [workspace('w1', 'A', ['blank', 'other-blank', 's1'])],
+      summaries: [summary('blank', true), summary('other-blank', true), summary('s1')],
+      archivedSessionIds: [],
+      currentSessionId: 'blank',
+    })
+
+    // A chat the user just created has no message yet; hiding it would make a
+    // workspace look as if the new chat was never created there.
+    expect(sections.map(section => section.sessionIds)).toEqual([['blank', 's1']])
+  })
+
   it('omits a workspace whose rows are all hidden, and an empty ungrouped section', () => {
     const sections = sessionSections({
       workspaces: [workspace('w1', 'A', ['blank']), workspace('w2', 'B', ['s1'])],

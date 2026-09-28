@@ -18,6 +18,12 @@ export interface SessionSectionsInput {
   workspaces: WorkspaceView[]
   summaries: SessionSummary[]
   archivedSessionIds: string[]
+  /**
+   * Session the list must keep visible even while it is still blank: the
+   * Web sidebar does the same, showing exactly one provisional "New Session"
+   * row instead of hiding every chat that has not been sent to yet.
+   */
+  currentSessionId?: string | null
 }
 
 /**
@@ -27,7 +33,10 @@ export interface SessionSectionsInput {
  */
 export function sessionSections(input: SessionSectionsInput): SessionSection[] {
   const visible = input.summaries.filter(
-    summary => !summary.blank && !input.archivedSessionIds.includes(summary.sessionId),
+    summary => (!summary.blank
+      || (input.currentSessionId !== undefined && input.currentSessionId !== null
+        && summary.sessionId === input.currentSessionId))
+      && !input.archivedSessionIds.includes(summary.sessionId),
   )
   const visibleIds = new Set<string>(visible.map(summary => summary.sessionId))
   const claimed = new Set<string>()

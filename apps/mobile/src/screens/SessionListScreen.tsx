@@ -24,6 +24,8 @@ interface Props {
   manager: ConnectionManager
   onOpenSession: (sessionId: string) => void
   onOpenSettings?: () => void
+  /** Chat the user was in last; its blank row stays visible, as on the Web. */
+  currentSessionId?: string | null
 }
 
 function useStoreVersion(manager: ConnectionManager): number {
@@ -46,7 +48,7 @@ function useStoreVersion(manager: ConnectionManager): number {
 function copyPath(path: string): void { Clipboard.setString(path) }
 function sharePath(path: string): void { void Share.share({ message: path }).catch(() => undefined) }
 
-export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Props): React.JSX.Element {
+export function SessionListScreen({ manager, onOpenSession, onOpenSettings, currentSessionId }: Props): React.JSX.Element {
   const { t } = useI18n()
   useStoreVersion(manager)
   const { store } = manager
@@ -62,6 +64,8 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
   const [browserError, setBrowserError] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const [creatingSession, setCreatingSession] = useState(false)
+  /** Session this screen just created: visible before its first message. */
+  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null)
   const [sessionRenameId, setSessionRenameId] = useState<string | null>(null)
   /** Collapsed section keys; a section collapses only when explicitly closed. */
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
@@ -74,7 +78,9 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
    */
   const [sessionMenu, setSessionMenu] = useState<{ sessionId: string; title: string; archived: boolean } | null>(null)
   const [workspaceMenu, setWorkspaceMenu] = useState<{ workspaceId: string; title: string } | null>(null)
-  const visible = store.summaries.filter(s => !s.blank && !store.archivedSessionIds.includes(s.sessionId))
+  const provisionalId = createdSessionId ?? currentSessionId ?? null
+  const visible = store.summaries.filter(s =>
+    (!s.blank || s.sessionId === provisionalId) && !store.archivedSessionIds.includes(s.sessionId))
   const archived = store.summaries.filter(s => store.archivedSessionIds.includes(s.sessionId))
   const visibleById = new Map(visible.map(s => [s.sessionId, s]))
   const accountedIds = new Set(store.workspaces.flatMap(ws => ws.sessionIds))
@@ -103,6 +109,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
           workspaces: store.workspaces,
           summaries: store.summaries,
           archivedSessionIds: store.archivedSessionIds,
+          currentSessionId: provisionalId,
         }).flatMap(section => {
           const sectionKey = section.workspaceId ?? 'ungrouped'
           const header: ListEntry = {
@@ -235,8 +242,15 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings }: Pr
     }
     setCreatingSession(true)
     try {
-      const result = await client.sessions.create(agentPreset === undefined ? {} : { agentPreset } as never)
+      // A chat started from a workspace chip belongs to that workspace: without
+      // the id the Host creates it in its own default directory and the row
+      // lands under 未分组 instead of the workspace the user is looking at.
+      const result = await client.sessions.create({
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+        ...(selectedWs === null ? {} : { workspaceId: selectedWs }),
+      } as never)
       if (result.result.ok) {
+        setCreatedSessionId(result.result.value.sessionId)
         onOpenSession(result.result.value.sessionId)
       } else {
         Alert.alert(t('session.operationFailed'), t('link.newSessionFailed', {
@@ -631,7 +645,11 @@ function SessionRow({ manager, item, onOpen, onMenu }: {
   onMenu: () => void
 }): React.JSX.Element {
   const { locale, t } = useI18n()
-  const title = manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
+  // A Session with no message yet is the provisional row for the workspace the
+  // user just created it in, so it reads as a new chat rather than as a path.
+  const title = item.blank
+    ? t('chat.newSessionTitle')
+    : manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
   const pending = manager.store.sessions.get(item.sessionId)
   const needsAttention = (pending?.pendingApprovals.size ?? 0) + (pending?.pendingQuestions.size ?? 0) > 0
   const liveJobs = (pending?.jobs ?? []).filter(j => j.status === 'running' || j.status === 'stopping').length

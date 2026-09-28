@@ -100,6 +100,19 @@ function AppContent(): React.JSX.Element {
   const [pairing, setPairing] = useState<PairingRecord | null>(null)
   const [booted, setBooted] = useState(false)
   const [route, setRoute] = useState<Route>({ name: 'list' })
+  /**
+   * Chat the user was in last. A brand-new Session is blank until its first
+   * message, and the list hides blank rows — except this one, which keeps the
+   * chat the user just created visible in its workspace (the Web sidebar shows
+   * exactly the same single provisional row).
+   */
+  const [lastChatSessionId, setLastChatSessionId] = useState<string | null>(null)
+
+  /** Open one chat, remembering it as the list's provisional blank row. */
+  const openSession = useCallback((sessionId: string) => {
+    setLastChatSessionId(sessionId)
+    setRoute({ name: 'chat', sessionId })
+  }, [])
   const [connState, setConnState] = useState<ConnectionState>('idle')
   const [alert, setAlert] = useState<string | null>(null)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -406,12 +419,12 @@ function AppContent(): React.JSX.Element {
     }
     try {
       const result = await client.sessions.create({} as never)
-      if (result.result.ok) setRoute({ name: 'chat', sessionId: result.result.value.sessionId })
+      if (result.result.ok) openSession(result.result.value.sessionId)
       else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
     } catch (cause) {
       showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
     }
-  }, [connState, showAlert, t])
+  }, [connState, openSession, showAlert, t])
 
   useEffect(() => {
     const subscription = Linking.addEventListener('url', ({ url }) => { void openDeepLink(url) })
@@ -427,14 +440,14 @@ function AppContent(): React.JSX.Element {
       if (client === null || client === undefined) return
       try {
         const result = await client.sessions.create({} as never)
-        if (result.result.ok) setRoute({ name: 'chat', sessionId: result.result.value.sessionId })
+        if (result.result.ok) openSession(result.result.value.sessionId)
         else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
       } catch (cause) {
         showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
       }
     }
     void createSession()
-  }, [connState, pendingNewSession, showAlert, t])
+  }, [connState, openSession, pendingNewSession, showAlert, t])
 
   if (!booted) {
     return <View style={styles.root} />
@@ -465,8 +478,9 @@ function AppContent(): React.JSX.Element {
           {route.name === 'list' ? (
             <SessionListScreen
               manager={managerRef.current}
-              onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
+              onOpenSession={openSession}
               onOpenSettings={() => setRoute({ name: 'settings' })}
+              currentSessionId={lastChatSessionId}
             />
           ) : route.name === 'settings' ? (
             <SettingsScreen
@@ -500,7 +514,7 @@ function AppContent(): React.JSX.Element {
               manager={managerRef.current}
               sessionId={route.sessionId}
               onBack={() => setRoute({ name: 'list' })}
-              onOpenSession={sessionId => setRoute({ name: 'chat', sessionId })}
+              onOpenSession={openSession}
               enterToSend={preferences.enterToSend}
             />
           )}
