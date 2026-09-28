@@ -27,7 +27,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { compactJson, deriveConversation, groupTurns, placementLabel, prettyJson, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { compactJson, deriveConversation, groupTurns, placementLabel, prettyJson, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -2051,6 +2051,33 @@ type ListRow =
   | { kind: 'item'; key: string; item: ConversationItem; process?: Turn }
 
 /**
+ * The turn's file changes, in the web's per-turn card shape: one headline
+ * (`已编辑 2 个文件` with the total `+219 -1`) and one row per file. Tapping a row
+ * opens the same workspace preview the produced-file chips use.
+ */
+function FileChangesCard({ changes, onPreview }: {
+  changes: FileChangeSummary[]
+  onPreview: (path: string) => void
+}): React.JSX.Element {
+  const { t } = useI18n()
+  const totals = totalLineChanges(changes)
+  return (
+    <View style={styles.changesCard}>
+      <View style={styles.changesHeader}>
+        <Text style={styles.changesTitle}>{t('chat.changesTitle', { count: changes.length })}</Text>
+        <Text style={styles.changesTotals}>{`+${totals.added} -${totals.removed}`}</Text>
+      </View>
+      {changes.map(change => (
+        <TouchableOpacity key={change.path} style={styles.changesRow} onPress={() => onPreview(change.path)}>
+          <Text style={styles.changesPath} numberOfLines={1}>{change.path}</Text>
+          <Text style={styles.changesCounts}>{`+${change.added} -${change.removed}`}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  )
+}
+
+/**
  * Conversation content this client has no renderer for.
  *
  * The web transcript discloses the event type and its raw payload rather than
@@ -2137,6 +2164,9 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
               onLongPress={() => onLongPress()}
               bare
             />
+          )}
+          {process !== undefined && process.changes.length > 0 && (
+            <FileChangesCard changes={process.changes} onPreview={onPreview} />
           )}
           <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
           {item.kind === 'assistant' && item.producedFiles.length > 0 && (
@@ -2393,6 +2423,32 @@ const styles = StyleSheet.create({
   unknownJson: { color: colors.text, fontSize: 11, fontFamily: 'monospace', padding: spacing(2) },
   unknownActions: { flexDirection: 'row', gap: spacing(3) },
   unknownAction: { color: colors.accent, fontSize: fontSize.tiny },
+  changesCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    marginBottom: spacing(1.5),
+    overflow: 'hidden',
+  },
+  changesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1.5),
+    backgroundColor: colors.bg,
+  },
+  changesTitle: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
+  changesTotals: { color: colors.textDim, fontSize: fontSize.tiny, fontFamily: 'monospace' },
+  changesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(2),
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1),
+  },
+  changesPath: { flex: 1, color: colors.textDim, fontSize: fontSize.tiny },
+  changesCounts: { color: colors.textDim, fontSize: fontSize.tiny, fontFamily: 'monospace' },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
   replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },

@@ -37,6 +37,37 @@ export function isMarkdown(path: string): boolean {
 }
 
 /**
+ * Extensions that need an application to open: the phone cannot render them, and
+ * neither can this sheet. The list is by intent, not by exclusion — a `.pdf` or
+ * `.docx` is exactly the case the hand-off exists for, while an unknown
+ * extension is still attempted as text.
+ */
+const BINARY_EXTENSIONS: ReadonlySet<string> = new Set([
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf',
+  'zip', 'gz', 'tgz', 'tar', '7z', 'rar', 'bz2', 'xz',
+  'mp3', 'wav', 'm4a', 'ogg', 'flac', 'mp4', 'mov', 'avi', 'mkv', 'webm',
+  'ttf', 'otf', 'woff', 'woff2', 'exe', 'dll', 'so', 'dylib', 'bin', 'wasm', 'sqlite', 'db', 'class', 'jar',
+])
+
+/** How this client should present one path. */
+export type PreviewKind = 'image' | 'text' | 'binary'
+
+/**
+ * Classify a path for the preview sheet: images render inline, text renders as
+ * text, and everything else is handed to an application that can open it.
+ *
+ * @param path - the file path (any separator style).
+ * @returns the preview mode this client uses.
+ */
+export function previewKindOf(path: string): PreviewKind {
+  if (imageMediaTypeOf(path) !== undefined) return 'image'
+  if (BINARY_EXTENSIONS.has(extensionOf(path))) return 'binary'
+  // Everything else is attempted as text: the host's read either returns text or
+  // fails loudly, and a wrong guess costs one round trip rather than a blank card.
+  return 'text'
+}
+
+/**
  * Relative image targets of one Markdown page. Absolute paths, URLs, anchors,
  * and non-image kinds are skipped: the host resolves relative references
  * against the document's own directory, which is what `readRelated` needs.

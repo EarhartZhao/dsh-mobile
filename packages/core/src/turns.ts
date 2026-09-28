@@ -21,9 +21,14 @@ import {
   type ProcessActivitySummary,
   type ToolActivity,
 } from './activity.ts'
+import { summarizeFileChanges, type FileChangeSummary, type FileDiffLike } from './file-changes.ts'
 import type { ConversationItem, ToolSubCall } from './conversation.ts'
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
 
 /** One line inside a turn's process block. */
 export type TurnProcessStep =
@@ -69,6 +74,8 @@ export interface Turn {
   live: boolean
   /** Categories ranked by call count, plus the current live activity. */
   summary: ProcessActivitySummary
+  /** Files this turn changed, with their line movement (the web's per-turn diff card). */
+  changes: FileChangeSummary[]
   /** Recorded `turn/start` time, else the first item's; 0 when unknown. */
   startedAt: number
   /** Recorded `turn/end` time, else the last item's. */
@@ -162,6 +169,25 @@ function itemTime(item: ConversationItem): number {
   return typeof item.time === 'number' && Number.isFinite(item.time) ? item.time : 0
 }
 
+/**
+ * The inline diffs one tool result presented, if any. A settled call prefers the
+ * result's card (the applied change); a still-running one has only the call's.
+ */
+function diffsOf(item: ToolItem): FileDiffLike[] {
+  const view = item.status === 'running' ? item.callView : (item.resultView ?? item.callView)
+  if (!isRecord(view) || view['card'] !== 'diff' || !Array.isArray(view['diffs'])) return []
+  const diffs: FileDiffLike[] = []
+  for (const candidate of view['diffs']) {
+    if (!isRecord(candidate) || typeof candidate['path'] !== 'string') continue
+    diffs.push({
+      path: candidate['path'],
+      oldText: typeof candidate['oldText'] === 'string' ? candidate['oldText'] : null,
+      newText: typeof candidate['newText'] === 'string' ? candidate['newText'] : '',
+    })
+  }
+  return diffs
+}
+
 function stepsOf(item: ConversationItem): TurnProcessStep[] {
   if (item.kind === 'tool') {
     return [{
@@ -204,6 +230,7 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
       running: false,
       live: false,
       summary: { counts: [], runningDetail: '', preparing: false },
+      changes: [],
       startedAt: pendingStart ?? itemTime(item),
       endedAt: itemTime(item),
     }
@@ -258,6 +285,9 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
       turn.process
         .filter((step): step is Extract<TurnProcessStep, { kind: 'thinking' }> => step.kind === 'thinking')
         .map(step => step.text),
+    )
+    turn.changes = summarizeFileChanges(
+      turn.process.flatMap(step => step.kind === 'tool' ? diffsOf(step.item) : []),
     )
     if (turn.process.length > 0) turn.rows.push({ kind: 'process' })
     for (const item of turn.visible) {

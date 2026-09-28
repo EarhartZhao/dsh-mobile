@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
-import { imageMediaTypeOf, isMarkdown, relativeImageRefs } from '../file-kinds'
+import { imageMediaTypeOf, isMarkdown, previewKindOf, relativeImageRefs } from '../file-kinds'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -38,6 +38,11 @@ type PreviewState =
   /** The image is larger than one phone-sized byte window; a partial render
    *  would be a broken picture, so the sheet says so instead. */
   | { status: 'tooLarge'; absolutePath?: string }
+  /**
+   * A document this client cannot render (PDF, Office, archive, media…). The
+   * sheet says so and keeps the host hand-off actions rather than showing bytes.
+   */
+  | { status: 'external' }
   | { status: 'error'; message: string }
 
 /** One cached preview plus the version that produced it. */
@@ -72,6 +77,12 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
     setState({ status: 'loading' })
     const cacheKey = `${sessionId}\u0000${path}`
     const load = async (): Promise<void> => {
+      // A document this client cannot render never leaves the sheet: asking the
+      // host for its bytes would only fill the screen with binary noise.
+      if (previewKindOf(path) === 'binary') {
+        if (alive) setState({ status: 'external' })
+        return
+      }
       try {
         // A cheap stat decides whether the cached page is still current; hosts
         // without the mapping answer mobile-forbidden and we just re-read.
@@ -196,6 +207,9 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             {state.status === 'tooLarge' && (
               <Text style={styles.hint}>{t('file.imageTooLarge', { limit: `${Math.round(MAX_IMAGE_BYTES / 1024)}KB` })}</Text>
             )}
+            {state.status === 'external' && (
+              <Text style={styles.hint}>{t('file.needsApp')}</Text>
+            )}
             {state.status === 'image' && (
               <Image source={{ uri: state.uri }} style={styles.image} resizeMode="contain" />
             )}
@@ -269,11 +283,12 @@ function SheetAction({ label, onPress }: { label: string; onPress: () => void })
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.bgElevated,
-    borderRadius: radius.card,
-    marginHorizontal: spacing(3),
-    padding: spacing(4),
+    /** Fullscreen surface: a preview is a reading view, not a dialog. */
+    flex: 1,
+    paddingHorizontal: spacing(4),
+    paddingTop: spacing(6),
+    paddingBottom: spacing(4),
     gap: spacing(2),
-    maxHeight: '80%',
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing(2) },
   title: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600' },
