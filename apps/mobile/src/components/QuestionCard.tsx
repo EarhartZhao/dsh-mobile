@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import Markdown from 'react-native-markdown-display'
+import { unknownQuestionIntentKind } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -17,7 +18,13 @@ export interface QuestionItemView {
   detail?: string
   options?: QuestionOptionView[]
   multiSelect?: boolean
-  intent?: { kind: 'plan-review'; approve: string }
+  /**
+   * Presentation intent. `kind` is deliberately an open string: the wire carries
+   * a tagged union the host may extend, and a client that hard-validates the tag
+   * loses the whole question the moment it grows an arm. Unknown kinds render as
+   * the generic question with a note (see `unknownQuestionIntentKind`).
+   */
+  intent?: { kind: string; approve?: string }
 }
 
 export interface PendingQuestionView {
@@ -38,7 +45,7 @@ interface DraftAnswer {
 function isPlanReview(items: QuestionItemView[]): items is [QuestionItemView] {
   if (items.length !== 1) return false
   const item = items[0]
-  if (item?.intent?.kind !== 'plan-review' || item.detail === undefined) return false
+  if (item?.intent?.kind !== 'plan-review' || typeof item.intent.approve !== 'string' || item.detail === undefined) return false
   if (item.multiSelect === true) return false
   const options = item.options ?? []
   return options.length <= 2 && options.some(option => option.label === item.intent?.approve)
@@ -75,6 +82,12 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
   const review = isPlanReview(questions) ? questions[0] : null
   const reviewApprove = review?.options?.find(option => option.label === review.intent?.approve)
   const reviewDecline = review?.options?.find(option => option.label !== review.intent?.approve)
+  /**
+   * An intent this build has no card for. The card still works — the question is
+   * answerable as a plain list — but the reader is told why it does not look the
+   * way the host intended, instead of being left to guess.
+   */
+  const unknownIntent = questions.map(unknownQuestionIntentKind).find(kind => kind !== undefined)
 
   const updateDraft = (questionId: string, update: (draft: DraftAnswer) => DraftAnswer): void => {
     setError(null)
@@ -231,6 +244,9 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
         </TouchableOpacity>
       </View>
       <ScrollView style={styles.body} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+        {unknownIntent !== undefined && (
+          <Text style={styles.intentNote}>{t('question.unknownIntent', { kind: unknownIntent })}</Text>
+        )}
         {question.detail !== undefined && question.detail !== '' && (
           <Markdown style={markdownStyles}>{question.detail}</Markdown>
         )}
@@ -347,6 +363,13 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(1) },
   questionText: { color: colors.text, fontSize: fontSize.body, fontWeight: '600' },
   progress: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(1) },
+  intentNote: {
+    color: colors.textDim,
+    fontSize: fontSize.tiny,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.border,
+    paddingLeft: spacing(1.5),
+  },
   close: { color: colors.accent, fontSize: fontSize.small },
   body: { maxHeight: 280 },
   option: {

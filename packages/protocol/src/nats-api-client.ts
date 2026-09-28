@@ -12,6 +12,7 @@ import { AbstractApiClient, type IApiClient } from './vendor/fetch/client.ts'
 import type { ApiProxy, HostFrame, MuxFrame, RpcRequest, ServerRequest } from './vendor/api/index.ts'
 import { serverRequestSchema } from './vendor/api/rpc.schema.ts'
 import { hostFrameSchema, muxFrameSchema } from './vendor/api/events.schema.ts'
+import { salvageQuestionFrame, unknownQuestionIntentKinds } from './mobile-questions.ts'
 import { evtSubject, svcSubject, TOKEN_HEADER } from './subjects.ts'
 import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 import { createMobileCommands } from './mobile-commands.ts'
@@ -131,7 +132,7 @@ export class NatsApiClient extends AbstractApiClient {
         let frame: F
         try {
           full = serverRequestSchema.parse(JSON.parse(new TextDecoder().decode(msg.data)))
-          frame = frameSchema.parse(full.payload)
+          frame = this.parseFrame(full.payload, frameSchema)
         } catch (error) {
           console.error(`[dsh-mobile] dropping malformed frame on ${subject}:`, error)
           continue
@@ -142,6 +143,29 @@ export class NatsApiClient extends AbstractApiClient {
     } finally {
       signal.removeEventListener('abort', onAbort)
       sub.unsubscribe()
+    }
+  }
+
+  /**
+   * Validate one frame payload, with the question frame's wide re-read as the
+   * only fallback.
+   *
+   * The frozen schema treats an unknown `intent` tag as a rejected frame. On a
+   * client that means the user never sees the question — the session just looks
+   * stuck while the host waits for an answer. So a payload the strict schema
+   * refuses gets one more chance as a question request, and the kept frame is
+   * logged rather than silently accepted: the point is to render what this
+   * client understands and say what it does not, never to show nothing.
+   */
+  private parseFrame<F extends MuxFrame | HostFrame>(payload: unknown, frameSchema: z.ZodType<F>): F {
+    try {
+      return frameSchema.parse(payload)
+    } catch (error) {
+      const salvaged = salvageQuestionFrame(payload)
+      if (salvaged === undefined) throw error
+      console.warn('[dsh-mobile] kept a question frame the frozen schema rejected; unrendered intent kinds:',
+        unknownQuestionIntentKinds(salvaged).join(', ') || '(none)')
+      return salvaged as unknown as F
     }
   }
 

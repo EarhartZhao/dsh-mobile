@@ -83,6 +83,7 @@
 | 运行中底部实时指示 | ✅ turn/start.time + 本地时钟 | ● | "深度求索中，用时 49秒…"，行内自持 1 秒定时器，不触发整表重渲染 |
 | 会话底部实时统计 | ✅ sessionStats/tokenUsage 投影 | ◐ | 目前仅有会话统计条（轮/步、tok/s、缓存命中在统计面板内），未做底部常驻一行 |
 | 未知插件事件兜底 | ✅ event.type 为宽字符串 + surfaceOp 标记 | ● | 未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行（展开看原始数据、可复制/分享）；判据见 `packages/core/src/unknown-event.ts` 与 docs/06 |
+| 未知提问意图降级 | ✅ question/requested（intent 为开放词表） | ● | 冻结 schema 拒掉的提问帧由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `intent.kind` 按通用问答显示并在卡上注明类型（docs/06 落地清单 B） |
 | 会话重命名 | ✅ session.rename | ● | 会话头部菜单已接入 |
 | 会话分叉 | ✅ session.fork | ● | 会话菜单；分叉后跳新会话 |
 | 会话搜索 | ✅ session.search（结果上限 20/片段 120 字） | ● | 列表页搜索框和结果片段已接入 |

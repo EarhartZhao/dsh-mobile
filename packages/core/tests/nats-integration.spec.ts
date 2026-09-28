@@ -198,6 +198,43 @@ describeNats('NatsApiClient over real NATS', () => {
     await nc.close()
   })
 
+  it('keeps a question frame whose intent the frozen schema does not know', async () => {
+    const nc = await appConn()
+    const client = new NatsApiClient({ conn: nc, instanceId: INSTANCE, getToken: () => VALID_TOKEN, headers: natsHeaders })
+    const abort = new AbortController()
+    const frames: unknown[] = []
+    const stream = client.events.mux({}, abort.signal)
+    const reader = (async () => {
+      for await (const frame of stream) {
+        frames.push(frame.payload)
+        if (frames.length >= 1) break
+      }
+    })()
+    await new Promise(r => setTimeout(r, 300))
+    // The vendor schema models `intent` as a strict one-arm union, so without the
+    // wide re-read this frame is dropped whole: the user waits on a question that
+    // never appears and nothing explains why.
+    pushMuxFrame({
+      type: 'question/requested',
+      sessionId: 's-live',
+      questions: [{
+        id: 'scope',
+        question: 'Which surface?',
+        options: [{ label: 'A' }, { label: 'B' }],
+        intent: { kind: 'diff-review', paths: ['a.ts'] },
+      }],
+    })
+    await reader
+    abort.abort()
+
+    expect(frames[0]).toMatchObject({
+      type: 'question/requested',
+      sessionId: 's-live',
+      questions: [{ id: 'scope', question: 'Which surface?', intent: { kind: 'diff-review', paths: ['a.ts'] } }],
+    })
+    await nc.close()
+  })
+
   it('does not misreport an offline bridge as an unknown plugin version', async () => {
     const nc = await appConn()
     await expect(fetchMobileInfo(nc, natsHeaders, 'offline-pc', VALID_TOKEN, 200)).rejects.toThrow()

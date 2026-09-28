@@ -26,7 +26,7 @@
 | 新 durable/transient 事件类型 | `type` 是 `z.string()`，`data` 是 `z.unknown()` | 未认领的 surface 事件走"未知事件"折叠行（`packages/core/src/unknown-event.ts`） | 显示类型 + 原始数据，不再隐形 | ✅ 已对齐 Web 的 `unknown-surface` |
 | 新 `session/projection` 键 | `values: record(string, unknown)` | 通用值仓，按 key 取用 | 已存但不渲染 | 新投影要 App 主动消费 → 用可选能力位协商 |
 | 新 mux/host 帧 `type` | 冻结的 `discriminatedUnion('type')` | 载体只认识已发布帧型 | **整帧被丢弃** | 硬边界：新面必须经桥翻译进既有帧型（`jobs`/`inbox` 就是这么做的） |
-| `question/requested.items[].intent.kind` | 严格 `discriminatedUnion('kind')` | 只认 `plan-review` | **整帧被拒**，问题卡不显示 | 硬边界：见第五节 |
+| `question/requested.items[].intent.kind` | 严格 `discriminatedUnion('kind')`，被拒时走 `mobile-questions.ts` 宽解析 | 只对 `plan-review` 有专用卡 | 未知 tag 不再丢帧：降级成通用问答卡并注明类型 | ✅ 已按"客户端不猜、但也绝不显示空白"处理 |
 | 插件自定义 React UI | — | 无 | 只看到工具调用与文本结果 | L2：降级 + 提示，不追 |
 
 ## 三、三层阶梯：L0 稳定词表 / L1 可扩展面 / L2 不可移植面
@@ -55,8 +55,12 @@
 ## 五、硬边界：会让整帧失效的两处
 
 1. **`intent` 是严格标签联合。** 冻结 schema 里 `intent` 用 `z.discriminatedUnion('kind', [plan-review])`，源码注释写得很清楚：未知 tag 会被拒帧，而不是静默退化成通用问题。后果是"上游加了一种新的提问形态 → 手机端问题卡整块消失 → 用户卡住且没有任何提示"。
-   - 桥侧改法：插件在转发前把未知 intent 剥掉，退化成普通问题（数据不丢，形态变通用）。
-   - App 侧改法（推荐）：把 `intent` 放宽成 `looseObject({ kind: string })`，未知 `kind` 走通用问题卡，并把原始 intent 收进诊断。这和我们此前对 `view` 的处理一致。
+
+   **已按 App 侧方案修掉（本轮 B）**：冻结 schema 不动，`question/requested` 被它拒掉时由 `packages/protocol/src/mobile-questions.ts` 宽解析重读一次，`intent` 保持 `looseObject({ kind: string })`，其余字段仍按 vendor 形状校验；未知 `kind` 走通用问题卡，并在卡片上写明"本 App 尚无专用界面的交互类型（{kind}）"，未渲染的 kind 同时进诊断日志。这与我们对 `view` 的处理一致（宿主契约里"渲染意图"永远当作开放词表）。
+
+   为什么不改桥：把未知 intent 剥在桥上，等于对所有客户端一刀切地丢掉宿主刻意表达的信息；而"拒帧"是客户端自己的解析策略，修在客户端才是修在对的地方。桥侧剥 intent 只适合"宿主版本比已发布 App 还新"的过渡场景，本项目两端同仓，直接改 App 更干净。
+
+   残余边界：未知 intent 的**回答**只能按通用形态提交（`{id, selected/custom}`）。若该 intent 要求的回答形态不同，宿主会拒绝，App 按既有错误路径显示原因——这是"能降级"与"能完成"之间的真实差距，需要在插件侧决定是否接受通用答案。
 2. **mux/host 帧类型是冻结联合。** 上游新增帧型时载体直接丢弃。所以任何新的交互面都要经桥翻译进既有帧型——`session/jobs`（0.1.7 起由 `job` 命名空间翻译回来）、`session/queue`（由 `inbox` 投影翻译）都是这个套路，App 侧零改动。
 
 除这两处，其余扩展面都应当是"降级不崩"。这条规则反过来约束插件的表达设计：**能塞进既有帧的，就别开新帧；能声明成宿主 card 的，就别写自定义组件。**
@@ -81,6 +85,7 @@
 4. 完成后表头给分类汇总与用时：`执行了命令并已调用工具 · 用时 1分04秒`；取消/失败分别显示"已停止"/"处理失败"。
 5. 转写底部实时指示：`深度求索中，用时 49秒…`（本行自持 1 秒定时器，不触发整表重渲染）。
 6. 未知 surface 事件兜底行（对齐 Web 的 `unknown-surface`）：未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行，展开看原始数据。
+7. 未知提问意图不再丢帧（本轮 B）：`question/requested` 的 `intent` 被冻结 schema 拒绝时，由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `kind` 降级成通用问答卡并注明类型。
 
 第 6 条的判据值得单独写下来，因为它是"未知即降级"里唯一需要判断"什么算未知"的一条：
 
@@ -93,8 +98,8 @@
 
 | 序号 | 事项 | 价值 | 类型 |
 |---|---|---|---|
-| ~~A~~ | ~~未知事件兜底折叠行~~ | 已完成（本轮） | App |
-| B | `intent` 放宽 + 未知 intent 通用卡 | 消除唯一会丢帧的交互面 | App（或桥双保险） |
+| ~~A~~ | ~~未知事件兜底折叠行~~ | 已完成 | App |
+| ~~B~~ | ~~`intent` 放宽 + 未知 intent 通用卡~~ | 已完成（本轮）：消除唯一会丢帧的交互面 | App |
 | C | `cardRegistry` 表驱动 | 后续加卡不再改 if 链 | App |
 | D | 工作区分组基线自动刷新 | 别的客户端新建会话后手机端列表不再过期 | App |
 
