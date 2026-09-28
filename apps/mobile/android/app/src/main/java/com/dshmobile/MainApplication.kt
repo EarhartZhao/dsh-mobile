@@ -20,6 +20,7 @@ class MainApplication : Application(), ReactApplication {
           add(ThemePackage())
           add(UpdaterPackage())
           add(AppPackage())
+          add(FileOpenerPackage())
         },
     )
   }

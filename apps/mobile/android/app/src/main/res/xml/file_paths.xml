@@ -2,4 +2,6 @@
 <paths>
   <cache-path name="captures" path="captures/" />
   <cache-path name="updates" path="updates/" />
+  <!-- Files fetched over the bridge and handed to a phone app (preview hand-off). -->
+  <cache-path name="open" path="open/" />
 </paths>

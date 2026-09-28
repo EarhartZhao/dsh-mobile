@@ -12,6 +12,7 @@ import Markdown from 'react-native-markdown-display'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
 import { markdownRules, markdownStyles } from '../markdown'
+import { fileOpener, openWithPhoneApp } from '../file-opener'
 import { imageMediaTypeOf, isMarkdown, previewKindOf, relativeImageRefs } from '../file-kinds'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
@@ -186,6 +187,25 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
     })
   }
 
+  /**
+   * Hand this document to a phone application: fetch its bytes over the bridge,
+   * then let the native module write a cache file and fire ACTION_VIEW. The
+   * button only exists where that module does (an APK built with it).
+   */
+  const openOnPhone = (): void => {
+    if (client === null || path === null) return
+    setState({ status: 'loading' })
+    void openWithPhoneApp(client, sessionId, path).then(result => {
+      setState({ status: 'external' })
+      if (result.ok) return
+      const failure = result.failure
+      if (failure.kind === 'noApp') onNotice(t('file.noApp'))
+      else if (failure.kind === 'tooLarge') onNotice(t('file.tooLargeForApp', { limit: `${Math.round(failure.limit / (1024 * 1024))}MB` }))
+      else if (failure.kind === 'unavailable') onNotice(t('file.appUnavailable'))
+      else onNotice(t('file.actionFailed', { message: failure.message }))
+    })
+  }
+
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
       <ModalBackdrop onClose={onClose}>
@@ -247,6 +267,9 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             </View>
           )}
           <View style={styles.actions}>
+            {state.status === 'external' && fileOpener() !== null && (
+              <SheetAction label={t('file.openOnPhone')} onPress={openOnPhone} />
+            )}
             {state.status === 'text' && !state.eof && (
               <SheetAction label={t('file.loadMore')} onPress={loadMore} />
             )}
