@@ -61,6 +61,18 @@ export type ConversationItem =
    * See `isUnclaimedSurfaceEvent` for the rule and its exclusions.
    */
   | { kind: 'unknown'; key: string; seq: number; time: number; eventType: string; data: unknown }
+  /**
+   * Files the model declared as deliverables (`present` tool). The host records
+   * them as a durable `deliverables/presented` event carrying the path and the
+   * model's own one-line description, which is what the web renders as a card
+   * per delivered file.
+   */
+  | { kind: 'delivery'; key: string; seq: number; time: number; files: DeliveredFile[] }
+
+export interface DeliveredFile {
+  path: string
+  description?: string
+}
 
 export type ConversationImage =
   | { kind: 'data'; uri: string; name?: string | undefined }
@@ -430,6 +442,21 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           : `compaction-${seq}`
         const summary = isObj(data) && typeof data['summary'] === 'string' ? data['summary'] : '上下文已压缩'
         items.push({ kind: 'compaction', key: `compaction-${seq}`, seq, time, summary, compactionId })
+        break
+      }
+      case 'deliverables/presented': {
+        // The model's own declaration of what it delivered. Durable, so a
+        // reload shows the same cards; the description is the model's copy.
+        if (!isObj(data) || !Array.isArray(data['files'])) break
+        const files: DeliveredFile[] = []
+        for (const candidate of data['files']) {
+          if (!isObj(candidate) || typeof candidate['path'] !== 'string' || candidate['path'] === '') continue
+          const description = typeof candidate['description'] === 'string' && candidate['description'] !== ''
+            ? candidate['description']
+            : undefined
+          files.push({ path: candidate['path'], ...(description === undefined ? {} : { description }) })
+        }
+        if (files.length > 0) items.push({ kind: 'delivery', key: `d${seq}`, seq, time, files })
         break
       }
       default:

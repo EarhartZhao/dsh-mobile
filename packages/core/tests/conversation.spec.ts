@@ -181,6 +181,33 @@ describe('deriveConversation', () => {
     })
   })
 
+  it('surfaces delivered files with the description the model wrote', () => {
+    const store = new SessionStore()
+    // The `present` tool records durable `deliverables/presented`; its files are
+    // what the web renders as a card per deliverable.
+    feed(store, 1, 'deliverables/presented', {
+      turn: 1,
+      callId: 'call-1',
+      files: [
+        { path: 'DSH-课程笔记/第04讲-Agent-loop.md', description: '第 04 课讲义：Agent loop 的 turn/step 模型' },
+        { path: 'dsh-课程大纲.md' },
+        { path: '' },
+      ],
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items).toEqual([{
+      kind: 'delivery',
+      key: 'd1',
+      seq: 1,
+      time: 0,
+      files: [
+        { path: 'DSH-课程笔记/第04讲-Agent-loop.md', description: '第 04 课讲义：Agent loop 的 turn/step 模型' },
+        { path: 'dsh-课程大纲.md' },
+      ],
+    }])
+  })
+
   it('carries the durable assistant message id for feedback targeting', () => {
     const store = new SessionStore()
     feed(store, 1, 'assistant/message', {

@@ -40,6 +40,7 @@ import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { linkTarget } from '../link-targets'
 import { markdownRules, markdownStyles } from '../markdown'
+import { extensionOf } from '../file-kinds'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
 import { ModalBackdrop } from '../components/ModalBackdrop'
@@ -1031,6 +1032,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (item.kind === 'compaction') return item.summary
     if (item.kind === 'preparing') return item.name
     if (item.kind === 'unknown') return compactJson(item.data)
+    if (item.kind === 'delivery') return item.files.map(file => file.path).join('\n')
     if (item.kind === 'turn-start' || item.kind === 'turn-end') return ''
     return item.text
   }
@@ -2052,6 +2054,42 @@ type ListRow =
   | { kind: 'item'; key: string; item: ConversationItem; process?: Turn }
 
 /**
+ * Files the model declared as deliverables, one card each — the shape the web
+ * shows under an answer that produced user-facing files. The description is the
+ * model's own copy from its `present` call, and tapping a card opens the same
+ * preview (or hand-off) every other file reference uses.
+ */
+function DeliveredFilesCard({ item, onPreview }: {
+  item: Extract<ConversationItem, { kind: 'delivery' }>
+  onPreview: (path: string) => void
+}): React.JSX.Element {
+  const { t } = useI18n()
+  return (
+    <View style={styles.deliveredRow}>
+      {item.files.map(file => {
+        const name = file.path.split(/[\\/]/).at(-1) ?? file.path
+        return (
+          <TouchableOpacity
+            key={file.path}
+            style={styles.deliveredCard}
+            onPress={() => onPreview(file.path)}
+            accessibilityLabel={t('chat.delivered', { name })}
+          >
+            <Text style={styles.deliveredKind}>{(extensionOf(file.path) || 'file').toUpperCase().slice(0, 4)}</Text>
+            <View style={styles.deliveredCopy}>
+              <Text style={styles.deliveredName} numberOfLines={1}>{name}</Text>
+              {file.description !== undefined && (
+                <Text style={styles.deliveredDescription} numberOfLines={3}>{file.description}</Text>
+              )}
+            </View>
+          </TouchableOpacity>
+        )
+      })}
+    </View>
+  )
+}
+
+/**
  * The turn's file changes, in the web's per-turn card shape: one headline
  * (`已编辑 2 个文件` with the total `+219 -1`) and one row per file. Tapping a row
  * opens the same workspace preview the produced-file chips use.
@@ -2149,6 +2187,8 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
       )
     case 'unknown':
       return <UnknownEventCard item={item} />
+    case 'delivery':
+      return <DeliveredFilesCard item={item} onPreview={onPreview} />
     case 'assistant':
     case 'stream':
       return (
@@ -2421,6 +2461,27 @@ const styles = StyleSheet.create({
   },
   changesPath: { flex: 1, color: colors.textDim, fontSize: fontSize.tiny },
   changesCounts: { color: colors.textDim, fontSize: fontSize.tiny, fontFamily: 'monospace' },
+  deliveredRow: { gap: spacing(1.5), marginBottom: spacing(1.5) },
+  deliveredCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(2),
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1.5),
+  },
+  deliveredKind: {
+    minWidth: 34,
+    textAlign: 'center',
+    color: colors.accent,
+    fontSize: fontSize.tiny,
+    fontWeight: '700',
+  },
+  deliveredCopy: { flex: 1, gap: 2 },
+  deliveredName: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
+  deliveredDescription: { color: colors.textDim, fontSize: fontSize.tiny, lineHeight: 16 },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
   replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },

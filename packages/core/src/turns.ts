@@ -132,6 +132,8 @@ function isVisible(item: ConversationItem): boolean {
   // Content with no renderer still gets its own row: hiding it is the failure
   // mode this row exists to prevent.
   if (item.kind === 'unknown') return true
+  // Delivered files are the turn's result, not process: they keep their own row.
+  if (item.kind === 'delivery') return true
   if (item.kind === 'assistant') return item.text !== ''
   return false
 }
