@@ -1,6 +1,6 @@
 {
-  "protocol": "dsh-0.1.6-alpha.2-remote",
-  "verifiedAt": "2026-09-22",
+  "protocol": "dsh-0.1.7-rc.2-remote",
+  "verifiedAt": "2026-09-28",
   "mobileApi": 2,
   "endpoints": [
     "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",
@@ -24,7 +24,7 @@
     },
     {
       "file": "packages/api/workspace-files/src/index.ts",
-      "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "async readRelated(", "async stat(", "@Remote({ mode: 'stream' })"]
+      "includes": ["super(ctx, 'workspaceFiles')", "async list(", "async read(", "async readBytes(", "options: WorkspaceByteReadOptions", "baseFile", "async stat(", "@Remote({ mode: 'stream' })"]
     },
     {
       "file": "packages/feedback/message-feedback/src/index.ts",
@@ -39,7 +39,7 @@
       "includes": ["super(ctx, 'commands')", "list(", "execute("]
     },
     {
-      "file": "packages/preset/agent-presets/src/index.ts",
+      "file": "packages/preset/agent-preset-registry/src/index.ts",
       "includes": ["@Remote('list')", "@Remote('read')", "@Remote('select')"]
     },
     {
@@ -48,7 +48,11 @@
     },
     {
       "file": "packages/subagent/subagent/src/index.ts",
-      "includes": ["@Remote('list')", "@Remote('prompt')", "@Remote('interruptByParent')"]
+      "includes": ["@Remote('prompt')", "@Remote('interruptByParent')", "subagentCatalogProjectionDefinition"]
+    },
+    {
+      "file": "packages/api/job-controller/src/index.ts",
+      "includes": ["super(ctx, 'jobController', { namespace: 'job' })", "@Remote({ mode: 'stream' })", "@Remote('kill')"]
     },
     {
       "file": "packages/api/session-controller/src/file-references.ts",

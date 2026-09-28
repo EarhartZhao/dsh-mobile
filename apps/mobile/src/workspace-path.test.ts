@@ -42,6 +42,13 @@ describe('workspace relative paths', () => {
     expect(changeTouchesDirectory('src', 'src/nested/a.ts')).toBe(false)
     expect(changeTouchesDirectory('', 'a.ts')).toBe(true)
     expect(changeTouchesDirectory('src/app/', 'src/app/a.ts')).toBe(true)
+    // dsh 0.1.7 watches one target: a directory watch reports the directory
+    // itself when its own entries change.
+    expect(changeTouchesDirectory('src', 'src')).toBe(true)
+    expect(changeTouchesDirectory('', '')).toBe(true)
+    // A child directory changing still changes this directory's entries.
+    expect(changeTouchesDirectory('src', 'src/app')).toBe(true)
+    expect(changeTouchesDirectory('src', 'elsewhere/app')).toBe(false)
     // No resolvable workspace path: refresh rather than show a stale listing.
     expect(changeTouchesDirectory('src', undefined)).toBe(true)
   })

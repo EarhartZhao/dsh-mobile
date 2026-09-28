@@ -61,5 +61,9 @@ export function sortWorkspaceEntries<T extends { name: string; type: 'file' | 'd
  */
 export function changeTouchesDirectory(currentPath: string, changedPath: unknown): boolean {
   if (typeof changedPath !== 'string') return true
-  return parentWorkspacePath(changedPath) === normalize(currentPath)
+  const current = normalize(currentPath)
+  const changed = normalize(changedPath)
+  // dsh 0.1.7 watches one target, so a directory watch reports the directory
+  // itself (its entries changed) while a file watch reports that file.
+  return changed === current || parentWorkspacePath(changed) === current
 }

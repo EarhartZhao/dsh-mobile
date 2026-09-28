@@ -80,8 +80,8 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 | `file.list` / `file.read` / `file.bytes` | 映射到 `workspaceFiles/list|read|readBytes`：workspace 目录列表、有界文本页、有界 base64 字节窗口（路径以 `workspaceFileScopeId` 解析到该会话的 workspace root） |
 | `file.related` | 映射到 `workspaceFiles/readRelated`：以某个文件所在目录为基准读相对路径，供 Markdown 预览拉取文中引用的图片 |
 | `file.stat` | 映射到 `workspaceFiles/stat`：只取 `version`/`bytes` 的轻量探针，版本未变时预览直接复用缓存页，省掉整页重读 |
-| `file.watch` | 映射到 `workspaceFiles/changes` 流：插件为该会话打开变更流，把它作为 `workspace-files/change` / `-ready` / `-watch-error` 转发事件发到宿主域下行帧 |
-| `file.unwatch` | 插件自有方法：释放该会话的变更流。App 关闭浏览器时调用，属尽力而为——未知会话或缺少 hook 都返回成功，不能因为"关面板"而报错 |
+| `file.watch` | 映射到 `workspaceFiles/changes` 流：插件为「会话 + 目标目录」打开变更流，把它作为 `workspace-files/change` / `-ready` / `-watch-error` 转发事件发到宿主域下行帧。dsh 0.1.7 起宿主按**单个目标** watch，所以 `path`（workspace 相对、缺省为根）随请求下发，App 浏览目录时会带着当前目录重新挂流 |
+| `file.unwatch` | 插件自有方法：释放该目标（会话 + `path`）的变更流。App 关闭浏览器或切换目录时调用，属尽力而为——未知会话或缺少 hook 都返回成功，不能因为"关面板"而报错 |
 | `workspace.unarchiveSession` | 映射到 `workspace/unarchiveSession`（dsh 0.1.6 新增）：把归档会话恢复到列表。插件 0.2.7 起放行并声明可选能力 `workspace-unarchive`；旧插件返回 `mobile-forbidden`，App 据此隐藏"取消归档" |
 | `file.reveal` / `host.openPath` | 都映射到 `session/openWorkspacePath`：`file.reveal` 带 `action: 'reveal'` 在宿主机文件管理器定位，`host.openPath` 用默认应用打开 |
 
@@ -104,7 +104,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 - 流式渲染：订阅目标会话的 `assistant/chunk`，**按 seq 排序、节流批量进 UI**；`assistant/message` 是定稿。
 - durable 事件名会随 dsh 版本改名（`tool/code-dispatch*` → `tool/ptc-dispatch*` 即 0.1.5 的改动，历史会话由 v2→v3 迁移重写为新名）。App 的事件归一层 `normalizeEventType` 把两套名字折到同一套语义，新增改名时在此登记，不要各自打补丁。
 - `session/projection` 帧（`{sessionId, key, value, seq}`）：按会话维护通用值仓，seq 高者胜；标题在 `title` 键下。
-- `session/jobs`：完整快照语义（非差分），直接替换本地集合；没有 baseline 即空集。
+- `session/jobs`：完整快照语义（非差分），直接替换本地集合；没有 baseline 即空集。dsh 0.1.6-alpha.2 由 `session/control` 的 baseline 与 `{type:'jobs'}` 帧推送，0.1.7 删除后改由 `job` 命名空间（Service 名 `jobController`）的 `list` 流承载；插件在 App 打开某个会话时挂一条 roster 流并翻译回同一帧型，App 侧不变。
 - `session/queue`：权威队列快照，不要从轮次事件推断队列。dsh 0.1.6-alpha.2 删掉了宿主侧的 `queues` baseline 表与 `queue` 控制帧，待处理输入改由会话 `inbox` 投影表达；插件 0.2.8 把该投影翻译回同一帧型（`next-turn` → `queued`，`next-step` 按来源分 `steering`/`context`），App 侧契约不变。`inbox` 只在会话挂着活动 Agent 时存在，与 alpha.1 的 `queues` 是同一个门禁——空闲宿主上观察不到队列帧属于预期。
 
 ### events.host（宿主域）
@@ -135,6 +135,18 @@ dsh 0.1.6-alpha.2 另有三处新面，App 按可选路径接入，旧宿主缺�
 1. **引用候选的 `displayTitle`**（`sessionReferenceResolver/candidates`）：子代理会话用自身 label 呈现，行文案统一在 `apps/mobile/src/session-references.ts`（标题取 `displayTitle ?? label`，两者不同时把会话标题拼在工作目录前），`@` 补全与加号菜单共用。旧宿主不发该字段时退回 `label`。alpha.2 起冷会话也能从投影缓存回答标题，所以这一列不再普遍退化成会话 id。
 2. **插件清单的 `managementAvailable`**（`pluginInventory/list`）：表示本机是否具备持久化的当前配置管理能力（宿主挂了 `pluginManager` 才为 true）。插件页据此显示"具备插件管理能力"或"只读清单"，`fetchMobileInventory` 把非布尔值归一为缺省。
 3. **`plugin-manager/changed|install-state|install-log` 转发事件**：宿主 0.1.6-alpha.2 起转发，插件以既有的 `host/remote-event` 透传任意 emit 事件，App 订阅 store 的 `remoteEvent` 后按前缀静默重读清单（不整页清空），桌面端装插件时手机不再需要手动刷新。事件自身到达就是能力信号，因此没有新增 feature 位。
+
+dsh 0.1.7 的破坏性变更全部由插件 0.2.9 在桥内吸收，移动 wire 与 App 无需跟着改，但排查时要知道源头换了：
+
+| 面 | 0.1.6-alpha.2 及以前 | 0.1.7 起 | 桥的做法 |
+|---|---|---|---|
+| `$events` 下行流 | `wireStream.open(endpoint, payload, signal)` | 在 signal 前插入 Client uplink 与 Peer | 插件按声明 arity 选择调用形状（`openEventStream`），否则 `$events` 直接报 AbortSignal 错，审批/提问/全部转发事件一起失效 |
+| 字节窗口读 | `readBytes` 顶层 `range`，`data` 是 base64 字符串 | 窗口移入 `options`，`data` 是原生字节；`readRelated` 删除，改由 `options.baseFile` 表达 | 插件发新形状并把字节编回 base64；宿主回参数/端点错时退回旧形状 |
+| 工作区变更流 | 按会话（`workspaceFileScope`）watch | 按单个目标 watch，`path` 必填 | `file.watch`/`file.unwatch` 带上当前目录，桥按 (会话, 目标) LRU 4 条流 |
+| 子代理目录 | `subagents/list` Remote | 删除；改为父会话 `subagentCatalog` 投影（durable `subagent/catalog`），可经 `session/projections` 不激活 Agent 读取 | 插件用投影行 ∩ `session/list`（`running`/`agentAvailable`/`parentSessionId`）合成 App 冻结的目录，宿主不认识 `session/projections` 时回退旧 Remote |
+| 后台任务 | `session/control` baseline 的 `jobs` 表 + `{type:'jobs'}` 帧 | 删除；改为 `job` 命名空间的 `list` 流（整集替换、开流即首帧）与 `follow`/`kill` | 插件在 App 打开会话时挂 roster 流，翻译回 `session/jobs` |
+
+另外，`session/list` 的每一行在 0.1.7 增加了 `agentAvailable`（该会话是否挂着活 Agent），正好解释队列投影（`inbox`）为什么有时为空；`workspace/follow` 基线新增 `pinnedSessionIds` 与 `pinned` 增量（会话置顶），`workspace.archiveSession` 新增 `stopActivity` 与 `workspace/session-active` 拒绝原因——这些是可选新面，App 尚未接入。
 
 工作区浏览器只走 workspace 相对路径：`file.list` 返回的条目只带 basename，客户端自己拼接/回退/构建面包屑（`apps/mobile/src/workspace-path.ts`），路径以 `workspaceFileScopeId` 交给宿主解析成会话 workspace root，因此手机端既不需要知道绝对前缀，也无法越出工作区。图片按字节窗口读（上限 512 KB），文本按行页读（默认 400 行），两者都受宿主 `workspaceFiles` 的 `maxBytes`/`maxLines` 上限再裁一次。
 

@@ -78,10 +78,14 @@ export interface MobileFiles {
    * Arms the host's workspace file-change stream for one Session. Changes arrive
    * later as `workspace-files/change` forwarded events; the call itself is a
    * cheap idempotent registration.
+   *
+   * dsh 0.1.7 watches exactly one target per stream, so `path` names the
+   * workspace-relative directory the browser shows; the empty/absent path is
+   * the workspace root.
    */
-  watch(payload: { sessionId: string }): Promise<{ watching: true }>
+  watch(payload: { sessionId: string; path?: string }): Promise<{ watching: true }>
   /** Release the watch again when the browser closes (best-effort). */
-  unwatch(payload: { sessionId: string }): Promise<{ watching: false }>
+  unwatch(payload: { sessionId: string; path?: string }): Promise<{ watching: false }>
   /** Select one path in the host's file manager (Explorer / Finder). */
   reveal(payload: { sessionId: string; path: string }): Promise<{ opened: true }>
 }

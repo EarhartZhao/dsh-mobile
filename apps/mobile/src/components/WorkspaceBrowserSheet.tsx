@@ -72,7 +72,10 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
   // Arm the host-side change stream while the browser is open, and follow it.
   useEffect(() => {
     if (!visible || client === null || !canBrowse || !canWatch) return
-    void client.files.watch({ sessionId }).catch(() => undefined)
+    // dsh 0.1.7 watches one target per stream, so the shown directory is the
+    // target; navigating re-arms through this effect's `path` dependency.
+    const watched = path === '' ? {} : { path }
+    void client.files.watch({ sessionId, ...watched }).catch(() => undefined)
     const off = manager.store.on('remoteEvent', ({ event, args }) => {
       if (event !== 'workspace-files/change' && event !== 'workspace-files/ready' && event !== 'workspace-files/watch-error') return
       const payload = args[0]
@@ -99,7 +102,7 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
     return () => {
       off()
       // Release the host-side stream: a phone browses one directory at a time.
-      void client.files.unwatch({ sessionId }).catch(() => undefined)
+      void client.files.unwatch({ sessionId, ...watched }).catch(() => undefined)
     }
   }, [canBrowse, canWatch, client, manager, path, requestReload, sessionId, visible])
 

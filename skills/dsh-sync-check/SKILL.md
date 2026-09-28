@@ -77,6 +77,7 @@ pnpm test
 | 0.1.2-alpha.2–0.1.3-alpha.2 | 已移除，替换为 Typert Gateway/Remote | 插件 0.2.1+，mobileApi 2 |
 | 0.1.5-rc.1（2026-09-10 核对） | 同上；`connection` / `typertGateway` 服务名与 `createSharedFetchHandler('/api')` 未变 | 插件 0.2.2 + App 0.0.3 直接兼容；PTC 事件改名已由 App 归一层兼容 |
 | 0.1.6-alpha.2（2026-09-22 核对） | 同上；删除 `session/control` 的 `queues` 与 `queue` 帧，改由会话 `inbox` 投影提供待处理输入 | 插件 0.2.8+ 把 `inbox` 翻译回 `session/queue`，App 与冻结 wire 不变；新增面：引用候选 `displayTitle`、插件清单 `managementAvailable`、转发的 `plugin-manager/*` 事件 |
+| 0.1.7-rc.2（2026-09-28 核对） | 同上；`wireStream.open` 增加 uplink/peer 参数、`readBytes` 窗口移入 `options` 且 `data` 变原生字节、`readRelated` 与 `subagents/list` 删除、`changes` 改为单目标、`session/control` 的 jobs 改到 `job` 命名空间 | 插件 0.2.9+ 在桥内吸收全部五处（含旧宿主回退）；App 侧仅 `file.watch/unwatch` 增加可选 `path`、目录自身变更也触发刷新 |
 
 ## 防止遗漏
 
