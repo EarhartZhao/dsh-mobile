@@ -7,6 +7,7 @@
  */
 import type { ToolCallView, ToolResultView } from '@dsh-mobile/protocol'
 import type { SessionState } from './session-store.ts'
+import { isUnclaimedSurfaceEvent } from './unknown-event.ts'
 
 export type ConversationItem =
   | { kind: 'user'; key: string; seq: number; time: number; text: string; images: ConversationImage[] }
@@ -53,6 +54,13 @@ export type ConversationItem =
    */
   | { kind: 'turn-start'; key: string; seq: number; time: number; turn: number }
   | { kind: 'turn-end'; key: string; seq: number; time: number; turn: number; reason: string }
+  /**
+   * Conversation content with no renderer: an append-origin surface event this
+   * client does not know. Dropping it would make a plugin's (or a newer dsh's)
+   * visible content silently invisible, so it becomes a disclosure row instead.
+   * See `isUnclaimedSurfaceEvent` for the rule and its exclusions.
+   */
+  | { kind: 'unknown'; key: string; seq: number; time: number; eventType: string; data: unknown }
 
 export type ConversationImage =
   | { kind: 'data'; uri: string; name?: string | undefined }
@@ -425,7 +433,13 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         break
       }
       default:
-        break // turn/step markers, todos, usage… not rendered in v1
+        // Everything else is log-only bookkeeping (turn/step markers, todos,
+        // usage…) and stays invisible — except an append-origin surface event
+        // this client has no renderer for, which must not disappear silently.
+        if (isUnclaimedSurfaceEvent(type, event['surfaceOp'])) {
+          items.push({ kind: 'unknown', key: `x${seq}`, seq, time, eventType: String(type), data })
+        }
+        break
     }
   }
 

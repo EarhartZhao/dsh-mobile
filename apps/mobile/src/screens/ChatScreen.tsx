@@ -26,7 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, groupTurns, placementLabel, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { compactJson, deriveConversation, groupTurns, placementLabel, prettyJson, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -96,6 +96,7 @@ function conversationTailSignature(items: ConversationItem[]): string {
     case 'tool': return `${items.length}:${tail.key}:tool:${tail.status}:${tail.args.length}:${tail.resultText.length}:${tail.subCalls.length}`
     case 'compaction': return `${items.length}:${tail.key}:compaction:${tail.summary.length}`
     case 'preparing': return `${items.length}:${tail.key}:preparing:${tail.name.length}`
+    case 'unknown': return `${items.length}:${tail.key}:unknown:${tail.eventType}:${compactJson(tail.data).length}`
     // Turn boundaries sit at the tail whenever a turn closes: they are not
     // content, so the signature reports the row before them instead.
     default: {
@@ -1008,6 +1009,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (item.kind === 'tool') return item.resultText !== '' ? item.resultText : item.args
     if (item.kind === 'compaction') return item.summary
     if (item.kind === 'preparing') return item.name
+    if (item.kind === 'unknown') return compactJson(item.data)
     if (item.kind === 'turn-start' || item.kind === 'turn-end') return ''
     return item.text
   }
@@ -2011,6 +2013,44 @@ type ListRow =
   | { kind: 'turn'; key: string; turn: Turn }
   | { kind: 'item'; key: string; item: ConversationItem; process?: Turn }
 
+/**
+ * Conversation content this client has no renderer for.
+ *
+ * The web transcript discloses the event type and its raw payload rather than
+ * dropping it, so content added by a plugin or a newer dsh can never be
+ * silently missing on the phone. The row is deliberately quiet: one line naming
+ * the event, a short explanation, and the payload — compacted while collapsed,
+ * indented with copy/share once opened.
+ */
+function UnknownEventCard({ item }: { item: Extract<ConversationItem, { kind: 'unknown' }> }): React.JSX.Element {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  return (
+    <View style={styles.unknownCard}>
+      <TouchableOpacity style={styles.unknownHeader} onPress={() => setOpen(value => !value)} accessibilityRole="button">
+        <Text style={styles.unknownTitle} numberOfLines={1}>
+          {t('chat.unknownEvent', { type: item.eventType })}
+        </Text>
+        <Text style={styles.unknownChevron}>{open ? '▾' : '▸'}</Text>
+      </TouchableOpacity>
+      {open && <Text style={styles.unknownHint}>{t('chat.unknownEventHint')}</Text>}
+      <ScrollView style={styles.unknownBody} nestedScrollEnabled>
+        <Text selectable style={styles.unknownJson}>{open ? prettyJson(item.data) : compactJson(item.data)}</Text>
+      </ScrollView>
+      {open && (
+        <View style={styles.unknownActions}>
+          <TouchableOpacity onPress={() => Clipboard.setString(prettyJson(item.data))}>
+            <Text style={styles.unknownAction}>{t('common.copy')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { Share.share({ message: prettyJson(item.data) }).catch(() => undefined) }}>
+            <Text style={styles.unknownAction}>{t('common.share')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  )
+}
+
 function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, process }: {
   item: ConversationItem
   manager: ConnectionManager
@@ -2040,6 +2080,8 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
           <Text style={styles.compactionText}>{t('chat.compacted', { summary: item.summary })}</Text>
         </View>
       )
+    case 'unknown':
+      return <UnknownEventCard item={item} />
     case 'assistant':
     case 'stream':
       return (
@@ -2292,6 +2334,26 @@ const styles = StyleSheet.create({
   },
   runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.running },
   runningText: { color: colors.textDim, fontSize: fontSize.small },
+  unknownCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    borderRadius: radius.card,
+    backgroundColor: colors.bgElevated,
+    marginHorizontal: spacing(1),
+    marginVertical: spacing(0.5),
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1.5),
+    gap: spacing(1),
+  },
+  unknownHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
+  unknownTitle: { flex: 1, color: colors.textDim, fontSize: fontSize.small, fontWeight: '600' },
+  unknownChevron: { color: colors.textDim, fontSize: fontSize.small },
+  unknownHint: { color: colors.textDim, fontSize: fontSize.tiny },
+  unknownBody: { maxHeight: 200, borderWidth: 1, borderColor: colors.border, borderRadius: radius.card },
+  unknownJson: { color: colors.text, fontSize: 11, fontFamily: 'monospace', padding: spacing(2) },
+  unknownActions: { flexDirection: 'row', gap: spacing(3) },
+  unknownAction: { color: colors.accent, fontSize: fontSize.tiny },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
   replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },

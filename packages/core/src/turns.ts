@@ -113,6 +113,9 @@ function isRunning(item: ConversationItem): boolean {
 function isVisible(item: ConversationItem): boolean {
   if (item.kind === 'user' || item.kind === 'compaction') return true
   if (item.kind === 'stream') return true
+  // Content with no renderer still gets its own row: hiding it is the failure
+  // mode this row exists to prevent.
+  if (item.kind === 'unknown') return true
   if (item.kind === 'assistant') return item.text !== ''
   return false
 }

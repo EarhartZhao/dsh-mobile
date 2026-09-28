@@ -96,9 +96,10 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   const [error, setError] = useState('')
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
-  /** Turn boundaries and preparing calls are transcript chrome, never rows. */
+  /** Turn boundaries, preparing calls, and unknown-event rows are chrome here. */
   const items = (selected === null ? [] : deriveConversation(stateFromEvents(selected.id, events)))
-    .filter(item => item.kind !== 'turn-start' && item.kind !== 'turn-end' && item.kind !== 'preparing')
+    .filter(item => item.kind !== 'turn-start' && item.kind !== 'turn-end'
+      && item.kind !== 'preparing' && item.kind !== 'unknown')
 
   const loadHistory = useCallback(async (entry: SubagentListEntry, beforeSeq?: number): Promise<void> => {
     if (entry.kind === 'diagnostic') {

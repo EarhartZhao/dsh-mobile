@@ -129,6 +129,17 @@ describe('groupTurns', () => {
     expect(kinds(turns[0]!)).toEqual(['user', 'assistant', 'compaction'])
   })
 
+  it('gives content with no renderer its own row instead of hiding it', () => {
+    // The fallback row exists so a plugin's (or a newer dsh's) visible content
+    // can never be silently missing from the transcript.
+    const unknown = {
+      kind: 'unknown', key: 'x9', seq: 9, time: 9, eventType: 'notice/message', data: { text: 'hi' },
+    }
+    const turns = groupTurns(items(user(1, 'q'), tool(2, 't'), unknown as unknown as ConversationItem, assistant(3, 'a')))
+
+    expect(rowShape(turns[0]!)).toEqual(['q', 'process', 'unknown', 'a'])
+  })
+
   it('orders a turn as prompt, process, answer', () => {
     const turns = groupTurns(items(user(1, 'q'), tool(2, 't'), assistant(3, 'a')))
 

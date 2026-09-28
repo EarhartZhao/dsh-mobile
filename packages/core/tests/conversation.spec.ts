@@ -13,6 +13,43 @@ function feed(store: SessionStore, seq: number, type: string, data: unknown, vie
 }
 
 describe('deriveConversation', () => {
+  it('discloses an unclaimed surface event instead of dropping it', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } } })
+    // A newer dsh (or a plugin-driven surface) adds a message-producing type.
+    // Without the fallback the reader would see nothing at all.
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        seq: 2, time: 5, type: 'notice/message', surfaceOp: 'append',
+        data: { text: 'plugin notice', level: 'info' },
+      } as never,
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['user', 'unknown'])
+    expect(items[1]).toMatchObject({
+      kind: 'unknown',
+      eventType: 'notice/message',
+      data: { text: 'plugin notice', level: 'info' },
+    })
+  })
+
+  it('keeps model-facing surface events and log-only events out of the transcript', () => {
+    const store = new SessionStore()
+    // The rendered system prompt and developer instructions are surface events
+    // the harness writes for the model; the web hides them, and so does this.
+    feed(store, 1, 'system/message', { message: { content: [{ type: 'text', text: 'you are dsh' }] } })
+    feed(store, 2, 'developer/message', { turn: 1, step: 1, message: { content: [], source: { kind: 'developer' } } })
+    // Injected context is a user-role message with a non-user source.
+    feed(store, 3, 'user/message', { message: { content: [{ type: 'text', text: 'skill body' }], source: { kind: 'skill-invocation' } } })
+    // Log-only bookkeeping carries no surface marker.
+    feed(store, 4, 'step/start', { turn: 1, step: 1 })
+    feed(store, 5, 'assistant/attempt', { turn: 1, step: 1 })
+
+    expect(deriveConversation(store.sessions.get('s-1')!)).toEqual([])
+  })
+
   it('surfaces a named tool-call delta as a preparing row until the call lands', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '看看' }] } })

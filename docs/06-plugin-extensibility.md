@@ -23,7 +23,7 @@
 |---|---|---|---|---|
 | 工具卡 `view.card` | `view: { for: 'call'\|'result', view: loose({card}) }` | 已渲染 generic/terminal/diff/search/read/web | 通用卡：title + rawInput/content + locations + 原始 result | ✅ 自动降级 |
 | 工具名 → 工序分类 | App 本地词表（`packages/core/src/activity.ts`） | `toolActivity(name)` 13 类 | 落到 `tools` 泛类 | ✅ 自动降级 |
-| 新 durable/transient 事件类型 | `type` 是 `z.string()`，`data` 是 `z.unknown()` | `deriveConversation` 的 `default` 分支忽略 | **看不见**（无兜底行） | ⚠️ 应补"未知事件"折叠行（对齐 Web 的 `unknown-surface`） |
+| 新 durable/transient 事件类型 | `type` 是 `z.string()`，`data` 是 `z.unknown()` | 未认领的 surface 事件走"未知事件"折叠行（`packages/core/src/unknown-event.ts`） | 显示类型 + 原始数据，不再隐形 | ✅ 已对齐 Web 的 `unknown-surface` |
 | 新 `session/projection` 键 | `values: record(string, unknown)` | 通用值仓，按 key 取用 | 已存但不渲染 | 新投影要 App 主动消费 → 用可选能力位协商 |
 | 新 mux/host 帧 `type` | 冻结的 `discriminatedUnion('type')` | 载体只认识已发布帧型 | **整帧被丢弃** | 硬边界：新面必须经桥翻译进既有帧型（`jobs`/`inbox` 就是这么做的） |
 | `question/requested.items[].intent.kind` | 严格 `discriminatedUnion('kind')` | 只认 `plan-review` | **整帧被拒**，问题卡不显示 | 硬边界：见第五节 |
@@ -48,7 +48,7 @@
 | `cardRegistry` | `card` 标签 | `GenericCard`（title/rawInput/content/locations） | 一个渲染器 + 一条单测 |
 | `intentRegistry` | `intent.kind` | 通用问题卡（见第五节：需要先放宽 schema） | 一个卡片变体 + 一条单测 |
 | `projectionRegistry` | `session/projection` 键 | 忽略（不渲染） | 一个视图 + 可选能力位 |
-| 事件兜底 | 事件 `type` | 折叠行 `未知事件：{type}`（展开显示 data，默认仅开发构建可见） | 无需改动 |
+| 事件兜底 | 事件 `type` | 折叠行 `未知事件：{type}`（展开显示 data、可复制/分享） | 已实现，无需改动 |
 
 注册表的意义不是"少写几行 if"，而是把**未知语义**变成一个显式契约：每个表都必须声明"没命中时怎么办"。这也是 Web 端 `conversation-nodes/` 的做法（`register.ts` + `fallback.ts`）。
 
@@ -80,12 +80,20 @@
 3. `assistant/chunk` 的具名 `tool-call-delta` → "准备调用工具"行（Web 的 preparing 阶段），被 `tool/call` 取代、随 `turn/end` 清除。
 4. 完成后表头给分类汇总与用时：`执行了命令并已调用工具 · 用时 1分04秒`；取消/失败分别显示"已停止"/"处理失败"。
 5. 转写底部实时指示：`深度求索中，用时 49秒…`（本行自持 1 秒定时器，不触发整表重渲染）。
+6. 未知 surface 事件兜底行（对齐 Web 的 `unknown-surface`）：未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行，展开看原始数据。
+
+第 6 条的判据值得单独写下来，因为它是"未知即降级"里唯一需要判断"什么算未知"的一条：
+
+- **只认 `surfaceOp` 标记，不维护类型表。** 宿主自身拒绝把 `surfaceOp` 写在非 surface 类型上、又要求 surface 类型必须带它（`surface.ts` 的两条校验），所以带 `surfaceOp: 'append'` 的事件本身就声明了"我进了模型可见面"。这样新 dsh 加第六种 message 类型时，老客户端不需要一张同步过的类型表就能发现它——这正是兜底行的意义。
+- **排除 `system/message` 与 `developer/message`。** 它们确实是 surface 事件，但宿主只写给模型（渲染后的系统提示词、开发者指令），Web 也投影成隐藏节点；不排除的话用户会看到一堆模型侧的样板文本。
+- **排除替换副本**（`surfaceOp` 不是 `'append'`）：替换副本是给模型看的影子内容，读者已经看过它取代的那条原始事件。
+- **非 surface 事件不显示**：`step`/`turn` 边界、attempt 记录、工具 dispatch 记账都属于日志面，Web 同样不渲染；这类事件在协议上也不允许带 `surfaceOp`，所以不会误入。
 
 建议后续顺序：
 
 | 序号 | 事项 | 价值 | 类型 |
 |---|---|---|---|
-| A | 未知事件兜底折叠行 | 插件新面不再"隐形" | App |
+| ~~A~~ | ~~未知事件兜底折叠行~~ | 已完成（本轮） | App |
 | B | `intent` 放宽 + 未知 intent 通用卡 | 消除唯一会丢帧的交互面 | App（或桥双保险） |
 | C | `cardRegistry` 表驱动 | 后续加卡不再改 if 链 | App |
 | D | 工作区分组基线自动刷新 | 别的客户端新建会话后手机端列表不再过期 | App |
