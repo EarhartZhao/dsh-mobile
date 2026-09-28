@@ -208,6 +208,29 @@ describe('deriveConversation', () => {
     }])
   })
 
+  it('reads delivered files from the present call itself, and dedupes the event', () => {
+    const store = new SessionStore()
+    // The browser reads presentations from the call's arguments; the durable
+    // event records the same fact. Both must land on ONE card per path.
+    feed(store, 1, 'tool/call', {
+      turn: 1, step: 1, callId: 'c1', name: 'present',
+      arguments: JSON.stringify({ files: [
+        { path: 'a.md', description: '讲义' },
+        { path: 'b.md' },
+      ] }),
+    })
+    feed(store, 2, 'tool/result', { turn: 1, step: 1, message: { toolCallId: 'c1', content: [] } })
+    feed(store, 3, 'deliverables/presented', { turn: 1, callId: 'c1', files: [{ path: 'a.md', description: '讲义' }] })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.filter(item => item.kind === 'delivery')).toEqual([
+      expect.objectContaining({
+        kind: 'delivery',
+        files: [{ path: 'a.md', description: '讲义' }, { path: 'b.md' }],
+      }),
+    ])
+  })
+
   it('carries the durable assistant message id for feedback targeting', () => {
     const store = new SessionStore()
     feed(store, 1, 'assistant/message', {

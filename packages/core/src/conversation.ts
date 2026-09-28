@@ -182,6 +182,30 @@ function stringifyArguments(value: unknown): string {
 }
 
 /**
+ * Files one `present` call declares, read from its model-produced arguments.
+ * A call whose arguments do not parse, or that carries no usable file, simply
+ * contributes nothing: the transcript then shows the tool row alone.
+ */
+function presentedFiles(argsRaw: string): DeliveredFile[] {
+  let args: unknown
+  try {
+    args = JSON.parse(argsRaw)
+  } catch {
+    return []
+  }
+  if (!isObj(args) || !Array.isArray(args['files'])) return []
+  const files: DeliveredFile[] = []
+  for (const candidate of args['files']) {
+    if (!isObj(candidate) || typeof candidate['path'] !== 'string' || candidate['path'] === '') continue
+    const description = typeof candidate['description'] === 'string' && candidate['description'] !== ''
+      ? candidate['description']
+      : undefined
+    files.push({ path: candidate['path'], ...(description === undefined ? {} : { description }) })
+  }
+  return files
+}
+
+/**
  * dsh 0.1.5 renamed the durable PTC dispatch events
  * (`tool/code-dispatch*` → `tool/ptc-dispatch*`) and rewrites stored sessions
  * through the v2→v3 migration, while older hosts still emit the legacy names.
@@ -215,6 +239,8 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
   const toolTurns = new Map<string, number>()
   const produced = new Map<number, { seq: number; path: string }[]>()
   const toolParents = new Map<string, string>()
+  /** Paths already delivered this log, so both delivery sources dedupe onto one card. */
+  const delivered = new Map<string, number>()
 
   for (const entry of session.events) {
     const event = entry.event
@@ -296,6 +322,18 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         tools.set(callId, item)
         if (turn >= 0) toolTurns.set(callId, turn)
         items.push(item)
+        /**
+         * `present` declares the turn's deliverables, and the browser reads them
+         * from the call's own arguments. The durable `deliverables/presented`
+         * event is the same fact recorded later, so both sources feed one card
+         * per path — whichever arrives first wins.
+         */
+        if (typeof data['name'] === 'string' && data['name'] === 'present') {
+          const files = presentedFiles(typeof data['arguments'] === 'string' ? data['arguments'] : '')
+          const fresh = files.filter(file => !delivered.has(file.path))
+          for (const file of fresh) delivered.set(file.path, seq)
+          if (fresh.length > 0) items.push({ kind: 'delivery', key: `d${seq}`, seq: seq + 0.5, time, files: fresh })
+        }
         break
       }
       case 'tool/result': {
@@ -451,11 +489,13 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         const files: DeliveredFile[] = []
         for (const candidate of data['files']) {
           if (!isObj(candidate) || typeof candidate['path'] !== 'string' || candidate['path'] === '') continue
+          if (delivered.has(candidate['path'])) continue
           const description = typeof candidate['description'] === 'string' && candidate['description'] !== ''
             ? candidate['description']
             : undefined
           files.push({ path: candidate['path'], ...(description === undefined ? {} : { description }) })
         }
+        for (const file of files) delivered.set(file.path, seq)
         if (files.length > 0) items.push({ kind: 'delivery', key: `d${seq}`, seq, time, files })
         break
       }
