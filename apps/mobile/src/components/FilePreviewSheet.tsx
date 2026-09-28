@@ -8,8 +8,10 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import Markdown from 'react-native-markdown-display'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
+import { markdownRules, markdownStyles } from '../markdown'
 import { imageMediaTypeOf, isMarkdown, previewKindOf, relativeImageRefs } from '../file-kinds'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
@@ -216,7 +218,13 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
             {state.status === 'text' && (
               state.text === ''
                 ? <Text style={styles.hint}>{t('file.empty')}</Text>
-                : (
+                : isMarkdown(path ?? '') ? (
+                  // A Markdown document renders with the same rules as chat, so a
+                  // lecture note opened here reads like the message that cited it.
+                  <ScrollView style={styles.textScroll} contentContainerStyle={styles.textContent}>
+                    <Markdown style={markdownStyles} rules={markdownRules}>{state.text}</Markdown>
+                  </ScrollView>
+                ) : (
                   <ScrollView style={styles.textScroll} contentContainerStyle={styles.textContent}>
                     <Text style={styles.text} selectable>{state.text}</Text>
                   </ScrollView>
