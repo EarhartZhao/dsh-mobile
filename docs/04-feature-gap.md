@@ -77,7 +77,7 @@
 | 功能 | 数据来源 | 移动端 | 说明 |
 |---|---|---|---|
 | Markdown/代码块渲染 | 客户端本地 | ● | Markdown 渲染、代码块横向滚动、复制和分享已接入 |
-| 工具卡片分级展示 | ✅ tool/call+result 的 `view` 槽（桥 0.2.10 起真正下发） | ● | 卡片注册表在 `apps/mobile/src/components/tool-cards.tsx`（generic/terminal/diff/read/search/web，每个条目声明 title/meta/summary/body）；真机已验证 read 卡显示行号窗口，terminal 卡的 exit 状态依赖该工具是否声明 `presentResult`（`pwsh` 只声明了 `presentCall`，故只显示输出） |
+| 工具卡片分级展示 | ✅ tool/call+result 的 `view` 槽（桥 0.2.10 起真正下发） | ● | 卡片注册表在 `apps/mobile/src/components/tool-cards.tsx`（generic/terminal/diff/read/search/web，每个条目声明 title/meta/summary/body）；settled 行的**标签取自两个相位**（result 未声明 title 时沿用 call 的，宿主契约如此），内容取当前状态相位。真机已验证：read 卡显示行号窗口；`pwsh` 行标题为宿主的 `echo title-check · title-check`，展开有输出与 `退出码 0` |
 | 工序实时表头（"在做什么"） | ✅ assistant/chunk 具名 tool-call-delta + tool/call + turn/start\|end | ● | 分类词表与详情字段优先级与 Web 同表（`packages/core/src/activity.ts`）；运行中显示"正在调用工具 · job_output"，完成显示"执行了命令并已调用工具 · 用时 1分04秒"，取消/失败显示"已停止"/"处理失败" |
 | 工序逐步行 + 思考预览 | ✅ 同上 | ● | 运行中自动展开并逐步列出工具行（分类 + 详情 + 状态）；思考行折叠成一行预览（末段首行），点开看全文 |
 | 运行中底部实时指示 | ✅ turn/start.time + 本地时钟 | ● | "深度求索中，用时 49秒…"，行内自持 1 秒定时器，不触发整表重渲染 |

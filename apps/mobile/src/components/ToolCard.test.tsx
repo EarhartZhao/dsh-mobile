@@ -84,6 +84,38 @@ describe('ToolCard', () => {
     expect(texts(tree)).toContain('tools.exitCode:code=0')
   })
 
+  it('titles the row from a call card when the result carries no view', () => {
+    // `pwsh` declares `presentCall` but no `presentResult`, so a finished row has
+    // only the call side to name it — the card title, not the localized tool name.
+    const tree = render(item({
+      name: 'pwsh',
+      resultText: 'hi',
+      callView: { card: 'terminal', title: 'echo hi', description: 'Echo hi' } as never,
+      resultView: null,
+    }))
+
+    expect(texts(tree)).toContain('echo hi · hi')
+    expect(texts(tree)).not.toContain('PowerShell')
+  })
+
+  it('keeps the call title when the result card does not name the call', () => {
+    // This is what `pwsh` actually sends: the call card names the command, the
+    // result card carries only output and the exit status, and the host's own
+    // contract says an omitted result title keeps the pending one. Reading only
+    // the result would leave the row labelled by the localized tool name.
+    const tree = render(item({
+      name: 'pwsh',
+      resultText: 'hi',
+      callView: { card: 'terminal', title: 'echo hi', description: 'Echo hi in shell' } as never,
+      resultView: { card: 'terminal', output: 'hi', exitCode: 1 } as never,
+    }))
+
+    expect(texts(tree)).toContain('echo hi · hi')
+    expect(texts(tree)).not.toContain('PowerShell')
+    expand(tree)
+    expect(texts(tree)).toContain('tools.exitCode:code=1')
+  })
+
   it('renders a read card as numbered file lines', () => {
     const tree = render(item({
       name: 'read',

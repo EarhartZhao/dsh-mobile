@@ -153,6 +153,34 @@ describe('deriveConversation', () => {
     expect(items[2]).toMatchObject({ name: 'bash', status: 'done', resultPreview: 'a.txt' })
   })
 
+  it('keeps the host render intent from the call frame on the tool row', () => {
+    const store = new SessionStore()
+    // The bridge fills the frame's `view` slot from the tool's declared
+    // presenter; the row's own title comes from there, not from the tool name.
+    feed(store, 1, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'pwsh', arguments: '{"command":"echo hi"}' },
+      { for: 'call', view: { card: 'terminal', title: 'echo hi', description: 'Echo hi' } })
+    let items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({
+      kind: 'tool',
+      status: 'running',
+      callView: { card: 'terminal', title: 'echo hi' },
+      resultView: null,
+    })
+
+    // `pwsh` declares no result presenter, so its result frame carries no view:
+    // that must clear only the result side, leaving the call card in place.
+    feed(store, 2, 'tool/result', {
+      turn: 1, step: 1,
+      message: { toolCallId: 'c1', content: [{ type: 'text', text: 'hi' }], isError: false },
+    })
+    items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({
+      status: 'done',
+      callView: { card: 'terminal', title: 'echo hi' },
+      resultView: null,
+    })
+  })
+
   it('carries the durable assistant message id for feedback targeting', () => {
     const store = new SessionStore()
     feed(store, 1, 'assistant/message', {

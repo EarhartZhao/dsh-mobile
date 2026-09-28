@@ -21,6 +21,23 @@ function activeView(item: ConversationItem & { kind: 'tool' }): Record<string, u
   return isRecord(view) ? view : null
 }
 
+/**
+ * The views a settled row reads its labels from, in priority order.
+ *
+ * The host's result views say it explicitly: a `title` (or `meta`) they omit
+ * "keeps the pending-state title". So a finished call is one card assembled from
+ * two frames — the call names it, the result fills it — and reading only the
+ * result (which is what the body follows) would drop the name the tool gave its
+ * own call. The result comes first because a presenter that *does* rename the
+ * completed call wins.
+ */
+function labelViews(item: ConversationItem & { kind: 'tool' }): Record<string, unknown>[] {
+  const call = isRecord(item.callView) ? item.callView : null
+  const result = isRecord(item.resultView) ? item.resultView : null
+  const ordered = item.status === 'running' ? [call] : [result, call]
+  return ordered.filter((view): view is Record<string, unknown> => view !== null)
+}
+
 function locationLines(item: ConversationItem & { kind: 'tool' }): string[] {
   const view = activeView(item)
   if (view === null) return []
@@ -94,8 +111,12 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
   // The registry is the single place a `card` decides how it looks; a miss falls
   // back to the generic entry, so an unknown tag still shows title and result.
   const card = cardRenderer(view)
-  const title = (view === null ? undefined : card.title?.(view)) ?? toolDisplayName(item.name, t)
-  const meta = view === null ? [] : card.meta?.(view, t) ?? []
+  // Labels come from both phases (see `labelViews`); content comes from the
+  // phase that owns the row's current state.
+  const labels = labelViews(item)
+  const title = labels.map(candidate => cardRenderer(candidate).title?.(candidate))
+    .find(candidate => candidate !== undefined) ?? toolDisplayName(item.name, t)
+  const meta = [...new Set(labels.flatMap(candidate => cardRenderer(candidate).meta?.(candidate, t) ?? []))]
   const summary = (view === null ? undefined : card.summary?.(view, t)) ?? fallbackSummary(item, t)
   const locations = locationLines(item)
   // `body` returning nothing means "no structure to show": fall back to the raw
