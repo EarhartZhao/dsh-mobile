@@ -148,6 +148,14 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
     chips.push({ key: 'input', label: t('stats.inputTokens', { tokens: compactTokens(billedInput) }) })
     chips.push({ key: 'output', label: t('stats.outputTokens', { tokens: compactTokens(usage.outputTokens) }) })
   }
+  /**
+   * The web's usage pill total: every prompt-side billing bucket plus output
+   * (`billedInputTokens(usage) + usage.outputTokens`), shown compactly as
+   * `512K tok`. It is the session's whole billed volume, not the context
+   * window, so it rides next to the cache share in the always-visible line.
+   */
+  const totalTokens = hasUsage ? compactTokens(billedInput + usage.outputTokens) : null
+  if (totalTokens !== null) chips.push({ key: 'total', label: t('stats.totalTokens', { tokens: totalTokens }) })
 
   const usedTokens = pressure?.projectedTokens ?? pressure?.pressureTokens
   const windowTokens = pressure?.contextWindow
@@ -167,6 +175,7 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   if (stats.decodeMs > 0) {
     compactParts.push(t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) }))
   }
+  if (totalTokens !== null) compactParts.push(t('stats.totalTokens', { tokens: totalTokens }))
   if (cacheHit !== null) compactParts.push(t('stats.cacheHit', { percent: cacheHit }))
   const contextSize = contextPercent === null ? null : t('stats.contextBadge', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })
 

@@ -52,7 +52,11 @@ describe('SessionStatsBar', () => {
     // must show it without opening anything.
     const tree = render(view())
 
-    expect(texts(tree)).toContain('stats.counts(turns=1,steps=3) · stats.tokensPerSecond(tps=213) · stats.cacheHit(percent=91)')
+    // `557K tok` is the web usage pill's own total: billed input (50K + 497K)
+    // plus output (9.5K), compacted exactly like the web's formatTokens.
+    expect(texts(tree)).toContain(
+      'stats.counts(turns=1,steps=3) · stats.tokensPerSecond(tps=213) · stats.totalTokens(tokens=557K) · stats.cacheHit(percent=91)',
+    )
   })
 
   it('drops the parts a session has no measurement for', () => {
