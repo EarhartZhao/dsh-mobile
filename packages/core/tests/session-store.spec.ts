@@ -98,6 +98,24 @@ describe('SessionStore', () => {
     expect(store.sessions.get('s-1')!.pendingQuestions.size).toBe(0)
   })
 
+  it('resolveApproval clears one held approval, including one the Host no longer knows', () => {
+    const store = new SessionStore()
+    const a1 = crypto.randomUUID()
+    const a2 = crypto.randomUUID()
+    store.applyMuxFrame(RpcId(a1), { type: 'approval/requested', sessionId: sid, approvalId: a1 as never, toolName: 'pwsh' })
+    store.applyMuxFrame(RpcId(a2), { type: 'approval/requested', sessionId: sid, approvalId: a2 as never, toolName: 'pwsh' })
+    expect(store.sessions.get('s-1')!.pendingApprovals.size).toBe(2)
+
+    store.resolveApproval('s-1', a1)
+    expect(store.sessions.get('s-1')!.pendingApprovals.size).toBe(1)
+    expect(store.sessions.get('s-1')!.pendingApprovals.has(a2)).toBe(true)
+
+    // Idempotent for an unknown approvalId or session.
+    store.resolveApproval('s-1', a1)
+    store.resolveApproval('s-404', a2)
+    expect(store.sessions.get('s-1')!.pendingApprovals.size).toBe(1)
+  })
+
   it('resolveQuestion optimistically clears one pending question', () => {
     const store = new SessionStore()
     const q1 = RpcId(crypto.randomUUID())

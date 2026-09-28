@@ -23,6 +23,9 @@ const describeNats = existsSync(NATS_SERVER_BIN) ? describe : describe.skip
 
 let server: ChildProcess
 let pluginSide: NatsConnection
+/** Bridge generation the fake plugin reports; the heartbeat test flips it. */
+let bridgeStartedAt = new Date(0).toISOString()
+let helloCount = 0
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -69,6 +72,7 @@ beforeAll(async () => {
       }
       if (method === 'hello') {
         // Reconnect hook: replay the pending approval set.
+        helloCount += 1
         pushMuxFrame({ type: 'approval/requested', sessionId: 's-live', approvalId: 'ap-1', toolName: 'bash', reason: 'needs ok' })
         msg.respond(replyOk(body.rpcId, { ok: true }))
         continue
@@ -86,7 +90,7 @@ beforeAll(async () => {
           status: 'ok', connection: 'connected', devices: 1,
           pluginVersion: '0.2.2', mobileApi: 2, features: [...REQUIRED_PLUGIN_FEATURES, 'health-check'],
           buildId: 'test-build', loadedFrom: 'C:\\test\\bridge.js', instanceId: INSTANCE,
-          startedAt: new Date(0).toISOString(), uptimeMs: 1000,
+          startedAt: bridgeStartedAt, uptimeMs: 1000,
           lastConnectedAt: new Date(0).toISOString(), lastReconnectAt: null, lastError: null,
         }))
         continue
@@ -251,6 +255,30 @@ describe('ConnectionManager', () => {
     expect(manager.store.sessions.get('s-live')?.pendingApprovals.size).toBe(1)
     await manager.stop()
     expect(manager.state).toBe('stopped')
+  })
+
+  it('re-establishes when the bridge restarts under a live connection', async () => {
+    const manager = new ConnectionManager({
+      connect: appConn,
+      headers: natsHeaders,
+      instanceId: INSTANCE,
+      getToken: () => VALID_TOKEN,
+      bridgeProbeMs: 60,
+    })
+    await manager.start()
+    expect(manager.state).toBe('online')
+    const hellosBefore = helloCount
+
+    // The same NATS connection stays up while the bridge process is replaced.
+    bridgeStartedAt = new Date(60_000).toISOString()
+    const deadline = Date.now() + 5_000
+    while (helloCount === hellosBefore && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 50))
+    }
+    expect(helloCount).toBeGreaterThan(hellosBefore)
+    expect(manager.state).toBe('online')
+    expect(manager.health).toMatchObject({ startedAt: bridgeStartedAt })
+    await manager.stop()
   })
 
   it('never reaches online without a token (keeps retrying in background)', async () => {

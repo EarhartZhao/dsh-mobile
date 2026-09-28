@@ -62,6 +62,12 @@ export interface ConnectionManagerOptions {
   instanceId: string
   getToken: () => string | undefined
   store?: SessionStore
+  /**
+   * Bridge liveness probe period in milliseconds; 0 disables it. The phone
+   * keeps one connection to the NATS Hub, so a bridge restart never shows up as
+   * a transport event: only this probe notices the new generation.
+   */
+  bridgeProbeMs?: number
 }
 
 export class ConnectionManager extends Emitter<ManagerEvents> {
@@ -80,6 +86,9 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   private streamAbort: AbortController | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private retryTask: Promise<void> | null = null
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  /** Bridge process start time observed by the last health answer. */
+  private bridgeStartedAt: string | null = null
 
   constructor(private readonly options: ConnectionManagerOptions) {
     super()
@@ -106,6 +115,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (hasStatus(this.conn)) void this.watchStatus(this.conn, ++this.generation)
     try {
       await this.establish()
+      this.startHeartbeat()
     } catch (error) {
       this.setState('reconnecting')
       this.emitError(error)
@@ -121,6 +131,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     }
     this.streamAbort?.abort()
     this.streamAbort = null
+    this.stopHeartbeat()
     this.retryTask = null
     const conn = this.conn
     this.conn = null
@@ -198,10 +209,12 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
 
     if (this.compatibility.features.includes('health-check')) {
       await this.probeHealth().catch(() => undefined)
+      this.bridgeStartedAt = this.health?.startedAt ?? null
     } else {
       this.health = null
       this.healthLatencyMs = null
       this.healthError = null
+      this.bridgeStartedAt = null
     }
 
     const describe = await client.host.describe({})
@@ -248,6 +261,52 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     await sendHello(this.conn!, this.options.headers, this.options.instanceId, token)
     this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
+  }
+
+  /** Start the bridge liveness probe once the first establish pass succeeded. */
+  private startHeartbeat(): void {
+    const period = this.options.bridgeProbeMs ?? 30_000
+    if (period <= 0 || this.heartbeat !== null) return
+    this.heartbeat = setInterval(() => { void this.probeBridgeGeneration() }, period)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat === null) return
+    clearInterval(this.heartbeat)
+    this.heartbeat = null
+  }
+
+  /**
+   * Notice a bridge restart the transport never reports.
+   *
+   * The phone holds one connection to the NATS Hub, and the bridge is just
+   * another client of it: restarting the bridge on the host leaves that
+   * connection up, so nothing else here observes the new generation. Every
+   * piece of live state the App holds — approvals, questions, running flags,
+   * job rosters — then belongs to frames that no longer exist, which is how a
+   * held approval card turns into a button that does nothing. The bridge's own
+   * `startedAt` is the generation identity, and the establish pass is what
+   * rebuilds every derived snapshot.
+   */
+  private async probeBridgeGeneration(): Promise<void> {
+    const period = this.options.bridgeProbeMs ?? 30_000
+    if (period <= 0 || this.state !== 'online' || this.conn === null) return
+    if (this.compatibility?.features.includes('health-check') !== true) return
+    const token = this.options.getToken()
+    if (token === undefined) return
+    const generation = this.generation
+    const snapshot = await fetchMobileHealth(this.conn, this.options.headers, this.options.instanceId, token)
+      .catch(() => null)
+    if (snapshot === null || this.generation !== generation || this.state !== 'online') return
+    this.health = snapshot
+    if (this.bridgeStartedAt === null) {
+      this.bridgeStartedAt = snapshot.startedAt
+      return
+    }
+    if (snapshot.startedAt === this.bridgeStartedAt) return
+    this.bridgeStartedAt = snapshot.startedAt
+    this.setState('reconnecting')
+    this.ensureRetryEstablish(generation)
   }
 
   private trackOpen(): { waited: Promise<void>; resolve: () => void } {

@@ -153,6 +153,19 @@ export class SessionStore extends Emitter<StoreEvents> {
     this.emit('workspacesChanged', undefined)
   }
 
+  /**
+   * Optimistically clear one pending approval: the client answered it, or the
+   * Host refused the answer because the request is no longer live (the turn
+   * ended, or the bridge restarted under a held card). A held card whose event
+   * is gone can never be answered, so keeping it would only trap the user.
+   */
+  resolveApproval(sessionId: string, approvalId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session === undefined) return
+    if (!session.pendingApprovals.delete(approvalId)) return
+    this.emit('changed', { sessionId })
+  }
+
   /** Optimistically clear one pending question (client-initiated answer/cancel). */
   resolveQuestion(sessionId: string, rpcId: string): void {
     const session = this.sessions.get(sessionId)

@@ -1329,6 +1329,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           sessionId={sessionId}
           onAnswerQuestion={answerQuestion}
           onCancelQuestion={cancelQuestion}
+          onApprovalStale={() => showNotice(t('chat.approvalStale'))}
         />
       )}
       <CandidateMenu items={candidates} onPick={pickCandidate} />
@@ -2027,11 +2028,13 @@ function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }
   )
 }
 
-function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion }: {
+function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion, onApprovalStale }: {
   manager: ConnectionManager
   sessionId: string
   onAnswerQuestion: (rpcId: string, answer: QuestionAnswerPayload) => Promise<void>
   onCancelQuestion: (rpcId: string) => Promise<void>
+  /** Explains a refused answer once the card itself has been retired. */
+  onApprovalStale: () => void
 }): React.JSX.Element {
   const { t } = useI18n()
   const session = manager.store.sessions.get(sessionId)
@@ -2039,11 +2042,21 @@ function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion }: {
   const questions = [...(session?.pendingQuestions.values() ?? [])]
 
   const answerApproval = async (rpcId: string, approvalId: string, outcome: 'allowed-once' | 'rejected'): Promise<void> => {
-    await manager.client?.respond({
+    const receipt = await manager.client?.respond({
       type: 'client-response',
       rpcId: rpcId as never,
       result: { ok: true, value: { sessionId, approvalId, outcome } },
     }).catch(() => undefined)
+    // A refused answer means the Host no longer holds this request: the turn
+    // ended, or the bridge restarted while the phone kept the card. The bridge
+    // also publishes the resolution it missed, but a card that can never be
+    // answered must not stay on screen either way.
+    if (receipt !== undefined && !receipt.accepted) {
+      manager.store.resolveApproval(sessionId, approvalId)
+      onApprovalStale()
+      return
+    }
+    manager.store.resolveApproval(sessionId, approvalId)
   }
 
   return (
