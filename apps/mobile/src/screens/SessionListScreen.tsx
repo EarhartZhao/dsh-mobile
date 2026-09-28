@@ -11,6 +11,7 @@ import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { PromptModal } from '../components/PromptModal'
 import { sessionSections } from '../session-sections'
+import { sessionDisplayTitle, sessionRowTitle } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -401,14 +402,18 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
               style={styles.row}
               onLongPress={() => setSessionMenu({
                 sessionId: item.sessionId,
-                title: manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8),
+                title: sessionDisplayTitle({
+                  title: manager.store.title(item.sessionId), cwd: item.cwd, sessionId: item.sessionId,
+                }),
                 archived: true,
               })}
               disabled={!canUnarchive}
             >
               <View style={styles.rowText}>
                 <Text style={[styles.rowTitle, { color: colors.textDim }]} numberOfLines={1}>
-                  {manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)}
+                  {sessionDisplayTitle({
+                    title: manager.store.title(item.sessionId), cwd: item.cwd, sessionId: item.sessionId,
+                  })}
                 </Text>
               </View>
               {canUnarchive && (
@@ -453,7 +458,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
                 <TouchableOpacity style={styles.row} onPress={() => onOpenSession(item.sessionId)}>
                   <View style={styles.rowText}>
                     <Text style={styles.rowTitle} numberOfLines={1}>
-                      {manager.store.title(item.sessionId) ?? item.sessionId.slice(0, 8)}
+                      {sessionDisplayTitle({ title: manager.store.title(item.sessionId), sessionId: item.sessionId })}
                     </Text>
                     <Text style={styles.rowSub} numberOfLines={2}>{item.snippet}</Text>
                   </View>
@@ -485,7 +490,11 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
                       onOpen={onOpenSession}
                       onMenu={() => setSessionMenu({
                         sessionId: item.session.sessionId,
-                        title: manager.store.title(item.session.sessionId) ?? item.session.cwd ?? item.session.sessionId.slice(0, 8),
+                        title: sessionDisplayTitle({
+                          title: manager.store.title(item.session.sessionId),
+                          cwd: item.session.cwd,
+                          sessionId: item.session.sessionId,
+                        }),
                         archived: false,
                       })}
                     />
@@ -603,7 +612,13 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
         title={t('session.renameSession')}
         initial={sessionRenameId === null
           ? ''
-          : manager.store.title(sessionRenameId) ?? visibleById.get(sessionRenameId as never)?.cwd ?? ''}
+          : sessionDisplayTitle({
+              title: manager.store.title(sessionRenameId),
+              ...(visibleById.get(sessionRenameId as never)?.cwd === undefined
+                ? {}
+                : { cwd: visibleById.get(sessionRenameId as never)!.cwd as string }),
+              sessionId: sessionRenameId,
+            })}
         confirmLabel={t('common.rename')}
         onCancel={() => setSessionRenameId(null)}
         onConfirm={title => {
@@ -645,11 +660,12 @@ function SessionRow({ manager, item, onOpen, onMenu }: {
   onMenu: () => void
 }): React.JSX.Element {
   const { locale, t } = useI18n()
-  // A Session with no message yet is the provisional row for the workspace the
-  // user just created it in, so it reads as a new chat rather than as a path.
-  const title = item.blank
-    ? t('chat.newSessionTitle')
-    : manager.store.title(item.sessionId) ?? item.cwd ?? item.sessionId.slice(0, 8)
+  // The Web sidebar's own rule: a blank row is the provisional chat, and an
+  // untitled one is named as such — a path is never a row title.
+  const title = sessionRowTitle(
+    { blank: item.blank, title: manager.store.title(item.sessionId) },
+    { blank: t('chat.newSessionTitle'), untitled: t('session.untitled') },
+  )
   const pending = manager.store.sessions.get(item.sessionId)
   const needsAttention = (pending?.pendingApprovals.size ?? 0) + (pending?.pendingQuestions.size ?? 0) > 0
   const liveJobs = (pending?.jobs ?? []).filter(j => j.status === 'running' || j.status === 'stopping').length

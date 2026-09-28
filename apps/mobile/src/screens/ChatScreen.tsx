@@ -26,7 +26,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { deriveConversation, groupTurns, placementLabel, processOwnerItem, queuePreview, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { deriveConversation, groupTurns, placementLabel, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, type ConnectionManager, type ConversationItem, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -1165,7 +1165,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const session = manager.store.sessions.get(sessionId)
   const approvals = [...(session?.pendingApprovals.values() ?? [])]
   const questions = [...(session?.pendingQuestions.values() ?? [])]
-  const title = manager.store.title(sessionId) ?? t('chat.fallbackTitle')
+  // Same label the Web conversation header shows: title, else the workspace
+  // name, else the id.
+  const summary = manager.store.summaries.find(item => item.sessionId === sessionId)
+  const title = sessionDisplayTitle({
+    title: manager.store.title(sessionId),
+    ...(summary?.cwd === undefined ? {} : { cwd: summary.cwd }),
+    sessionId,
+  })
 
   // One process disclosure per turn — the shape the web uses, so a turn's
   // reasoning stops competing with its answer. The order comes from core
@@ -1800,7 +1807,11 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
   /** Steps open individually: the web shows each as one truncated line and
    *  expands only the one you tap. */
   const [openSteps, setOpenSteps] = useState<Set<string>>(() => new Set())
-  const open = manual ?? false
+  // A running turn opens its own process: the Web renders the live trace while
+  // work happens, and a collapsed row here reads as "nothing is happening" —
+  // exactly the gap that makes a long tool chain look stalled. Once the turn
+  // settles it folds back to the answer, and a manual toggle always wins.
+  const open = manual ?? turn.running
   const label = turn.toolCallCount > 0
     ? t('chat.toolCallSummary', { count: turn.toolCallCount })
     : t('chat.thoughtSummary')
