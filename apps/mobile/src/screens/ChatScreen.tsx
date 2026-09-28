@@ -27,7 +27,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { compactJson, deriveConversation, groupTurns, placementLabel, prettyJson, processOwnerItem, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionStatsView, type TodoItemView, type Turn } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -43,6 +43,7 @@ import { markdownRules, markdownStyles } from '../markdown'
 import { extensionOf } from '../file-kinds'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
+import { MessageActionRow } from '../components/MessageActions'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
 import { ToolCard } from '../components/ToolCard'
@@ -370,7 +371,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     })
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const listRef = useRef<FlatList<ListRow>>(null)
+  const listRef = useRef<FlatList<TranscriptRow>>(null)
   const backHandled = useRef(false)
   const mountedRef = useRef(true)
   const listAtBottom = useRef(true)
@@ -1062,18 +1063,42 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     return actions
   }
 
-  const forkAtMessage = async (item: ConversationItem): Promise<void> => {
-    const result = await manager.client?.sessions.fork({ sessionId, atSeq: item.seq } as never).catch(() => null)
+  /**
+   * Fork the session at one boundary seq. The web branches only from a
+   * completed turn's tail and sends that turn's real `turn/end` seq (the Host
+   * cuts exactly there); the long-press menu's "branch here" keeps its older
+   * per-message anchor and shares this one transport.
+   */
+  const forkAtSeq = async (seq: number): Promise<void> => {
+    const client = manager.client
+    const result = await client?.sessions.fork({ sessionId, atSeq: seq } as never).catch(() => null)
     const rpc = result?.result
-    if (rpc?.ok) {
-      showNotice(t('notice.forked'))
-      onOpenSession?.(rpc.value.sessionId)
-    } else if (rpc !== undefined && !rpc.ok) {
-      showNotice(t('notice.forkFailed', { message: rpc.error.message }))
-    } else {
+    if (rpc === undefined) {
       showNotice(t('notice.connectionUnavailable'))
+      return
     }
+    if (!rpc.ok) {
+      showNotice(t('notice.forkFailed', { message: rpc.error.message }))
+      return
+    }
+    const childId = rpc.value.sessionId
+    /**
+     * The web's fork service renames the child before it resolves (`increaseTitle`
+     * is client-side, not an RPC field), so a branch never reads as its source in
+     * the list. A rename failure leaves the branch itself intact: the notice says
+     * the fork happened, which is the part the user asked for.
+     */
+    const sourceTitle = manager.store.title(sessionId)
+    if (client !== null && sourceTitle !== undefined && sourceTitle.trim() !== '') {
+      await client.sessions.rename({ sessionId: childId, title: increasedForkTitle(sourceTitle) } as never)
+        .catch(() => null)
+    }
+    await manager.refreshBaseline().catch(() => undefined)
+    showNotice(t('notice.forked'))
+    onOpenSession?.(childId)
   }
+
+  const forkAtMessage = (item: ConversationItem): Promise<void> => forkAtSeq(item.seq)
 
   const resendToNewSession = async (item: ConversationItem): Promise<void> => {
     const client = manager.client
@@ -1139,8 +1164,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }
 
   const jumpToItem = (target: ConversationItem): void => {
-    const index = items.findIndex(item => item.key === target.key)
-    if (index < 0) return
+    /**
+     * The search sheet indexes `items`, but the list renders `listRows`: tool
+     * calls, turn boundaries and reasoning-only answers are not rows of their
+     * own, so an item index would land several rows off. `rowIndexOfItemKey`
+     * resolves the row that actually carries the target, and a folded step
+     * points at its turn rather than scrolling nowhere.
+     */
+    const index = rowIndexOfItemKey.get(target.key)
+    if (index === undefined) return
     listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.15 })
   }
 
@@ -1215,20 +1247,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   // The disclosure rides inside the answer's card (the web's own is chrome-free
   // and sits in the answer's flow), so only a turn that has no answer yet — a
   // live turn still calling tools — needs a card of its own.
-  const turns = groupTurns(items)
-  const listRows: ListRow[] = turns.flatMap(turn => {
-    const answer = processOwnerItem(turn)
-    return turn.rows
-      .filter(row => row.kind !== 'process' || answer === undefined)
-      .map(row => row.kind === 'process'
-        ? { kind: 'turn' as const, key: `process:${turn.key}`, turn }
-        : {
-            kind: 'item' as const,
-            key: row.item.key,
-            item: row.item,
-            ...(row.item === answer ? { process: turn } : {}),
-          })
-  })
+  // Row building lives in core: the rows are not the conversation items (tool
+  // calls and reasoning-only answers have no row of their own), and the same
+  // grouping answers where a search hit's jump must land.
+  const { turns, rows: listRows, rowIndexOfItemKey } = buildTranscript(items)
   /**
    * The running turn, for the transcript's own bottom indicator: the web keeps
    * a live clock there so a long turn never looks stalled. It rides the last
@@ -1326,27 +1348,55 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         onScrollToIndexFailed={({ index, averageItemLength }) => {
           listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })
         }}
-        renderItem={({ item }) => (
-          item.kind === 'turn' ? (
-            <TurnProcessBlock
-              turn={item.turn}
-              manager={manager}
-              sessionId={sessionId}
-              onLongPress={setMessageAction}
-            />
-          ) : (
+        renderItem={({ item }) => {
+          if (item.kind === 'turn') {
+            return (
+              <TurnProcessBlock
+                turn={item.turn}
+                manager={manager}
+                sessionId={sessionId}
+                onLongPress={setMessageAction}
+              />
+            )
+          }
+          const entry = item.item
+          const messageId = entry.kind === 'assistant' ? entry.messageId : undefined
+          const actions = entry.kind === 'user' || entry.kind === 'assistant'
+            ? (
+              <MessageActionRow
+                time={typeof entry.time === 'number' ? entry.time : 0}
+                clock={entry.kind === 'user' ? 'start' : 'end'}
+                {...(messageId === undefined ? {} : { rating: feedback[messageId] })}
+                canRate={canRateMessages && messageId !== undefined}
+                {...(item.branch === undefined ? {} : { branch: item.branch })}
+                onCopy={() => {
+                  void Clipboard.setString(messageText(entry))
+                  showNotice(t('notice.copied'))
+                }}
+                onRate={next => void rateMessage(entry, next)}
+                onBranch={() => {
+                  if (item.branch?.seq === undefined) {
+                    showNotice(t('actions.branchUnavailable'))
+                    return
+                  }
+                  void forkAtSeq(item.branch.seq)
+                }}
+              />
+            )
+            : undefined
+          return (
             <Bubble
-              item={item.item}
+              item={entry}
               manager={manager}
               sessionId={sessionId}
-              onLongPress={() => setMessageAction(item.item)}
+              onLongPress={() => setMessageAction(entry)}
               onPreview={setPreviewPath}
               onOpenLink={openTranscriptLink}
-              rating={item.item.kind === 'assistant' && item.item.messageId !== undefined ? feedback[item.item.messageId] : undefined}
               {...(item.process === undefined ? {} : { process: item.process })}
+              {...(actions === undefined ? {} : { actions })}
             />
           )
-        )}
+        }}
       />
       {planMode !== undefined && <PlanChip mode={planMode} />}
       <GoalBar
@@ -2048,11 +2098,6 @@ function CollapsibleMarkdown({ text, onOpenLink }: {
   )
 }
 
-/** A transcript row is either a turn's process disclosure or a plain item. */
-type ListRow =
-  | { kind: 'turn'; key: string; turn: Turn }
-  | { kind: 'item'; key: string; item: ConversationItem; process?: Turn }
-
 /**
  * Files the model declared as deliverables, one card each — the shape the web
  * shows under an answer that produced user-facing files. The description is the
@@ -2154,7 +2199,7 @@ function UnknownEventCard({ item }: { item: Extract<ConversationItem, { kind: 'u
   )
 }
 
-function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, rating, process }: {
+function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, process, actions }: {
   item: ConversationItem
   manager: ConnectionManager
   sessionId: string
@@ -2163,10 +2208,10 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
   onPreview: (path: string) => void
   /** Handles a tapped Markdown link (URLs leave the app, file refs preview). */
   onOpenLink: (href: string) => void
-  /** Durable rating of this assistant message, when one exists. */
-  rating?: MobileFeedbackItem
   /** The turn's process disclosure, merged into the answer's own card. */
   process?: Turn
+  /** The message's own web-parity action row, when it has one. */
+  actions?: React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useI18n()
   switch (item.kind) {
@@ -2177,6 +2222,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
             <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.messageImage} fallbackStyle={styles.imageFallback} />
           ))}
           <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
+          {actions}
         </TouchableOpacity>
       )
     case 'compaction':
@@ -2225,12 +2271,8 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
             </View>
           )}
           {item.kind === 'stream' && <Text style={styles.cursor}>▍</Text>}
-          {item.kind === 'assistant' && rating !== undefined && (
-            <Text style={styles.feedbackBadge}>
-              {rating.rating === 'positive' ? t('feedback.positive') : t('feedback.negative')}
-            </Text>
-          )}
           {item.kind === 'assistant' && item.interrupted && <Text style={styles.interrupted}>{t('chat.interrupted')}</Text>}
+          {item.kind === 'assistant' && actions}
         </TouchableOpacity>
       )
     case 'tool':

@@ -53,6 +53,13 @@ export type TurnProcessStep =
 export interface Turn {
   /** Stable key: the id of the item that opened the turn. */
   key: string
+  /**
+   * Every conversation item this turn consumed, in log order — including the
+   * ones that render nowhere (a reasoning-only answer) or only inside the
+   * disclosure (a tool call). Callers that address items by key need the whole
+   * membership, not just what is visible.
+   */
+  items: ConversationItem[]
   /** Reasoning and tool calls, in the order they happened. */
   process: TurnProcessStep[]
   /** Rows that still render on their own: prompts, answers, compactions. */
@@ -81,6 +88,13 @@ export interface Turn {
   /** Recorded `turn/end` time, else the last item's. */
   endedAt: number
   /**
+   * The closing `turn/end` seq, when the page carries it. The web branches at
+   * exactly this boundary ("the branch action owns boundary resolution: it
+   * sends the real turn/end seq it already has"), so a phone that forks must
+   * send the same anchor rather than the message's own seq.
+   */
+  endSeq?: number
+  /**
    * Why the turn ended — `completed`, `aborted`, `error`, `max-tokens`, … —
    * absent while it is still open or when the closing event is not loaded.
    */
@@ -92,6 +106,45 @@ export interface Turn {
 export type TurnRow =
   | { kind: 'process' }
   | { kind: 'item'; item: ConversationItem }
+
+/**
+ * Where a turn's branch control forks, mirroring the web's turn tail: the
+ * closing `turn/end` seq the Host cuts at, or `unavailable` while the turn has
+ * not closed (the web keeps the control visible but inert in that case).
+ */
+export interface TurnBranchAnchor {
+  /** The closing boundary to fork at; absent precisely when `unavailable`. */
+  seq?: number | undefined
+  /** The turn is still running, so no boundary exists to cut at yet. */
+  unavailable?: boolean | undefined
+}
+
+/** The answer a turn's branch control belongs to, plus the anchor to fork at. */
+export interface TurnTail {
+  /** The turn's closing answer — the message the web seats its icon row on. */
+  item: ConversationItem
+  /** Absent when the turn has no resolvable boundary, so no control is shown. */
+  branch?: TurnBranchAnchor | undefined
+}
+
+/**
+ * The message that closes a turn, with the boundary its branch control forks
+ * at. The web hangs that control on the turn tail and sends the real
+ * `turn/end` seq ("the branch action owns boundary resolution"), never the
+ * message's own seq; a live turn has no boundary yet and keeps the control
+ * visible but inert.
+ * @param turn - one grouped turn.
+ * @returns the tail answer and its anchor, or undefined when the turn has no
+ * answer of its own (a turn that only called tools, or only reasoned).
+ */
+export function turnTail(turn: Turn): TurnTail | undefined {
+  const item = turn.visible
+    .filter(entry => entry.kind === 'assistant' || entry.kind === 'stream')
+    .at(-1)
+  if (item === undefined) return undefined
+  if (turn.endSeq !== undefined) return { item, branch: { seq: turn.endSeq } }
+  return turn.live ? { item, branch: { unavailable: true } } : { item }
+}
 
 /**
  * The row that carries a turn's process disclosure, or undefined when the turn
@@ -225,6 +278,7 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
   const open = (item: ConversationItem): Turn => {
     const turn: Turn = {
       key: item.key,
+      items: [],
       process: [],
       visible: [],
       rows: [],
@@ -251,6 +305,7 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
       if (current !== null) {
         current.endedAt = Math.max(current.endedAt, itemTime(item))
         current.endReason = item.reason
+        current.endSeq = item.seq
       }
       continue
     }
@@ -258,6 +313,7 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
     // greeting, say) still needs a home, so the first item opens one too.
     if (item.kind === 'user' || current === null) current = open(item)
 
+    current.items.push(item)
     current.process.push(...stepsOf(item))
     if (item.kind === 'tool') current.toolCallCount += 1
     if (isVisible(item)) {

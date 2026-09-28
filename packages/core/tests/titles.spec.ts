@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sessionDisplayTitle, sessionRowTitle, workspaceBasename } from '../src/titles.ts'
+import { increasedForkTitle, sessionDisplayTitle, sessionRowTitle, workspaceBasename } from '../src/titles.ts'
 
 describe('session labels', () => {
   it('takes the workspace basename for both separator styles', () => {
@@ -24,5 +24,16 @@ describe('session labels', () => {
     expect(sessionRowTitle({ blank: false, title: '   ' }, labels)).toBe('未命名')
     // A path is never a row title, matching the Web sidebar.
     expect(sessionRowTitle({ blank: false, title: null }, labels)).toBe('未命名')
+  })
+
+  it('steps a fork child title up the way the web does', () => {
+    // The child must not read as its source in the list; the web's fork
+    // service applies exactly these three shapes.
+    expect(increasedForkTitle('课程规划')).toBe('课程规划 (1)')
+    expect(increasedForkTitle('课程规划 (1)')).toBe('课程规划 (2)')
+    expect(increasedForkTitle('课程规划（2）')).toBe('课程规划（3）')
+    // An untitled session keeps its empty title rather than gaining a suffix.
+    expect(increasedForkTitle('')).toBe('')
+    expect(increasedForkTitle('   ')).toBe('   ')
   })
 })

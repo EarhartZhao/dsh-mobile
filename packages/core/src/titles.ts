@@ -34,3 +34,25 @@ export function sessionRowTitle(
   const title = input.title?.trim()
   return title === undefined || title === '' ? labels.untitled : title
 }
+
+/**
+ * The child title a fork takes, copied from the Web client's own rule: an
+ * existing `(N)` / `（N）` suffix steps up, and a title without one becomes
+ * `… (1)`. The Web's `sessions.fork` renames the child before it resolves, so a
+ * branch never reads as its source in the sidebar — a phone that forks has to
+ * apply the same rule itself, because `increaseTitle` is client-side.
+ * @param title - the source session's durable title.
+ * @returns the incremented title; an empty source title stays empty.
+ */
+export function increasedForkTitle(title: string): string {
+  if (title.trim() === '') return title
+  const ascii = /^(.*?)\((\d+)\)$/u.exec(title)
+  if (ascii?.[1] !== undefined && ascii[2] !== undefined) {
+    return `${ascii[1]}(${BigInt(ascii[2]) + 1n})`
+  }
+  const fullWidth = /^(.*?)（(\d+)）$/u.exec(title)
+  if (fullWidth?.[1] !== undefined && fullWidth[2] !== undefined) {
+    return `${fullWidth[1]}（${BigInt(fullWidth[2]) + 1n}）`
+  }
+  return `${title} (1)`
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupTurns, processOwnerItem } from '../src/turns.ts'
+import { groupTurns, processOwnerItem, turnTail } from '../src/turns.ts'
 import type { ConversationItem } from '../src/conversation.ts'
 
 function user(seq: number, text: string) {
@@ -198,6 +198,8 @@ describe('groupTurns', () => {
     expect(turn.live).toBe(false)
     expect(turn.endReason).toBe('completed')
     expect(turn.durationMs).toBe(5_000)
+    // The web branches at the closing boundary, so the turn carries its seq.
+    expect(turn.endSeq).toBe(6)
     // Turn boundaries are timing, not content: they never become rows.
     expect(rowShape(turn)).toEqual(['q', 'process', 'a'])
   })
@@ -211,6 +213,7 @@ describe('groupTurns', () => {
     ))[0]!
     expect(cancelled.endReason).toBe('aborted')
     expect(cancelled.durationMs).toBe(4_000)
+    expect(cancelled.endSeq).toBe(4)
     expect(cancelled.summary.running).toBe('commands')
 
     // The newest turn with no recorded end is still live even between steps.
@@ -221,6 +224,35 @@ describe('groupTurns', () => {
     const older = groupTurns(items(user(1, 'q'), assistant(2, 'a'), user(3, 'q2'), assistant(4, 'a2')))
     expect(older[0]!.live).toBe(false)
     expect(older[1]!.live).toBe(true)
+  })
+
+  it('seats the branch control on the turn tail, anchored at the turn/end seq', () => {
+    // The web forks at the closing boundary it already holds, not at the
+    // message seq, and a later delivery row never displaces the answer.
+    const settled = groupTurns(items(
+      turnStart(1, 1, 1_000),
+      user(2, 'q'),
+      assistant(3, 'answer'),
+      { kind: 'delivery', key: 'd4', seq: 4.5, time: 2_000, files: [{ path: 'out.md' }] },
+      turnEnd(5, 1, 3_000, 'completed'),
+    ))[0]!
+
+    expect(turnTail(settled)).toMatchObject({ branch: { seq: 5 } })
+    expect((turnTail(settled)!.item as { text: string }).text).toBe('answer')
+  })
+
+  it('keeps the branch control inert while the turn has not closed', () => {
+    // A live turn has no boundary to cut at yet; the web shows the control
+    // disabled rather than hiding it, and so does this.
+    const live = groupTurns(items(user(1, 'q'), assistant(2, 'partial')))[0]!
+    expect(turnTail(live)).toMatchObject({ branch: { unavailable: true } })
+  })
+
+  it('offers no branch control when the turn has no answer to hang it on', () => {
+    // A turn that only called tools has no tail message, so there is nothing to
+    // seat the icon row on.
+    const toolsOnly = groupTurns(items(user(1, 'q'), timedTool(2, 'read', '{}', 'done', 1_100), turnEnd(3, 1, 2_000, 'completed')))[0]!
+    expect(turnTail(toolsOnly)).toBeUndefined()
   })
 
   it('carries the newest reasoning as the preview the row shows while collapsed', () => {

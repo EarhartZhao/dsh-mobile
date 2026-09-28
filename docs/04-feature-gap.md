@@ -61,6 +61,24 @@
 > `caFpEnforced: false`。剩余三项分别卡在：上游 fs seam 的 `listDir` 上限与 Remote 游标（分页）、
 > Hub 中继或局域网端点（大文件）、FCM/APNs 凭据（推送）与原生 TLS pinning（CA 指纹强制）。
 
+> 2026-09-29 追加（对齐 Web 的三处交互细节 + 两处真机缺陷）：
+> ① **消息动作行**。Web 的答案下常驻一行 `复制 / 👍 / 👎 / 分支 / 时间`（`MessageIconActions` +
+> `MessageFeedbackActions`），App 此前只有长按菜单。现在 assistant 与 user 气泡下都渲染同一行：
+> 复制走剪贴板、评分走 `messageFeedback` RPC（已存评分再点即撤回）、时间按 Web 的三段式
+> （当天 `HH:mm`、同年 `M/D HH:mm`、跨年带年份）并遵循 Web 的位置（提示词在按钮前、回答在按钮后）。
+> ② **分支锚点**。Web 的分支控件挂在轮次尾部并发**真实的 `turn/end` seq**（"the branch action owns
+> boundary resolution"），而不是消息自身的 seq；`Turn` 现在携带 `endSeq`，`turnTail()` 统一决定
+> 「哪条消息持有这个控件 + 锚点在哪 + 未结束的轮次显示为不可用」。分支成功后按 Web 的
+> `increasedForkTitle` 规则给子会话改名（`… (1)` → `… (2)`），避免分叉在列表里和源会话同名。
+> ③ **统计行总 token**。补齐 Web usage pill 的 `512K tok`（= 计费输入 + 输出），位于 tok/s 与
+> 缓存命中之间。
+> 两个真机缺陷：① **搜索跳转按行解析**——搜索列表按 `items` 编号，而列表渲染的是 `listRows`
+> （工具调用、轮次边界、只有推理没有正文的回答都没有自己的行），旧代码用 item 序号去 `scrollToIndex`，
+> 轻则偏几行、重则落在列表之外什么也不做；行构造已移入 core 的 `buildTranscript()`，同时返回
+> item→行 的映射，折叠内容落回它所属的轮次。② **交付卡闭环**：真机会话里确实存在 `present`
+> 调用与 `deliverables/presented` 事件（`session/history` 下 `arguments` 是字符串，可解析出
+> 交付文件与说明），App 渲染的两张卡与 Web 的交付区一致。
+
 ## 一、移动端现状（已完成）
 
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
