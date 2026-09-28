@@ -1,51 +1,24 @@
-/** Structured tool presentation backed by host ToolCallView / ToolResultView. */
+/**
+ * Structured tool presentation, backed by the host's declarative render intents.
+ *
+ * The row owns the chrome — header, status, expansion, images, produced-file
+ * locations and nested sub-calls — while everything a specific `card`
+ * contributes comes from the registry in `../tool-cards.tsx`. That split is what
+ * makes a new host card one entry plus one test, and an unknown one a readable
+ * fallback instead of an empty panel.
+ */
 import React, { useState } from 'react'
-import { Clipboard, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { AttachmentImage } from './AttachmentImage'
 import { toolDisplayName } from '../ui-labels'
-import { useI18n, type TranslationKey } from '../i18n'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
+import { cardRenderer, isRecord, Mono, MonoActionRow, type Translate } from './tool-cards'
+import { useI18n } from '../i18n'
 
 function activeView(item: ConversationItem & { kind: 'tool' }): Record<string, unknown> | null {
   const view = item.status === 'running' ? item.callView : (item.resultView ?? item.callView)
   return isRecord(view) ? view : null
-}
-
-type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
-
-function titleOf(item: ConversationItem & { kind: 'tool' }, t: Translate, fallback: string): string {
-  const view = activeView(item)
-  const title = view !== null && typeof view['title'] === 'string' && view['title'] !== '' ? view['title'] : undefined
-  if (view?.['card'] === 'terminal' && typeof view['title'] === 'string' && view['title'] !== '') return view.title
-  return title ?? fallback
-}
-
-function metaOf(item: ConversationItem & { kind: 'tool' }, t: Translate): string[] {
-  const view = activeView(item)
-  if (view === null) return []
-  const meta: string[] = []
-  if (view['card'] === 'terminal' && typeof view['cwd'] === 'string' && view['cwd'] !== '') meta.push(view.cwd)
-  if (view['card'] === 'diff' && Array.isArray(view['diffs'])) meta.push(t('tools.files', { count: view.diffs.length }))
-  if (view['card'] === 'read' && typeof view['path'] === 'string') {
-    meta.push(`${view.path}:${typeof view['offset'] === 'number' ? view.offset : 1}`)
-  }
-  if (view['card'] === 'web') {
-    if (view['kind'] === 'fetch' && typeof view['url'] === 'string') meta.push(`${view.statusCode} · ${view.url}`)
-    if (view['kind'] === 'search' && Array.isArray(view['sources'])) meta.push(t('tools.sources', { count: view.sources.length }))
-  }
-  if (view['card'] === 'search') {
-    if (view['shape'] === 'paths' && Array.isArray(view['paths'])) meta.push(t('tools.paths', { count: view.paths.length }))
-    if (view['shape'] === 'matches' && Array.isArray(view['files'])) {
-      const total = view.files.reduce((sum, file) => sum + (isRecord(file) && Array.isArray(file['matches']) ? file.matches.length : 0), 0)
-      meta.push(t('tools.matches', { count: total }))
-    }
-  }
-  return meta
 }
 
 function locationLines(item: ConversationItem & { kind: 'tool' }): string[] {
@@ -65,138 +38,15 @@ function shortText(value: string, limit = 140): string {
   return `${compact.slice(0, limit - 1)}…`
 }
 
-function summaryOf(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
-  const view = activeView(item)
-  if (view !== null) {
-    if (view['card'] === 'read' && Array.isArray(view['lines'])) return t('tools.lines', { count: view.lines.length })
-    if (view['card'] === 'diff' && Array.isArray(view['diffs'])) return t('tools.files', { count: view.diffs.length })
-    if (view['card'] === 'web' && Array.isArray(view['sources'])) return t('tools.sources', { count: view.sources.length })
-    if (view['card'] === 'search') {
-      if (view['shape'] === 'paths' && Array.isArray(view['paths'])) return t('tools.paths', { count: view.paths.length })
-      if (Array.isArray(view['files'])) {
-        const total = view.files.reduce((sum, file) => sum + (isRecord(file) && Array.isArray(file['matches']) ? file.matches.length : 0), 0)
-        return t('tools.matches', { count: total })
-      }
-    }
-  }
+/**
+ * The summary the row uses when the card has no summary facet: what the call
+ * produced, else what it was asked to do, else how much it delegated.
+ */
+function fallbackSummary(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
   if (item.resultText !== '') return shortText(item.resultText)
   if (item.args !== '') return shortText(item.args)
   if (item.subCalls.length > 0) return t('tools.subCallsCount', { count: item.subCalls.length })
   return t('tools.tapToExpand')
-}
-
-function copy(value: string): void { Clipboard.setString(value) }
-function share(value: string): void { void Share.share({ message: value }).catch(() => undefined) }
-
-function MonoActionRow({ label, value }: { label: string; value: string }): React.JSX.Element {
-  const { t } = useI18n()
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <TouchableOpacity onPress={() => copy(value)}><Text style={styles.detailAction}>{t('common.copy')}</Text></TouchableOpacity>
-      <TouchableOpacity onPress={() => share(value)}><Text style={styles.detailAction}>{t('common.share')}</Text></TouchableOpacity>
-    </View>
-  )
-}
-
-function Mono({ text, read = false }: { text: string; read?: boolean }): React.JSX.Element {
-  return (
-    <ScrollView style={[styles.monoScroll, read && styles.readScroll]} nestedScrollEnabled>
-      <Text selectable style={[styles.mono, read && styles.read]}>{text}</Text>
-    </ScrollView>
-  )
-}
-
-function DiffList({ diffs }: { diffs: unknown }): React.JSX.Element | null {
-  if (!Array.isArray(diffs) || diffs.length === 0) return null
-  return (
-    <View style={styles.diffList}>
-      {diffs.filter(isRecord).map((diff, index) => {
-        const path = typeof diff['path'] === 'string' ? diff['path'] : `file-${index + 1}`
-        const oldText = typeof diff['oldText'] === 'string' ? diff['oldText'] : null
-        const newText = typeof diff['newText'] === 'string' ? diff['newText'] : ''
-        const oldLines = oldText === null ? [] : oldText.split('\n').slice(0, 12).map(line => ({ type: 'old', line }))
-        const newLines = newText.split('\n').slice(0, 12).map(line => ({ type: 'new', line }))
-        return (
-          <View key={`${path}:${index}`} style={styles.diff}>
-            <MonoActionRow label={path} value={path} />
-            {[...oldLines, ...newLines].map((part, lineIndex) => (
-              <Text
-                key={`${part.type}:${lineIndex}`}
-                style={[styles.diffLine, part.type === 'old' ? styles.diffOld : styles.diffNew]}
-                numberOfLines={1}
-              >
-                {part.type === 'old' ? `- ${part.line}` : `+ ${part.line}`}
-              </Text>
-            ))}
-          </View>
-        )
-      })}
-    </View>
-  )
-}
-
-function ReadView({ view }: { view: Record<string, unknown> }): React.JSX.Element | null {
-  if (!Array.isArray(view['lines']) || view.lines.length === 0) return null
-  const text = view.lines.filter(isRecord)
-    .map(line => `${typeof line['number'] === 'number' ? String(line.number).padStart(4) : '    '}  ${typeof line['text'] === 'string' ? line.text : ''}`)
-    .join('\n')
-  return <Mono read text={text} />
-}
-
-function SearchView({ view }: { view: Record<string, unknown> }): React.JSX.Element | null {
-  if (view['shape'] === 'paths' && Array.isArray(view['paths'])) {
-    return (
-      <View style={styles.searchList}>
-        {view.paths.filter(path => typeof path === 'string').map(path => (
-          <MonoActionRow key={path} label={path} value={path} />
-        ))}
-      </View>
-    )
-  }
-  if (!Array.isArray(view['files'])) return null
-  return (
-    <View style={styles.searchList}>
-      {view.files.filter(isRecord).map((file, index) => {
-        const path = typeof file['path'] === 'string' ? file['path'] : `file-${index + 1}`
-        const lines = Array.isArray(file['matches']) ? file.matches.filter(isRecord) : []
-        return (
-          <View key={path} style={styles.searchGroup}>
-            <MonoActionRow label={path} value={path} />
-            {lines.map((line, lineIndex) => (
-              <Text key={lineIndex} style={styles.searchLine} numberOfLines={2}>
-                {typeof line['lineNumber'] === 'number' ? `${line.lineNumber}: ` : ''}
-                {typeof line['line'] === 'string' ? line.line : ''}
-              </Text>
-            ))}
-          </View>
-        )
-      })}
-    </View>
-  )
-}
-
-function WebView({ view }: { view: Record<string, unknown> }): React.JSX.Element | null {
-  if (view['kind'] !== 'search' || !Array.isArray(view['sources'])) return null
-  return (
-    <View style={styles.searchList}>
-      {view.sources.filter(isRecord).map((source, index) => {
-        const url = typeof source['url'] === 'string' ? source.url : ''
-        const title = typeof source['title'] === 'string' && source.title !== '' ? source.title : url
-        return (
-          <View key={url || index} style={styles.webSource}>
-            <TouchableOpacity onPress={() => url !== '' && share(url)}>
-              <Text style={styles.webTitle} numberOfLines={1}>{title}</Text>
-              {url !== '' && <Text style={styles.webUrl} numberOfLines={1}>{url}</Text>}
-            </TouchableOpacity>
-            {typeof source['snippet'] === 'string' && source.snippet !== '' && (
-              <Text style={styles.searchLine} numberOfLines={3}>{source.snippet}</Text>
-            )}
-          </View>
-        )
-      })}
-    </View>
-  )
 }
 
 function SubCall({ call, manager, sessionId, depth = 0 }: {
@@ -241,8 +91,21 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
   const statusColor = item.status === 'running' ? colors.running : item.status === 'error' ? colors.danger : colors.success
   const statusText = item.status === 'running' ? t('tools.statusRunning') : item.status === 'error' ? t('tools.statusError') : t('tools.statusDone')
   const view = activeView(item)
+  // The registry is the single place a `card` decides how it looks; a miss falls
+  // back to the generic entry, so an unknown tag still shows title and result.
+  const card = cardRenderer(view)
+  const title = (view === null ? undefined : card.title?.(view)) ?? toolDisplayName(item.name, t)
+  const meta = view === null ? [] : card.meta?.(view, t) ?? []
+  const summary = (view === null ? undefined : card.summary?.(view, t)) ?? fallbackSummary(item, t)
   const locations = locationLines(item)
-  const summary = summaryOf(item, t)
+  // `body` returning nothing means "no structure to show": fall back to the raw
+  // result text, which is what a reader can act on.
+  const structured = view === null ? null : card.body?.(view, { resultText: item.resultText, args: item.args, t }) ?? null
+  const rawBody = item.resultText !== ''
+    ? <Mono text={item.resultText} />
+    : item.args !== ''
+      ? <Mono text={item.args} />
+      : null
   return (
     <View style={bare ? styles.cardBare : styles.card}>
       <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={styles.header}>
@@ -250,25 +113,18 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
           {/* One line while collapsed ("Bash · what it is doing"), matching the
               web's process rows; the detail below still opens in place. */}
           <Text style={styles.title} numberOfLines={open ? 2 : 1}>
-            {titleOf(item, t, toolDisplayName(item.name, t))}
+            {title}
             {summary === '' ? '' : ` · ${summary}`}
           </Text>
-          {open && metaOf(item, t).length > 0 && (
-            <Text style={styles.meta} numberOfLines={1}>{metaOf(item, t).join(' · ')}</Text>
+          {open && meta.length > 0 && (
+            <Text style={styles.meta} numberOfLines={1}>{meta.join(' · ')}</Text>
           )}
         </View>
         <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
       </TouchableOpacity>
       {open && (
         <View style={styles.body}>
-          {view?.['card'] === 'diff' && <DiffList diffs={view['diffs']} />}
-          {view?.['card'] === 'read' && <ReadView view={view} />}
-          {view?.['card'] === 'search' && <SearchView view={view} />}
-          {view?.['card'] === 'web' && <WebView view={view} />}
-          {(view === null || ['generic', 'terminal'].includes(String(view?.['card']))) && item.resultText !== '' && (
-            <Mono text={item.resultText} />
-          )}
-          {item.resultText === '' && item.args !== '' && <Mono text={item.args} />}
+          {structured ?? rawBody}
           {item.resultImages.map(image => (
             <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.toolImage} fallbackStyle={styles.imageFallback} />
           ))}
@@ -308,24 +164,7 @@ const styles = StyleSheet.create({
   summary: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 3, lineHeight: 15 },
   status: { color: colors.success, fontSize: fontSize.tiny },
   body: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, padding: spacing(2), gap: spacing(1.5) },
-  monoScroll: { maxHeight: 180, borderWidth: 1, borderColor: colors.border, borderRadius: radius.card },
-  readScroll: { maxHeight: 280 },
   mono: { color: colors.text, fontSize: 12, fontFamily: 'monospace', padding: spacing(2) },
-  read: { color: colors.textDim },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), paddingHorizontal: spacing(1) },
-  detailLabel: { flex: 1, color: colors.text, fontSize: fontSize.tiny } as const,
-  detailAction: { color: colors.accent, fontSize: fontSize.tiny },
-  diffList: { gap: spacing(2) },
-  diff: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.card, overflow: 'hidden' },
-  diffLine: { fontSize: 11, fontFamily: 'monospace', paddingHorizontal: spacing(2), paddingVertical: 1 },
-  diffOld: { color: colors.danger, backgroundColor: 'rgba(217,87,87,0.10)' },
-  diffNew: { color: colors.success, backgroundColor: 'rgba(63,185,108,0.10)' },
-  searchList: { gap: spacing(2) },
-  searchGroup: { gap: spacing(1) },
-  searchLine: { color: colors.textDim, fontSize: fontSize.tiny },
-  webSource: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingBottom: spacing(1) },
-  webTitle: { color: colors.text, fontSize: fontSize.small },
-  webUrl: { color: colors.accent, fontSize: fontSize.tiny },
   locations: { gap: spacing(1) },
   subCalls: { gap: spacing(1) },
   sectionTitle: { color: colors.textDim, fontSize: fontSize.tiny, fontWeight: '600' },

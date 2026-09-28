@@ -41,16 +41,29 @@
 
 ## 四、注册表式渲染（避免"每加一个插件就改 App"）
 
-当前 `ToolCard` 用 if 链按 `card` 分支。随着 card 种类变多，应改成表驱动：
+已落地（本轮 C）：`apps/mobile/src/components/tool-cards.tsx` 就是这张表。
 
 | 注册表 | 键 | 未命中时 | 加一项的成本 |
 |---|---|---|---|
-| `cardRegistry` | `card` 标签 | `GenericCard`（title/rawInput/content/locations） | 一个渲染器 + 一条单测 |
+| `CARD_REGISTRY` | `card` 标签 | `generic` 条目（宿主 title + 原始结果文本） | 一个条目 + 一条单测 |
 | `intentRegistry` | `intent.kind` | 通用问题卡（见第五节：需要先放宽 schema） | 一个卡片变体 + 一条单测 |
 | `projectionRegistry` | `session/projection` 键 | 忽略（不渲染） | 一个视图 + 可选能力位 |
 | 事件兜底 | 事件 `type` | 折叠行 `未知事件：{type}`（展开显示 data、可复制/分享） | 已实现，无需改动 |
 
 注册表的意义不是"少写几行 if"，而是把**未知语义**变成一个显式契约：每个表都必须声明"没命中时怎么办"。这也是 Web 端 `conversation-nodes/` 的做法（`register.ts` + `fallback.ts`）。
+
+`CARD_REGISTRY` 的每个条目声明四个面：`title`（卡片自己的标题）、`meta`（展开时的次级行）、`summary`（折叠行尾的摘要）、`body`（展开后的结构化内容）。`body` 返回"没有内容"时由行回退到原始结果文本——所以"结构化数据缺失"不会变成一块空白。工具行自身（状态、展开、图片、产出文件、子调用）不属于注册表，它只负责调用注册表。
+
+### 4.1 view 槽必须有人填：一处曾经断掉的链路
+
+做完注册表后在真机上验发现：**所有结构化卡片都没生效**。原因是 `session/event` 帧的 `view` 槽从来没有人填——Web 端并不消费它（浏览器用自己的 `ui-tool` 卡片模型，从工具名、参数、结果 `meta` 现场推导），而手机没有宿主工具定义可推导，于是每种工具都退化成了原始文本。
+
+修在桥里（插件 0.2.10，`src/tool-views.ts`）：宿主进程内可以拿到工具注册表，于是桥替宿主回答同一个问题——`presentCall(解析后的参数)` 与 `presentResult(解析后的参数, { content, isError, meta })`，其中 `result` 完全由 durable 事件重建（`tool/result` 的 `message.content` / `message.isError` / `data.meta`）。两条要点：
+
+1. **工具注册表是按 Agent scope 注册的**（`ctx.tools.get(name, scope)`，内置 read/pwsh 等都在 scope 层），只查全局层会得到"未注册"。桥通过 `ctx.agents.get(sessionId)` 取该会话的 Agent 作为 scope，全局层仅作兜底。
+2. **不猜**：没有注册表、工具未注册、没有对应 presenter、参数不是 JSON、presenter 抛错——任何一种都返回"没有 view"，由 App 回退到原始文本；同时按原因打一行日志（每个原因只打一次），这样"某个工具为什么显示成原文"在宿主日志里有答案。
+
+于是插件新增一种卡不需要动 App，宿主新增一种工具（自带 presenter）也不需要动桥。
 
 ## 五、硬边界：会让整帧失效的两处
 
@@ -86,6 +99,7 @@
 5. 转写底部实时指示：`深度求索中，用时 49秒…`（本行自持 1 秒定时器，不触发整表重渲染）。
 6. 未知 surface 事件兜底行（对齐 Web 的 `unknown-surface`）：未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行，展开看原始数据。
 7. 未知提问意图不再丢帧（本轮 B）：`question/requested` 的 `intent` 被冻结 schema 拒绝时，由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `kind` 降级成通用问答卡并注明类型。
+8. 工具卡注册表 + view 槽投影（本轮 C）：App 侧 `tool-cards.tsx` 表驱动（未知 card → generic，条目声明 title/meta/summary/body 四个面）；桥侧 0.2.10 用宿主工具注册表按 Agent scope 调 `presentCall`/`presentResult`，把声明式卡片真正送进 `session/event` 的 `view` 槽——此前该槽无人填，App 的 Terminal/Diff/Read/Search/Web 卡片在真机上从未生效。
 
 第 6 条的判据值得单独写下来，因为它是"未知即降级"里唯一需要判断"什么算未知"的一条：
 
