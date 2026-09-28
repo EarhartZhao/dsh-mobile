@@ -119,6 +119,22 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 生成本地 PKCS12 release key（4096-bit RSA，10000 天），配置为 git-ignored `keystore.properties` + `release.keystore`；`storeFile` 支持相对 Android 工程根。
 > - `verifyReleaseSigning` 无签名默认失败，正式签名通过；`assembleRelease` 成功；`apksigner verify --print-certs` 确认 APK 为 release key 而非 debug key。
 
+> 进度（2026-09-29 第九轮 · v0.0.5）：**对齐 Web 的消息级交互细节，并修掉两个真机缺陷。**
+> - 消息动作行：assistant/user 气泡下常驻 `复制 / 👍 / 👎 / 分支 / 时间`（Web 的
+>   MessageIconActions + MessageFeedbackActions）。评分走 messageFeedback RPC（已存评分再点即撤回），
+>   时间按 Web 的三段式且遵循 Web 的左右位置；宿主未声明 `message-feedback` 时整对按钮不渲染。
+> - 分支锚点：Web 的分支控件挂在轮次尾部并发送真实的 `turn/end` seq，`Turn` 现在携带 `endSeq`、
+>   `turnTail()` 统一给出「哪条消息持有控件 + 锚点 + 未结束时不可用」；分支成功后按 Web 的
+>   `increasedForkTitle` 规则给子会话改名，避免与源会话同名。
+> - 统计行补齐 Web usage pill 的总 token；上下文徽标、tok/s、缓存命中不变。
+> - 搜索跳转：搜索列表按 `items` 编号而列表渲染的是行，旧实现用 item 序号 `scrollToIndex`，
+>   会偏几行甚至什么都不做；行构造移入 core 的 `buildTranscript()` 并同时给出 item→行 映射。
+> - 交付卡真机闭环：learner 会话确实有 `present` 调用与 `deliverables/presented`，App 渲染的卡片与 Web 一致。
+> - 验证：core 136/136、App 110/110、plugin 84/84、lint 0 error、typecheck 全绿；
+>   `assembleRelease -PallowDebugSignedRelease=true` 通过（R8 收缩后的 release 构建）；
+>   模拟器真机验收：动作行、评分写读撤回、分支建子会话并改名并归档清理、统计行 `575K tok`、
+>   搜索跳转、工具卡与交付卡渲染。
+
 > 进度（2026-08-28 晚）：**M2/M3 完成，公网真链路活体验收通过**。
 > - M2 队列编辑：运行中发送自动排队（`mode:'queue'`），队列 dock 实时渲染（`session/queue` 快照），支持 编辑（`updateQueue edit`）/ 引导（`steer`）/ 删除（`remove`）；活体验证：前台 sleep 90 占住 turn → 排队 → dock 出现（队列·1）→ 删除后 dock 消失；排队项被认领后 agent 正常处理。UI 修正：running 时不再用「引导」替换发送键（引导是 dock 上的显式动作，发送恒为排队）。
 > - M2 命令面板：斜杠命令经 `session.prompt` 执行，返回的 `command` 槽以提示条展示；发送失败回填草稿并提示。注意：当前 harness 0.1.1-rc.2 的 apiproxy **没有** `command.list`/`command.execute` RPC（rpc-map 无此二法，插件白名单为前瞻占位）——命令发现列表待宿主版本补齐后接入。
