@@ -2,7 +2,7 @@
 import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { Path, Svg } from 'react-native-svg'
-import type { ContextBreakdownProjection, SessionStatsView, TodoItemView, UsageView } from '@dsh-mobile/core'
+import { billedInputTokens, formatCacheHitPercent, formatTokensPerSecond, type ContextBreakdownProjection, type SessionStatsView, type TodoItemView, type UsageView } from '@dsh-mobile/core'
 import { colors, fontSize, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -127,7 +127,7 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   const [expanded, setExpanded] = React.useState(false)
   if (view === null) return null
   const { stats, usage, pressure, breakdown } = view
-  const billedInput = usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  const billedInput = billedInputTokens(usage)
   const hasUsage = billedInput > 0 || usage.outputTokens > 0
   const chips: { key: string; label: string; emphasis?: boolean }[] = []
   if (stats.steps > 0) {
@@ -138,13 +138,12 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
       chips.push({ key: 'ttft', label: t('stats.ttft', { duration: compactDuration(stats.ttftMs / stats.ttftSteps) }) })
     }
     if (stats.decodeMs > 0) {
-      const rate = stats.decodeTokens / (stats.decodeMs / 1_000)
-      chips.push({ key: 'rate', label: `${rate < 10 ? Math.round(rate * 10) / 10 : Math.round(rate)} tok/s` })
+      chips.push({ key: 'rate', label: t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) }) })
     }
   }
-  if (hasUsage && billedInput > 0) {
-    chips.push({ key: 'cache', label: t('stats.cacheHit', { percent: Math.round(usage.cacheReadTokens / billedInput * 100) }) })
-  }
+  // Web parity: a partial hit is never rounded up to a full one.
+  const cacheHit = hasUsage ? formatCacheHitPercent(usage.cacheReadTokens, billedInput) : null
+  if (cacheHit !== null) chips.push({ key: 'cache', label: t('stats.cacheHit', { percent: cacheHit }) })
   if (hasUsage) {
     chips.push({ key: 'input', label: t('stats.inputTokens', { tokens: compactTokens(billedInput) }) })
     chips.push({ key: 'output', label: t('stats.outputTokens', { tokens: compactTokens(usage.outputTokens) }) })
@@ -155,6 +154,20 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
   const hasContext = usedTokens !== undefined && windowTokens !== undefined && windowTokens > 0
   const contextPercent = hasContext ? Math.min(100, Math.round(usedTokens! / windowTokens! * 100)) : null
   if (chips.length === 0 && !hasContext) return null
+
+  /**
+   * The always-visible one-liner: what the session has done and how fast, in the
+   * web's composer-stats composition (`1 轮 · 3 步 · 213 tok/s · 缓存命中 93%`).
+   * Counts lead because they are the durable figure; speed needs a decode
+   * measurement and the cache share needs billed input, so a session without
+   * either simply shows fewer parts rather than zeros.
+   */
+  const compactParts: string[] = []
+  if (stats.steps > 0) compactParts.push(t('stats.counts', { turns: stats.turns, steps: stats.steps }))
+  if (stats.decodeMs > 0) {
+    compactParts.push(t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) }))
+  }
+  if (cacheHit !== null) compactParts.push(t('stats.cacheHit', { percent: cacheHit }))
   const contextSize = contextPercent === null ? null : t('stats.contextBadge', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })
 
   const breakdownTotal = breakdown === null
@@ -187,6 +200,9 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
           <Text style={styles.contextBadge} numberOfLines={1}>{contextSize}</Text>
         )}
       </View>
+      {compactParts.length > 0 && (
+        <Text style={styles.statsCompact} numberOfLines={1}>{compactParts.join(' · ')}</Text>
+      )}
       {expanded && chips.length > 0 && (
         <View style={styles.statsChips}>
           {chips.map(chip => <StatChip key={chip.key} label={chip.label} emphasis={chip.emphasis} />)}
@@ -265,6 +281,8 @@ const styles = StyleSheet.create({
   statsToggle: { padding: spacing(1) },
   statsHeaderSpacer: { flex: 1 },
   contextBadge: { color: colors.accent, fontSize: fontSize.tiny, fontWeight: '600', flex: 1, textAlign: 'right' },
+  /** The always-visible one-liner under the title row. */
+  statsCompact: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   statsChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1.5), marginTop: spacing(2) },
   statChip: {
     borderWidth: 1,

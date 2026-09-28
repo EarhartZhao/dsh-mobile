@@ -218,3 +218,95 @@ export function sessionStatsView(session: SessionState): SessionStatsView {
 export function billedInputTokens(usage: SessionUsageProjection): number {
   return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
 }
+
+/**
+ * Decode speed for display: one decimal below 10 tok/s, whole numbers above.
+ *
+ * Ported from the web's `formatTokensPerSecond` so the same measurement reads
+ * the same in both clients — a phone strip has no room for false precision, so
+ * it keeps the web's own cut rather than inventing one.
+ *
+ * @param tps - tokens per second; negatives clamp to zero.
+ * @returns the display string, without a unit.
+ */
+export function formatTokensPerSecond(tps: number): string {
+  const clamped = Math.max(0, tps)
+  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
+}
+
+/**
+ * Display-ready cache-hit share that never rounds a partial hit up to 100%.
+ *
+ * Ported from the web's `formatCacheHitPercent`. The algorithm is the point: a
+ * naive `Math.round(read / billed * 100)` reports a session that missed a single
+ * cached token as "缓存命中 100%", which is a lie the reader cannot check. Here a
+ * value that would round to a full hit is displayed with just enough extra
+ * precision to stay honest (e.g. `99.99`).
+ *
+ * @param cacheReadTokens - prompt tokens served from cache.
+ * @param promptTokens - aggregate prompt tokens; 0 means there was no prompt.
+ * @param decimalPlaces - ordinary precision (0 or 1); the honesty guard adds
+ *   digits beyond it only when rounding would otherwise claim a full hit.
+ * @returns percentage text, or null when there was no prompt input.
+ */
+export function formatCacheHitPercent(
+  cacheReadTokens: number,
+  promptTokens: number,
+  decimalPlaces: 0 | 1 = 0,
+): string | null {
+  if (promptTokens === 0) return null
+  const missedInputTokens = promptTokens - cacheReadTokens
+  if (missedInputTokens === 0) return '100'
+
+  const roundedUnits = roundedPercentUnits(cacheReadTokens, promptTokens, decimalPlaces)
+  const fullHitUnits = decimalPlaces === 0 ? 100 : 1_000
+  if (roundedUnits < fullHitUnits) return displayPercentUnits(roundedUnits, decimalPlaces)
+
+  // Rounding would claim a complete hit with a miss on the books: widen the
+  // precision until the miss becomes visible.
+  let distinguishingPlaces = 1
+  let scaledDoubleGap = missedInputTokens * 200
+  const denominatorTens = Math.floor(promptTokens / 10)
+  while (scaledDoubleGap <= denominatorTens) {
+    scaledDoubleGap *= 10
+    distinguishingPlaces += 1
+  }
+  const denominatorOnes = promptTokens % 10
+  let roundedLoss = 5
+  for (let loss = 1; loss < 5; loss += 1) {
+    const factor = loss * 2 + 1
+    const threshold = factor * denominatorTens + Math.floor(factor * denominatorOnes / 10)
+    if (scaledDoubleGap <= threshold) {
+      roundedLoss = loss
+      break
+    }
+  }
+  return `99.${'9'.repeat(distinguishingPlaces - 1)}${10 - roundedLoss}`
+}
+
+/** Round a cache-read ratio to exact percentage units, with positive ties rounded up. */
+function roundedPercentUnits(cacheReadTokens: number, denominator: number, decimalPlaces: 0 | 1): number {
+  const unitsPerPercent = decimalPlaces === 0 ? 1 : 10
+  const scale = unitsPerPercent * 100
+  const doubledScale = scale * 2
+  const denominatorQuotient = Math.floor(denominator / doubledScale)
+  const denominatorRemainder = denominator % doubledScale
+  let lower = 0
+  let upper = scale
+  while (lower < upper) {
+    const candidate = Math.floor((lower + upper + 1) / 2)
+    const factor = candidate * 2 - 1
+    const threshold = factor * denominatorQuotient
+      + Math.ceil(factor * denominatorRemainder / doubledScale)
+    if (cacheReadTokens >= threshold) lower = candidate
+    else upper = candidate - 1
+  }
+  return lower
+}
+
+function displayPercentUnits(units: number, decimalPlaces: 0 | 1): string {
+  if (decimalPlaces === 0) return String(units)
+  const whole = Math.floor(units / 10)
+  const tenths = units % 10
+  return tenths === 0 ? String(whole) : `${whole}.${tenths}`
+}

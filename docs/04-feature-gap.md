@@ -81,7 +81,7 @@
 | 工序实时表头（"在做什么"） | ✅ assistant/chunk 具名 tool-call-delta + tool/call + turn/start\|end | ● | 分类词表与详情字段优先级与 Web 同表（`packages/core/src/activity.ts`）；运行中显示"正在调用工具 · job_output"，完成显示"执行了命令并已调用工具 · 用时 1分04秒"，取消/失败显示"已停止"/"处理失败" |
 | 工序逐步行 + 思考预览 | ✅ 同上 | ● | 运行中自动展开并逐步列出工具行（分类 + 详情 + 状态）；思考行折叠成一行预览（末段首行），点开看全文 |
 | 运行中底部实时指示 | ✅ turn/start.time + 本地时钟 | ● | "深度求索中，用时 49秒…"，行内自持 1 秒定时器，不触发整表重渲染 |
-| 会话底部实时统计 | ✅ sessionStats/tokenUsage 投影 | ◐ | 目前仅有会话统计条（轮/步、tok/s、缓存命中在统计面板内），未做底部常驻一行 |
+| 会话底部实时统计 | ✅ sessionStats/tokenUsage 投影 | ● | 统计条常驻一行「25 轮 · 58 步 · 236 tok/s · 缓存命中 98%」（Web composer-stats 的同款组成），展开仍是明细 chips；tok/s 与缓存命中用 Web 的同一套格式化（`formatTokensPerSecond` / `formatCacheHitPercent`，`packages/core/src/stats.ts`），部分命中不会四舍五入成 100% |
 | 未知插件事件兜底 | ✅ event.type 为宽字符串 + surfaceOp 标记 | ● | 未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行（展开看原始数据、可复制/分享）；判据见 `packages/core/src/unknown-event.ts` 与 docs/06 |
 | 未知提问意图降级 | ✅ question/requested（intent 为开放词表） | ● | 冻结 schema 拒掉的提问帧由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `intent.kind` 按通用问答显示并在卡上注明类型（docs/06 落地清单 B） |
 | 会话重命名 | ✅ session.rename | ● | 会话头部菜单已接入 |
