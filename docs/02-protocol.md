@@ -114,6 +114,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 ### events.host（宿主域）
 
 - `host/session-added` / `host/session-status(running)` / `host/workspace-*` / `host/archived-sessions-changed`：驱动列表页与状态徽章。
+- **列表类帧既是状态也是失效信号**：这些帧能改变"有哪些会话、归哪个工作区、顺序、是否归档"。patch 进 store 能让在线列表继续动，但 patch 表达不了**归属**——工作区视图才持有 `sessionIds`，而 `host/session-added` 完全不带工作区，所以桌面端新建的会话在手机上会一直待在"未分组"。App 因此把这些帧同时当作失效信号：去抖 400ms 后重拉 `workspace.list` + `session.list`（一次突发只花一个往返），离线期间收到就置脏、establish 后再补拉。另外列表页出现或 App 回到前台时，用 `refreshBaselineIfStale`（默认信任期 30s）重拉一次——帧是 fire-and-forget，后台期间丢掉的变更只能靠"读者要看了"这个信号补回来。
 - 转发事件帧（`host/remote-event`）：`commands/change`、`llm/adapters-updated` 等失效信号，收到后重拉对应 RPC，不做差分。
 
 ### 公网场景额外注意

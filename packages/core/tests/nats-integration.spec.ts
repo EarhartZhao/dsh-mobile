@@ -26,6 +26,13 @@ let pluginSide: NatsConnection
 /** Bridge generation the fake plugin reports; the heartbeat test flips it. */
 let bridgeStartedAt = new Date(0).toISOString()
 let helloCount = 0
+/**
+ * List baseline the fake bridge serves. Empty by default so the other cases see
+ * a bare host; the invalidation test mutates it (and counts the pulls) to prove
+ * the App re-reads the authoritative list.
+ */
+let listBaseline: { workspaces: unknown[], archivedSessionIds: string[] } = { workspaces: [], archivedSessionIds: [] }
+let workspaceListCalls = 0
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -45,6 +52,14 @@ function pushMuxFrame(frame: unknown): void {
   pluginSide.publish(
     `evt.dsh.${INSTANCE}.mux`,
     encoder.encode(JSON.stringify({ type: 'server-request', rpcId: crypto.randomUUID(), method: 'events.mux', payload: frame })),
+  )
+}
+
+/** Host-domain frames ride their own subject and schema. */
+function pushHostFrame(frame: unknown): void {
+  pluginSide.publish(
+    `evt.dsh.${INSTANCE}.host`,
+    encoder.encode(JSON.stringify({ type: 'server-request', rpcId: crypto.randomUUID(), method: 'events.host', payload: frame })),
   )
 }
 
@@ -100,7 +115,8 @@ beforeAll(async () => {
           msg.respond(replyOk(body.rpcId, { version: '0.1.1', cwd: 'C:\\dsh', attachedSessions: 0, home: 'C:\\dsh-home', canOpenPath: true }))
           break
         case 'workspace.list':
-          msg.respond(replyOk(body.rpcId, { items: [], archivedSessionIds: [] }))
+          workspaceListCalls += 1
+          msg.respond(replyOk(body.rpcId, { items: listBaseline.workspaces, archivedSessionIds: listBaseline.archivedSessionIds }))
           break
         case 'session.list':
           msg.respond(replyOk(body.rpcId, { items: [] }))
@@ -292,6 +308,66 @@ describe('ConnectionManager', () => {
     expect(manager.store.sessions.get('s-live')?.pendingApprovals.size).toBe(1)
     await manager.stop()
     expect(manager.state).toBe('stopped')
+  })
+
+  it('re-pulls the list baseline when another client changes the host', async () => {
+    const manager = new ConnectionManager({
+      connect: appConn,
+      headers: natsHeaders,
+      instanceId: INSTANCE,
+      getToken: () => VALID_TOKEN,
+    })
+    await manager.start()
+    expect(manager.state).toBe('online')
+    const pullsBefore = workspaceListCalls
+
+    // The desktop creates a chat inside a workspace. The frame that reaches the
+    // phone names no workspace at all — `sessionIds` lives on the workspace view —
+    // so patching it in place would file the row under 未分组 forever. Re-pulling
+    // the authoritative baseline is what puts it where it belongs.
+    listBaseline = {
+      workspaces: [{
+        workspaceId: 'ws-learn',
+        path: 'C:\\dsh\\learner',
+        title: 'learner',
+        sessionIds: ['s-new'],
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      }],
+      archivedSessionIds: [],
+    }
+    pushHostFrame({ type: 'host/session-added', sessionId: 's-new', blank: false })
+
+    const deadline = Date.now() + 5_000
+    while (!manager.store.workspaces.some(workspace => workspace.workspaceId === 'ws-learn') && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 50))
+    }
+    expect(manager.store.workspaces).toMatchObject([{ workspaceId: 'ws-learn', sessionIds: ['s-new'] }])
+    expect(workspaceListCalls).toBeGreaterThan(pullsBefore)
+
+    await manager.stop()
+    listBaseline = { workspaces: [], archivedSessionIds: [] }
+  })
+
+  it('refreshes the baseline only when the caller says it may be stale', async () => {
+    const manager = new ConnectionManager({
+      connect: appConn,
+      headers: natsHeaders,
+      instanceId: INSTANCE,
+      getToken: () => VALID_TOKEN,
+    })
+    await manager.start()
+    const pullsBefore = workspaceListCalls
+
+    // A baseline that just landed is trusted: switching screens must not re-pull.
+    await manager.refreshBaselineIfStale(60_000)
+    expect(workspaceListCalls).toBe(pullsBefore)
+
+    // The caller naming "no age is trustworthy" is how the app asks on returning
+    // to the foreground after a long gap.
+    await manager.refreshBaselineIfStale(0)
+    expect(workspaceListCalls).toBeGreaterThan(pullsBefore)
+    await manager.stop()
   })
 
   it('re-establishes when the bridge restarts under a live connection', async () => {

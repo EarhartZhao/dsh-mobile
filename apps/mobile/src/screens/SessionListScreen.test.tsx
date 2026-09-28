@@ -14,6 +14,8 @@ const manager = {
   compatibility: { pluginVersion: '0.2.7', mobileApi: 2, features: [] },
   client: null,
   refreshBaseline: jest.fn(),
+  /** The list refreshes a stale baseline when it appears; the stub just resolves. */
+  refreshBaselineIfStale: jest.fn().mockResolvedValue(undefined),
   store: {
     on: () => () => undefined,
     summaries: [

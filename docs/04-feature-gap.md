@@ -89,6 +89,7 @@
 | 会话搜索 | ✅ session.search（结果上限 20/片段 120 字） | ● | 列表页搜索框和结果片段已接入 |
 | 归档会话 | ✅ workspace.archiveSession + host/archived-sessions-changed | ● | 归档操作、归档列表开关和事件同步已接入 |
 | workspace 管理 | ✅ workspace.create/rename/delete/insertBefore/insertSessionBefore | ● | 创建/重命名/删除和工作区、会话排序已接入 |
+| 列表基线自动保鲜 | ✅ host/session-*、host/workspace-* 帧 + App 前台/列表出现 | ● | 列表类帧兼作失效信号（去抖 400ms 重拉 workspace.list + session.list），离线期间置脏待 establish 后补拉；列表出现或回到前台按 30s 信任期重拉，别的客户端新建/归档会话不再需要手动重连 |
 | 图片附件 | ✅ session.attachment + PromptContentPart.image | ● | 拍照/相册多选、限制预检、待发送排序、历史图片预览和全屏灯箱已接入 |
 | 消息反馈 | ✅ `messageFeedback/list\|put\|delete` | ● | 长按消息 Like/Dislike，已评分显示徽标并可取消；按 `version` compare-and-set，冲突自动重试一次。`sessionFeedback/record`（命令反馈）仍未接入 |
 

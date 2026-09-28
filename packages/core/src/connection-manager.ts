@@ -27,6 +27,36 @@ import { checkMobileCompatibility, type CompatibilityResult } from './compatibil
 export type ConnectionState = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped' | 'incompatible'
 export type ConnectionFailureKind = 'bridge-unavailable' | 'authentication' | 'tls' | 'network' | 'protocol' | 'unknown'
 
+/**
+ * Host frames that can change the list baseline: which chats exist, which
+ * workspace owns them, their order, and which are archived.
+ *
+ * The store patches all of these in place, which keeps a live list moving. What
+ * it cannot patch is *membership*: the workspace view owns `sessionIds`, and a
+ * `host/session-added` carries no workspace at all. So a chat created from the
+ * desktop lands under 未分组 on the phone until something re-pulls the
+ * authoritative baseline. These frames are therefore treated as invalidation
+ * signals too, not only as state to merge.
+ */
+const BASELINE_INVALIDATING_FRAMES: ReadonlySet<string> = new Set([
+  'host/session-added',
+  'host/session-removed',
+  'host/workspace-changed',
+  'host/workspace-removed',
+  'host/workspace-order-changed',
+  'host/archived-sessions-changed',
+])
+
+/** Debounce window for the baseline re-pull: one burst (create + file + sort) is one round trip. */
+const BASELINE_REFRESH_MS = 400
+
+/**
+ * Default age after which a baseline is considered stale. Frames are
+ * fire-and-forget and the phone is often backgrounded, so "the reader is looking
+ * at the list again" is a better staleness signal than any frame.
+ */
+export const BASELINE_STALE_MS = 30_000
+
 /** Classifies transport/RPC text without coupling the core package to UI copy. */
 export function classifyConnectionFailure(message: string): ConnectionFailureKind {
   const text = message.toLowerCase()
@@ -87,6 +117,12 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private retryTask: Promise<void> | null = null
   private heartbeat: ReturnType<typeof setInterval> | null = null
+  /** Pending debounced baseline re-pull; see {@link BASELINE_INVALIDATING_FRAMES}. */
+  private baselineTimer: ReturnType<typeof setTimeout> | null = null
+  /** A list-changing frame arrived while offline, so the next establish re-pulls. */
+  private baselineDirty = false
+  /** When the last authoritative list/workspace baseline landed. */
+  private baselineAt: number | null = null
   /** Bridge process start time observed by the last health answer. */
   private bridgeStartedAt: string | null = null
 
@@ -129,6 +165,11 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       clearTimeout(this.retryTimer)
       this.retryTimer = null
     }
+    if (this.baselineTimer !== null) {
+      clearTimeout(this.baselineTimer)
+      this.baselineTimer = null
+    }
+    this.baselineDirty = false
     this.streamAbort?.abort()
     this.streamAbort = null
     this.stopHeartbeat()
@@ -154,7 +195,24 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         archivedSessionIds: workspaces.result.value.archivedSessionIds,
         summaries: sessions.result.value.items,
       })
+      this.baselineAt = Date.now()
     }
+  }
+
+  /**
+   * Refresh the list baseline when the caller has reason to think it is stale —
+   * the list appearing, or the app returning to the foreground.
+   *
+   * Frames are fire-and-forget: a change made by another client while the phone
+   * was backgrounded, or during a reconnect gap, leaves no trace here. Re-pulling
+   * when the reader is about to look is what makes the list trustworthy again,
+   * and the age guard keeps screen switching from re-pulling every time.
+   *
+   * @param maxAgeMs - how long a landed baseline is trusted (default {@link BASELINE_STALE_MS}).
+   */
+  async refreshBaselineIfStale(maxAgeMs: number = BASELINE_STALE_MS): Promise<void> {
+    if (this.baselineAt !== null && Date.now() - this.baselineAt < maxAgeMs) return
+    await this.refreshBaseline()
   }
 
   /** Loads the optional plugin inventory when the connected bridge advertises it. */
@@ -239,7 +297,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     )
     this.pump(
       client.events.host({}, abort.signal, hostOpen.resolve),
-      frame => this.store.applyHostFrame(frame.payload),
+      frame => this.applyHostFrame(frame.payload),
       abort.signal,
       generation,
     )
@@ -255,12 +313,47 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
         archivedSessionIds: workspaces.result.value.archivedSessionIds,
         summaries: sessions.result.value.items,
       })
+      this.baselineAt = Date.now()
     }
 
     await Promise.all([muxOpen.waited, hostOpen.waited])
     await sendHello(this.conn!, this.options.headers, this.options.instanceId, token)
     this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
+    // A list-changing frame can land while the baseline above is in flight (it
+    // was fetched before that frame); re-pull once now that we can.
+    if (this.baselineDirty) {
+      this.baselineDirty = false
+      this.scheduleBaselineRefresh()
+    }
+  }
+
+  /**
+   * Apply one host-domain frame, then treat the list-changing ones as an
+   * invalidation signal for the baseline as well as state to merge.
+   *
+   * Patching keeps a live list moving, but it cannot express session
+   * *membership*: the workspace view owns `sessionIds` and a `host/session-added`
+   * names no workspace, so a chat created on the desktop would sit under 未分组
+   * on the phone. Re-pulling the authoritative baseline is both the correct fix
+   * for that and the cheap one to reason about when a frame was lost.
+   */
+  private applyHostFrame(frame: HostFrame): void {
+    this.store.applyHostFrame(frame)
+    if (BASELINE_INVALIDATING_FRAMES.has(frame.type)) this.scheduleBaselineRefresh()
+  }
+
+  /** Debounced re-pull; skipped while offline with the dirty flag left set. */
+  private scheduleBaselineRefresh(): void {
+    if (this.baselineTimer !== null) return
+    this.baselineTimer = setTimeout(() => {
+      this.baselineTimer = null
+      if (this.state !== 'online') {
+        this.baselineDirty = true
+        return
+      }
+      void this.refreshBaseline().catch(() => undefined)
+    }, BASELINE_REFRESH_MS)
   }
 
   /** Start the bridge liveness probe once the first establish pass succeeded. */

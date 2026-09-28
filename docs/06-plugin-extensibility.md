@@ -100,6 +100,7 @@
 6. 未知 surface 事件兜底行（对齐 Web 的 `unknown-surface`）：未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行，展开看原始数据。
 7. 未知提问意图不再丢帧（本轮 B）：`question/requested` 的 `intent` 被冻结 schema 拒绝时，由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `kind` 降级成通用问答卡并注明类型。
 8. 工具卡注册表 + view 槽投影（本轮 C）：App 侧 `tool-cards.tsx` 表驱动（未知 card → generic，条目声明 title/meta/summary/body 四个面）；桥侧 0.2.10 用宿主工具注册表按 Agent scope 调 `presentCall`/`presentResult`，把声明式卡片真正送进 `session/event` 的 `view` 槽——此前该槽无人填，App 的 Terminal/Diff/Read/Search/Web 卡片在真机上从未生效。
+9. 列表基线自动保鲜（本轮 D）：`host/session-*`、`host/workspace-*`、`host/archived-sessions-changed` 这些会改变"有哪些会话、归哪个工作区"的帧，除 patch 进 store 外还兼作**失效信号**（去抖 400ms 重拉 `workspace.list` + `session.list`；离线期间置脏、establish 后补拉）；列表页出现或 App 回到前台时按 30s 信任期重拉。原因是 patch 表达不了归属——`sessionIds` 挂在工作区视图上，而 `host/session-added` 不带工作区，桌面端新建的会话本会一直停在"未分组"。
 
 第 6 条的判据值得单独写下来，因为它是"未知即降级"里唯一需要判断"什么算未知"的一条：
 
@@ -114,8 +115,8 @@
 |---|---|---|---|
 | ~~A~~ | ~~未知事件兜底折叠行~~ | 已完成 | App |
 | ~~B~~ | ~~`intent` 放宽 + 未知 intent 通用卡~~ | 已完成（本轮）：消除唯一会丢帧的交互面 | App |
-| C | `cardRegistry` 表驱动 | 后续加卡不再改 if 链 | App |
-| D | 工作区分组基线自动刷新 | 别的客户端新建会话后手机端列表不再过期 | App |
+| ~~C~~ | ~~`cardRegistry` 表驱动~~ | 已完成：另发现并修复 `view` 槽断链（见 4.1） | App + 桥 |
+| ~~D~~ | ~~工作区分组基线自动刷新~~ | 已完成（本轮）：列表类帧兼作失效信号 + 前台按信任期重拉 | App |
 
 ## 八、测试策略（新增扩展面时怎么做）
 

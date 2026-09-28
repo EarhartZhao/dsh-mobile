@@ -4,7 +4,7 @@
  * store 'changed' (throttled).
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { Alert, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Alert, AppState, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import { presetSelectionEnabled, type DirectoryListing, type SessionSummary } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from '../components/ModalBackdrop'
@@ -206,6 +206,21 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
     if (browser === null) return
     void loadDirectory(browser.path)
   }, [browser, loadDirectory])
+
+  /**
+   * Coming back to the list is the moment staleness becomes visible: another
+   * client may have created or filed chats while this app was backgrounded, and
+   * those frames are gone for good. The manager re-pulls the authoritative
+   * baseline when it is older than its trust window, so switching screens in and
+   * out of the app does not re-issue the RPCs each time.
+   */
+  useEffect(() => {
+    void manager.refreshBaselineIfStale().catch(() => undefined)
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void manager.refreshBaselineIfStale().catch(() => undefined)
+    })
+    return () => subscription.remove()
+  }, [manager])
 
   const createFolder = async (name: string): Promise<void> => {
     const client = manager.client
