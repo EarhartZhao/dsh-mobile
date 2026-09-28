@@ -719,7 +719,13 @@ const styles = StyleSheet.create({
   headerButtonText: { color: colors.accent, fontSize: fontSize.small },
   settingsButton: { minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
   settingsIcon: { color: colors.accent, fontSize: 24, lineHeight: 28 },
-  wsBar: { flexGrow: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  /**
+   * The chip row is a horizontal ScrollView, so Yoga has no content height to
+   * lay it out with: with the default `flexShrink: 1` the column parent squeezed
+   * it below the chips' own height and the pills rendered clipped at the bottom.
+   * A row with a fixed natural height must opt out of shrinking.
+   */
+  wsBar: { flexGrow: 0, flexShrink: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   wsBarContent: { paddingHorizontal: spacing(4), paddingVertical: spacing(2), gap: spacing(2) },
   wsChip: {
     borderWidth: 1,
