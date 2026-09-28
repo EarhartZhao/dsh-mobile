@@ -23,6 +23,10 @@ function searchableText(item: ConversationItem): string {
       return `${item.name}\n${item.args}\n${item.resultText}`
     case 'compaction':
       return item.summary
+    // A preparing call is transient chrome, and turn boundaries carry no text:
+    // neither is a search hit.
+    default:
+      return ''
   }
 }
 
@@ -33,6 +37,8 @@ function titleOf(item: ConversationItem, t: (key: TranslationKey, values?: Recor
     case 'tool': return t('search.toolCall', { name: item.name })
     case 'stream': return t('search.generating')
     case 'compaction': return t('search.compaction')
+    case 'preparing': return t('search.generating')
+    default: return t('search.generating')
   }
 }
 

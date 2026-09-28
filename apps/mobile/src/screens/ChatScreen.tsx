@@ -48,7 +48,7 @@ import { QuestionCard, type QuestionAnswerPayload } from '../components/Question
 import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
-import { commonLabel, jobKindLabel, toolDisplayName } from '../ui-labels'
+import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, stepSummaryTitle, toolDisplayName } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
 import { appendPendingImage, buildPromptContent, formatBytes, type ImageLimitsView, type ImageRejection, type PendingImage } from '../chat-images'
@@ -95,6 +95,13 @@ function conversationTailSignature(items: ConversationItem[]): string {
     case 'stream': return `${items.length}:${tail.key}:stream:${tail.text.length}:${tail.reasoning.length}`
     case 'tool': return `${items.length}:${tail.key}:tool:${tail.status}:${tail.args.length}:${tail.resultText.length}:${tail.subCalls.length}`
     case 'compaction': return `${items.length}:${tail.key}:compaction:${tail.summary.length}`
+    case 'preparing': return `${items.length}:${tail.key}:preparing:${tail.name.length}`
+    // Turn boundaries sit at the tail whenever a turn closes: they are not
+    // content, so the signature reports the row before them instead.
+    default: {
+      const last = items.at(-2)
+      return last === undefined ? `${items.length}:marker` : conversationTailSignature(items.slice(0, -1))
+    }
   }
 }
 
@@ -1000,6 +1007,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const messageText = (item: ConversationItem): string => {
     if (item.kind === 'tool') return item.resultText !== '' ? item.resultText : item.args
     if (item.kind === 'compaction') return item.summary
+    if (item.kind === 'preparing') return item.name
+    if (item.kind === 'turn-start' || item.kind === 'turn-end') return ''
     return item.text
   }
 
@@ -1181,7 +1190,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   // The disclosure rides inside the answer's card (the web's own is chrome-free
   // and sits in the answer's flow), so only a turn that has no answer yet — a
   // live turn still calling tools — needs a card of its own.
-  const listRows: ListRow[] = groupTurns(items).flatMap(turn => {
+  const turns = groupTurns(items)
+  const listRows: ListRow[] = turns.flatMap(turn => {
     const answer = processOwnerItem(turn)
     return turn.rows
       .filter(row => row.kind !== 'process' || answer === undefined)
@@ -1194,6 +1204,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             ...(row.item === answer ? { process: turn } : {}),
           })
   })
+  /**
+   * The running turn, for the transcript's own bottom indicator: the web keeps
+   * a live clock there so a long turn never looks stalled. It rides the last
+   * turn rather than a separate stream flag, which is what makes it disappear
+   * the moment the turn settles.
+   */
+  const liveTurn = turns.at(-1)?.live === true ? turns.at(-1) : undefined
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -1258,6 +1275,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         keyExtractor={row => row.key}
         contentContainerStyle={styles.listContent}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        ListFooterComponent={liveTurn === undefined
+          ? undefined
+          : <RunningIndicator startedAt={liveTurn.startedAt} />}
         ListHeaderComponent={hasOlderHistory ? (
           <TouchableOpacity
             style={styles.historyLoader}
@@ -1790,6 +1810,34 @@ function jobStatusLabel(status: JobView['status'], t: (key: TranslationKey, valu
  * labelled by what it holds, so the answer is not buried under a column of
  * per-step "思考过程" headers of assorted widths.
  */
+/**
+ * The transcript's own bottom indicator, the web's "深度求索中" clock: a live
+ * elapsed time under the newest turn. It owns its timer so a one-second tick
+ * re-renders this row instead of the whole transcript, and it counts from the
+ * recorded turn start rather than from mount, so switching screens mid-turn
+ * does not restart it.
+ */
+function RunningIndicator({ startedAt }: { startedAt: number }): React.JSX.Element {
+  const { t } = useI18n()
+  const [, tick] = useState(0)
+  const known = startedAt > 0
+  useEffect(() => {
+    const timer = setInterval(() => tick(value => value + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const elapsed = known ? Math.max(0, Date.now() - startedAt) : 0
+  return (
+    <View style={styles.runningIndicator} accessibilityLiveRegion="polite">
+      <View style={styles.runningDot} />
+      <Text style={styles.runningText}>
+        {known
+          ? t('chat.runningFor', { duration: runDurationLabel(elapsed, t) })
+          : t('chat.running')}
+      </Text>
+    </View>
+  )
+}
+
 function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false }: {
   turn: Turn
   manager: ConnectionManager
@@ -1812,9 +1860,26 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
   // exactly the gap that makes a long tool chain look stalled. Once the turn
   // settles it folds back to the answer, and a manual toggle always wins.
   const open = manual ?? turn.running
-  const label = turn.toolCallCount > 0
-    ? t('chat.toolCallSummary', { count: turn.toolCallCount })
-    : t('chat.thoughtSummary')
+  /**
+   * The header says what the turn is doing, in the web's own two states: while
+   * it runs, the newest category and its one-line task detail; once it settles,
+   * the ranked categories plus how long it took (or why it stopped). A settled
+   * turn with no categories reasoned without calling anything.
+   */
+  const summary = turn.summary
+  const liveLabel = summary.running === undefined
+    ? t('chat.step.thinking')
+    : stepActivityLabel(summary.running, summary.preparing ? 'preparing' : 'running', t)
+  const settledLabel = turn.endReason === 'aborted'
+    ? t('chat.stopped')
+    : turn.endReason === 'error'
+      ? t('chat.turn.failed')
+      : turn.durationMs === undefined
+        ? t('chat.turn.worked')
+        : t('chat.turn.took', { duration: runDurationLabel(turn.durationMs, t) })
+  const label = turn.live ? liveLabel : stepSummaryTitle(summary, t)
+  const detail = turn.live ? summary.runningDetail : settledLabel
+  const title = detail === '' ? label : `${label}${t('chat.step.separator')}${detail}`
   const toggleStep = (key: string): void => {
     setOpenSteps(current => {
       const next = new Set(current)
@@ -1830,9 +1895,9 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
         style={styles.turnProcessHeader}
         onPress={() => setManual(value => !(value ?? false))}
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={turn.toolCallCount > 0 ? t('chat.toolCallSummary', { count: turn.toolCallCount }) : label}
       >
-        <Text style={styles.turnProcessLabel}>{label}</Text>
+        <Text style={[styles.turnProcessLabel, turn.live && styles.turnProcessLive]} numberOfLines={1}>{title}</Text>
         <Text style={[styles.turnProcessChevron, !open && styles.turnProcessChevronClosed]}>▼</Text>
       </TouchableOpacity>
       {open && turn.process.map(step => step.kind === 'thinking'
@@ -1852,11 +1917,22 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
             ) : (
               <Text style={styles.processStepLine} numberOfLines={1}>
                 <Text style={styles.processStepLabel}>{t('chat.thoughtStep')} · </Text>
-                {step.text.replace(/\s+/g, ' ').trim()}
+                {step.preview === '' ? step.text.replace(/\s+/g, ' ').trim() : step.preview}
               </Text>
             )}
           </TouchableOpacity>
         )
+        : step.kind === 'preparing'
+          ? (
+            <View key={step.key} style={styles.processStep}>
+              <Text style={styles.processStepLine} numberOfLines={1}>
+                <Text style={styles.processStepLabel}>
+                  {stepActivityLabel(step.activity, 'preparing', t)}
+                </Text>
+                {step.activity === 'tools' ? ` · ${step.name}` : ''}
+              </Text>
+            </View>
+          )
         : (
           <ToolCard
             key={step.key}
@@ -1946,7 +2022,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
   rating?: MobileFeedbackItem
   /** The turn's process disclosure, merged into the answer's own card. */
   process?: Turn
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useI18n()
   switch (item.kind) {
     case 'user':
@@ -2007,6 +2083,10 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, rating, proc
       )
     case 'tool':
       return <ToolCard item={item} manager={manager} sessionId={sessionId} onLongPress={onLongPress} />
+    // Turn boundaries and the preparing row are consumed by the process block
+    // (and its core grouping), never by a bubble of their own.
+    default:
+      return null
   }
 }
 
@@ -2191,6 +2271,8 @@ const styles = StyleSheet.create({
     gap: spacing(2),
   },
   turnProcessLabel: { flex: 1, color: colors.textDim, fontSize: fontSize.section },
+  /** A live header pulses toward the text colour so it reads as "in progress". */
+  turnProcessLive: { color: colors.text },
   turnProcessChevron: { color: colors.textDim, fontSize: fontSize.small },
   /** Collapsed points LEFT, matching the web's turn disclosure: its chevron
    *  sits with the apex on the left and opens to the right. Rotating ▼ by +90°
@@ -2200,6 +2282,16 @@ const styles = StyleSheet.create({
   processStepLine: { color: colors.textDim, fontSize: fontSize.small },
   processStepLabel: { color: colors.textDim, fontSize: fontSize.small, fontWeight: '600' },
   processStepText: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 20 },
+  runningIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(1.5),
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(1.5),
+    marginHorizontal: spacing(1),
+  },
+  runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.running },
+  runningText: { color: colors.textDim, fontSize: fontSize.small },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
   replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },

@@ -13,6 +13,59 @@ function feed(store: SessionStore, seq: number, type: string, data: unknown, vie
 }
 
 describe('deriveConversation', () => {
+  it('surfaces a named tool-call delta as a preparing row until the call lands', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '看看' }] } })
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 5,
+        data: {
+          turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0,
+          chunk: { type: 'tool-call-delta', id: 'c9', name: 'bash', argumentsDelta: '{"cmd"' },
+        },
+      } as never,
+    })
+
+    expect(deriveConversation(store.sessions.get('s-1')!).map(i => i.kind)).toEqual(['user', 'preparing'])
+
+    // The durable call supersedes the announcement: one row, not two.
+    feed(store, 6, 'tool/call', { turn: 1, step: 1, callId: 'c9', name: 'bash', arguments: '{"cmd":"ls"}' })
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['user', 'tool'])
+  })
+
+  it('drops an announcement whose call never lands when the turn ends', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '看看' }] } })
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 5,
+        data: {
+          turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0,
+          chunk: { type: 'tool-call-delta', id: 'c9', name: 'bash' },
+        },
+      } as never,
+    })
+    feed(store, 6, 'turn/end', { turn: 1, reason: { kind: 'aborted' } })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['user', 'turn-end'])
+    expect(items.at(-1)).toMatchObject({ kind: 'turn-end', reason: 'aborted' })
+  })
+
+  it('records turn boundaries as timing markers in log order', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'turn/start', { turn: 1 })
+    feed(store, 2, 'user/message', { message: { content: [{ type: 'text', text: '你好' }] } })
+    feed(store, 3, 'assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'text', text: '你好！' }] } })
+    feed(store, 4, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+    expect(deriveConversation(store.sessions.get('s-1')!).map(i => i.kind))
+      .toEqual(['turn-start', 'user', 'assistant', 'turn-end'])
+  })
+
   it('keeps a live stream item inside its own turn, below the prompt', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '讲一下架构' }] } })

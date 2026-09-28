@@ -9,11 +9,12 @@ import type { ToolCallView, ToolResultView } from '@dsh-mobile/protocol'
 import type { SessionState } from './session-store.ts'
 
 export type ConversationItem =
-  | { kind: 'user'; key: string; seq: number; text: string; images: ConversationImage[] }
+  | { kind: 'user'; key: string; seq: number; time: number; text: string; images: ConversationImage[] }
   | {
       kind: 'assistant'
       key: string
       seq: number
+      time: number
       /** Durable assistant-message identity; absent on synthetic items. */
       messageId?: string
       text: string
@@ -21,11 +22,12 @@ export type ConversationItem =
       interrupted: boolean
       producedFiles: string[]
     }
-  | { kind: 'compaction'; key: string; seq: number; summary: string; compactionId: string }
+  | { kind: 'compaction'; key: string; seq: number; time: number; summary: string; compactionId: string }
   | {
       kind: 'tool'
       key: string
       seq: number
+      time: number
       callId: string
       name: string
       args: string
@@ -37,7 +39,20 @@ export type ConversationItem =
       resultView: ToolResultView | null
       subCalls: ToolSubCall[]
     }
-  | { kind: 'stream'; key: string; seq: number; text: string; reasoning: string }
+  | { kind: 'stream'; key: string; seq: number; time: number; text: string; reasoning: string }
+  /**
+   * A tool the model has announced but not yet dispatched. The host streams the
+   * tool-call name in an `assistant/chunk` before the durable `tool/call` lands;
+   * the web renders that gap as its "preparing" row, and so does this client.
+   * Transient: superseded by the `tool/call` for the same callId.
+   */
+  | { kind: 'preparing'; key: string; seq: number; time: number; callId: string; name: string }
+  /**
+   * Turn boundaries. Not rendered: they carry the exact start time and the end
+   * reason a turn's process header reports ("用时 3 分 12 秒" / "已停止").
+   */
+  | { kind: 'turn-start'; key: string; seq: number; time: number; turn: number }
+  | { kind: 'turn-end'; key: string; seq: number; time: number; turn: number; reason: string }
 
 export type ConversationImage =
   | { kind: 'data'; uri: string; name?: string | undefined }
@@ -45,6 +60,8 @@ export type ConversationImage =
 
 interface ChunkBuffer {
   seq: number
+  /** Time of the newest chunk, so a live row can report how long it has run. */
+  time: number
   turn: number
   step: number
   text: string
@@ -56,6 +73,8 @@ export interface ToolSubCall {
   name: string
   args: string
   seq: number
+  /** Dispatch time, so a nested call can own the live activity line. */
+  time: number
   status: 'running' | 'done' | 'error'
   resultPreview: string
   resultText: string
@@ -165,6 +184,12 @@ const LIVE_TAIL_SEQ = 1_000_000_000
 export function deriveConversation(session: SessionState): ConversationItem[] {
   const items: ConversationItem[] = []
   const live = new Map<string, ChunkBuffer>()
+  /**
+   * Announced-but-undispatched tool calls, keyed by callId. A `tool/call` for
+   * the same id supersedes the entry, and a closing turn drops whatever is left:
+   * a cancelled stream must not leave a phantom "preparing" row on screen.
+   */
+  const preparing = new Map<string, { seq: number; time: number; turn: number; step: number; callId: string; name: string }>()
   const finalizedSteps = new Set<string>()
   const tools = new Map<string, ConversationItem & { kind: 'tool' }>()
   const toolTurns = new Map<string, number>()
@@ -175,6 +200,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
     const event = entry.event
     if (!isObj(event)) continue
     const seq = typeof event['seq'] === 'number' ? event['seq'] : 0
+    const time = typeof event['time'] === 'number' && Number.isFinite(event['time']) ? event['time'] : 0
     const data: unknown = event['data']
     const type = normalizeEventType(event['type'])
     switch (type) {
@@ -192,7 +218,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           if (isObj(source) && typeof source['kind'] === 'string' && source['kind'] !== 'user') break
         }
         const content = isObj(data) ? extractContent(data['message'] ?? data) : undefined
-        items.push({ kind: 'user', key: `u${seq}`, seq, text: blocksToText(content), images: blocksToImages(content) })
+        items.push({ kind: 'user', key: `u${seq}`, seq, time, text: blocksToText(content), images: blocksToImages(content) })
         break
       }
       case 'assistant/message': {
@@ -215,6 +241,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           kind: 'assistant',
           key: `a${seq}`,
           seq,
+          time,
           ...(messageId === undefined ? {} : { messageId }),
           text: blocksToText(content),
           reasoning: blocksToReasoning(content),
@@ -232,6 +259,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           kind: 'tool',
           key: `t${seq}`,
           seq,
+          time,
           callId,
           name: typeof data['name'] === 'string' ? data['name'] : 'tool',
           args: typeof data['arguments'] === 'string' ? data['arguments'] : '',
@@ -243,6 +271,8 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           resultView: null,
           subCalls: [],
         }
+        // The durable call supersedes the transient preparing row it completes.
+        preparing.delete(callId)
         tools.set(callId, item)
         if (turn >= 0) toolTurns.set(callId, turn)
         items.push(item)
@@ -290,11 +320,23 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         const id = `${turn}:${step}`
         const chunk = data['chunk']
         if (!isObj(chunk)) break
+        // A named tool-call delta is the model announcing a call it has not
+        // made yet. The web turns that gap into a "preparing" row so a long
+        // argument stream does not look like a stalled turn.
+        if (chunk['type'] === 'tool-call-delta') {
+          const callId = typeof chunk['id'] === 'string' || typeof chunk['id'] === 'number' ? String(chunk['id']) : ''
+          const name = typeof chunk['name'] === 'string' ? chunk['name'] : ''
+          if (callId !== '' && name !== '' && !tools.has(callId) && !preparing.has(callId)) {
+            preparing.set(callId, { seq, time, turn, step, callId, name })
+          }
+          break
+        }
         let buffer = live.get(id)
         if (buffer === undefined) {
-          buffer = { seq, turn, step, text: '', reasoning: '' }
+          buffer = { seq, time, turn, step, text: '', reasoning: '' }
           live.set(id, buffer)
         }
+        if (time > buffer.time) buffer.time = time
         if (chunk['type'] === 'text-delta' && typeof chunk['text'] === 'string') buffer.text += chunk['text']
         if (chunk['type'] === 'reasoning-delta' && typeof chunk['text'] === 'string') buffer.reasoning += chunk['text']
         break
@@ -310,6 +352,25 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         // A cancelled turn may never finalize: its live buffer stays as the
         // delivered prefix (the host emits an interrupted assistant/message
         // when any content streamed, which clears the buffer itself).
+        const turn = isObj(data) && typeof data['turn'] === 'number' ? data['turn'] : -1
+        for (const [callId, entry] of preparing) {
+          if (entry.turn === turn) preparing.delete(callId)
+        }
+        items.push({
+          kind: 'turn-end',
+          key: `te${turn}:${seq}`,
+          seq,
+          time,
+          turn,
+          reason: isObj(data) && isObj(data['reason']) && typeof data['reason']['kind'] === 'string'
+            ? data['reason']['kind']
+            : 'completed',
+        })
+        break
+      }
+      case 'turn/start': {
+        const turn = isObj(data) && typeof data['turn'] === 'number' ? data['turn'] : -1
+        if (turn >= 0) items.push({ kind: 'turn-start', key: `ts${turn}`, seq, time, turn })
         break
       }
       case 'tool/code-dispatch-start':
@@ -339,7 +400,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           if (at >= 0) break
           toolParents.set(subCallId, parentCallId)
           parent.subCalls = [...siblings, {
-            callId: subCallId, name, args, seq, status: 'running',
+            callId: subCallId, name, args, seq, time, status: 'running',
             resultPreview: '', resultText: '', resultImages: [], subCalls: [],
           }]
           break
@@ -349,7 +410,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
         const resultImages = blocksToImages(data['content'])
         const existing = at === -1 ? undefined : siblings[at]
         const child: ToolSubCall = existing === undefined
-          ? { callId: subCallId, name, args, seq, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages, subCalls: [] }
+          ? { callId: subCallId, name, args, seq, time, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages, subCalls: [] }
           : { ...existing, status: isError ? 'error' : 'done', resultPreview: truncate(resultText, 300), resultText, resultImages }
         toolParents.set(subCallId, parentCallId)
         parent.subCalls = at === -1 ? [...siblings, child] : siblings.map((candidate, index) => index === at ? child : candidate)
@@ -360,7 +421,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           ? data['compactionId']
           : `compaction-${seq}`
         const summary = isObj(data) && typeof data['summary'] === 'string' ? data['summary'] : '上下文已压缩'
-        items.push({ kind: 'compaction', key: `compaction-${seq}`, seq, summary, compactionId })
+        items.push({ kind: 'compaction', key: `compaction-${seq}`, seq, time, summary, compactionId })
         break
       }
       default:
@@ -384,8 +445,22 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
       kind: 'stream',
       key: `s${buffer.turn}:${buffer.step}`,
       seq: LIVE_TAIL_SEQ + liveOffset++,
+      time: buffer.time,
       text: buffer.text,
       reasoning: buffer.reasoning,
+    })
+  }
+  /** Announced calls get the same tail treatment: they are the newest thing
+   *  happening, so they belong after the durable log rather than wherever their
+   *  seq-less chunk happened to arrive. */
+  for (const entry of preparing.values()) {
+    items.push({
+      kind: 'preparing',
+      key: `p${entry.callId}`,
+      seq: LIVE_TAIL_SEQ + liveOffset++,
+      time: entry.time,
+      callId: entry.callId,
+      name: entry.name,
     })
   }
   items.sort((a, b) => a.seq - b.seq)

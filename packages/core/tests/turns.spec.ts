@@ -23,6 +23,19 @@ function tool(seq: number, name: string, status: 'running' | 'done' = 'done') {
   }
 }
 
+/** A tool call with real args and a dispatch time, for the process presentation. */
+function timedTool(seq: number, name: string, args: string, status: 'running' | 'done', time: number) {
+  return { ...tool(seq, name, status), args, time }
+}
+
+function preparing(seq: number, callId: string, name: string, time: number) {
+  return { kind: 'preparing', key: `p${callId}`, seq, time, callId, name }
+}
+
+const turnStart = (seq: number, turn: number, time: number) => ({ kind: 'turn-start', key: `ts${turn}`, seq, time, turn })
+const turnEnd = (seq: number, turn: number, time: number, reason: string) =>
+  ({ kind: 'turn-end', key: `te${turn}`, seq, time, turn, reason })
+
 const items = (...list: unknown[]) => list as ConversationItem[]
 const kinds = (turn: { visible: ConversationItem[] }) => turn.visible.map(item => item.kind)
 const texts = (turn: { visible: ConversationItem[] }) =>
@@ -128,5 +141,69 @@ describe('groupTurns', () => {
     const turns = groupTurns(items(user(1, 'q'), tool(2, 't', 'running')))
 
     expect(rowShape(turns[0]!)).toEqual(['q', 'process'])
+  })
+
+  it('renders an announced-but-undispatched call as a preparing step', () => {
+    const turns = groupTurns(items(
+      user(1, 'q'),
+      preparing(2, 'call-1', 'bash', 1000),
+      assistant(3, 'a'),
+    ))
+
+    expect(turns[0]!.process.map(step => step.kind)).toEqual(['preparing'])
+    expect(turns[0]!.process[0]).toMatchObject({ kind: 'preparing', name: 'bash' })
+    // Announced work counts as in flight, so the turn's row opens itself.
+    expect(turns[0]!.running).toBe(true)
+    expect(turns[0]!.summary).toMatchObject({ preparing: true, running: 'commands' })
+  })
+
+  it('summarizes a settled turn by category and reports how long it took', () => {
+    const turns = groupTurns(items(
+      turnStart(1, 1, 10_000),
+      user(2, 'q'),
+      timedTool(3, 'read', '{"file_path":"src/app.ts"}', 'done', 11_000),
+      timedTool(4, 'bash', '{"command":"pnpm test"}', 'done', 12_000),
+      assistant(5, 'a'),
+      turnEnd(6, 1, 15_000, 'completed'),
+    ))
+
+    const turn = turns[0]!
+    expect(turn.summary.counts).toEqual([{ kind: 'read', count: 1 }, { kind: 'commands', count: 1 }])
+    expect(turn.live).toBe(false)
+    expect(turn.endReason).toBe('completed')
+    expect(turn.durationMs).toBe(5_000)
+    // Turn boundaries are timing, not content: they never become rows.
+    expect(rowShape(turn)).toEqual(['q', 'process', 'a'])
+  })
+
+  it('keeps a cancelled turn visible as stopped and a live turn as live', () => {
+    const cancelled = groupTurns(items(
+      turnStart(1, 1, 1_000),
+      user(2, 'q'),
+      timedTool(3, 'bash', '{"command":"sleep 1"}', 'running', 2_000),
+      turnEnd(4, 1, 5_000, 'aborted'),
+    ))[0]!
+    expect(cancelled.endReason).toBe('aborted')
+    expect(cancelled.durationMs).toBe(4_000)
+    expect(cancelled.summary.running).toBe('commands')
+
+    // The newest turn with no recorded end is still live even between steps.
+    const open = groupTurns(items(user(1, 'q'), assistant(2, 'a')))[0]!
+    expect(open.live).toBe(true)
+
+    // An older turn whose closing event is outside the loaded page is history.
+    const older = groupTurns(items(user(1, 'q'), assistant(2, 'a'), user(3, 'q2'), assistant(4, 'a2')))
+    expect(older[0]!.live).toBe(false)
+    expect(older[1]!.live).toBe(true)
+  })
+
+  it('carries the newest reasoning as the preview the row shows while collapsed', () => {
+    const turns = groupTurns(items(user(1, 'q'), assistant(2, '', 'first line\nbody of the thought')))
+
+    expect(turns[0]!.process[0]).toMatchObject({
+      kind: 'thinking',
+      preview: 'first line',
+      text: 'first line\nbody of the thought',
+    })
   })
 })

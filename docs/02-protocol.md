@@ -102,6 +102,8 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 ### events.mux（会话域）
 
 - 流式渲染：订阅目标会话的 `assistant/chunk`，**按 seq 排序、节流批量进 UI**；`assistant/message` 是定稿。
+- 工具卡是**宿主声明式**的：`session/event` 的 `view` 槽（`{for:'call'|'result', view}`）随事件下发渲染意图，`card` 取值 `generic/terminal/diff/search/read/web`。App 按 `card` 分支渲染，**未知 card 一律落通用卡**（`title`/`rawInput`/`content`/`locations` + 原始 result）——因为 `view` 在冻结 schema 里是 `z.looseObject({ card: z.string() })`，未知类型会原样透传而不会被丢。插件新面若只是加一种卡，App 不改也能显示得可读。
+- 工序表头的实时文案来自三处：`assistant/chunk` 里**具名的** `tool-call-delta`（模型已宣告、尚未 dispatch → "准备调用工具"行）、运行中的 `tool/call`（分类 + 参数里的任务详情），以及 `turn/start`/`turn/end` 的 `time`/`reason`（用时、"已停止"/"处理失败"）。分类与详情字段优先级固定在 `packages/core/src/activity.ts`，与 Web 的 `process-activity.ts` 同表；准备行被同 `callId` 的 `tool/call` 取代、随 `turn/end` 清除，所以取消的流不会留下幽灵行。
 - durable 事件名会随 dsh 版本改名（`tool/code-dispatch*` → `tool/ptc-dispatch*` 即 0.1.5 的改动，历史会话由 v2→v3 迁移重写为新名）。App 的事件归一层 `normalizeEventType` 把两套名字折到同一套语义，新增改名时在此登记，不要各自打补丁。
 - `session/projection` 帧（`{sessionId, key, value, seq}`）：按会话维护通用值仓，seq 高者胜；标题在 `title` 键下。
 - `session/jobs`：完整快照语义（非差分），直接替换本地集合；没有 baseline 即空集。dsh 0.1.6-alpha.2 由 `session/control` 的 baseline 与 `{type:'jobs'}` 帧推送，0.1.7 删除后改由 `job` 命名空间（Service 名 `jobController`）的 `list` 流承载；插件在 App 打开某个会话时挂一条 roster 流并翻译回同一帧型，App 侧不变。

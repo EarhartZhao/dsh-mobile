@@ -62,7 +62,9 @@ function TranscriptRow({ item }: { item: ConversationItem }): React.JSX.Element 
       ? { title: t('subagent.user'), body: item.text }
       : item.kind === 'assistant' || item.kind === 'stream'
         ? { title: item.kind === 'stream' ? t('subagent.assistantStreaming') : t('subagent.assistant'), body: item.text || item.reasoning }
-        : { title: t('subagent.compaction'), body: item.summary }
+        : item.kind === 'compaction'
+          ? { title: t('subagent.compaction'), body: item.summary }
+          : { title: t('subagent.emptyMessage'), body: '' }
   if (base.body === '') {
     return (
       <View style={styles.message}>
@@ -94,7 +96,9 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   const [error, setError] = useState('')
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
-  const items = selected === null ? [] : deriveConversation(stateFromEvents(selected.id, events))
+  /** Turn boundaries and preparing calls are transcript chrome, never rows. */
+  const items = (selected === null ? [] : deriveConversation(stateFromEvents(selected.id, events)))
+    .filter(item => item.kind !== 'turn-start' && item.kind !== 'turn-end' && item.kind !== 'preparing')
 
   const loadHistory = useCallback(async (entry: SubagentListEntry, beforeSeq?: number): Promise<void> => {
     if (entry.kind === 'diagnostic') {
