@@ -163,6 +163,10 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
   const toolTurns = new Map<string, number>()
   const produced = new Map<number, { seq: number; path: string }[]>()
   const toolParents = new Map<string, string>()
+  /** Last durable seq seen per turn; live stream buffers anchor to it. */
+  const turnLastSeq = new Map<number, number>()
+  /** Last durable seq of the whole log, for a live turn with no durable event yet. */
+  let lastDurableSeq: number | undefined
 
   for (const entry of session.events) {
     const event = entry.event
@@ -170,6 +174,13 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
     const seq = typeof event['seq'] === 'number' ? event['seq'] : 0
     const data: unknown = event['data']
     const type = normalizeEventType(event['type'])
+    if (typeof event['seq'] === 'number'
+      && (lastDurableSeq === undefined || event['seq'] > lastDurableSeq)) lastDurableSeq = event['seq']
+    if (typeof event['seq'] === 'number' && isObj(data) && typeof data['turn'] === 'number') {
+      const turn = data['turn']
+      const known = turnLastSeq.get(turn)
+      if (known === undefined || event['seq'] > known) turnLastSeq.set(turn, event['seq'])
+    }
     switch (type) {
       case 'user/message': {
         // Only human-authored prompts render as bubbles. The harness also
@@ -363,7 +374,19 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
 
   for (const buffer of live.values()) {
     if (finalizedSteps.has(`${buffer.turn}:${buffer.step}`)) continue
-    items.push({ kind: 'stream', key: `s${buffer.turn}:${buffer.step}`, seq: buffer.seq, text: buffer.text, reasoning: buffer.reasoning })
+    // A stream buffer's chunks are transient and carry no seq, so the buffer
+    // opened with the placeholder zero and the final sort hoisted it in front
+    // of the whole transcript — a running turn's reasoning and cursor rendered
+    // above the prompt they belong to. Anchor it to its own turn's last durable
+    // seq so it stays where the turn is.
+    const anchor = turnLastSeq.get(buffer.turn) ?? lastDurableSeq
+    items.push({
+      kind: 'stream',
+      key: `s${buffer.turn}:${buffer.step}`,
+      seq: anchor === undefined ? buffer.seq : Math.max(buffer.seq, anchor),
+      text: buffer.text,
+      reasoning: buffer.reasoning,
+    })
   }
   items.sort((a, b) => a.seq - b.seq)
   return items

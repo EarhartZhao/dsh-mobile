@@ -13,6 +13,25 @@ function feed(store: SessionStore, seq: number, type: string, data: unknown, vie
 }
 
 describe('deriveConversation', () => {
+  it('keeps a live stream item inside its own turn, below the prompt', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '讲一下架构' }] } })
+    // Transient chunks carry no seq of their own; before the fix the buffer
+    // opened at the placeholder zero and the final sort put this item first,
+    // so a running turn's reasoning rendered above the prompt.
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 2,
+        data: { turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0, chunk: { type: 'reasoning-delta', text: '先看目录' } },
+      } as never,
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['user', 'stream'])
+    expect(items[1]).toMatchObject({ reasoning: '先看目录' })
+  })
+
   it('renders user/assistant/tool items in order', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '你好' }] } })

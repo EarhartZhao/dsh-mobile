@@ -247,7 +247,10 @@ function AppContent(): React.JSX.Element {
       const statusKey: TranslationKey = job.status === 'completed'
         ? 'job.completed'
         : job.status === 'failed' ? 'job.failed' : 'job.settled'
-      showAlert(t('job.settledMessage', { id: job.id, status: t(statusKey), label: job.label }))
+      // A shell job's label is its whole command line: unclipped it turns the
+      // one-line banner into a wall of text over the whole screen.
+      const label = job.label.length > 72 ? `${job.label.slice(0, 71)}…` : job.label
+      showAlert(t('job.settledMessage', { id: job.id, status: t(statusKey), label }))
     })
     const offAttention = manager.store.on('attention', ({ kind, summary }) => {
       showAlert(kind === 'approval'
@@ -454,7 +457,9 @@ function AppContent(): React.JSX.Element {
           )}
           {alert !== null && (
             <View style={styles.alertBanner}>
-              <Text style={styles.alertText}>{alert}</Text>
+              {/* Any notice can carry a tool's own text, so the banner caps
+                  itself instead of letting one grow over the screen. */}
+              <Text style={styles.alertText} numberOfLines={2} ellipsizeMode="tail">{alert}</Text>
             </View>
           )}
           {route.name === 'list' ? (
