@@ -352,7 +352,14 @@ const styles = StyleSheet.create({
   imageStrip: { gap: spacing(1) },
   imageRow: { gap: spacing(2), alignItems: 'center' },
   relatedImage: { width: 160, height: 120, backgroundColor: colors.bg, borderRadius: radius.card },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing(2) },
-  action: { paddingHorizontal: spacing(3), paddingVertical: spacing(2) },
+  /**
+   * The four hand-off verbs sit on one line on a phone: four CJK labels (~22
+   * characters at 13pt ≈ 286dp) plus tight padding and gaps come to ~352dp,
+   * inside the ~379dp a card leaves on a 411dp-wide screen. The wrap stays as a
+   * safety net rather than a layout — English labels are long enough to need a
+   * second line, and overflowing the card would be worse than wrapping.
+   */
+  actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing(1.5) },
+  action: { paddingHorizontal: spacing(1.5), paddingVertical: spacing(2) },
   actionText: { color: colors.accent, fontSize: fontSize.small },
 })
