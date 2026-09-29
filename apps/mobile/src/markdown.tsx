@@ -53,6 +53,38 @@ export const markdownRules = {
   ),
 }
 
+/**
+ * Rules for a document opened to be read, adding native text selection.
+ *
+ * The renderer's own text nodes are plain `<Text>`, which on Android ignores a
+ * long press — so a previewed `.md` could not be selected or copied, while the
+ * plain-text preview beside it could. The chat deliberately stays without
+ * selection: a long press there opens the message action sheet (copy / share /
+ * branch), and a selectable body would swallow that gesture. A reader is the
+ * opposite case, so the two surfaces share the look and differ on this one
+ * behaviour.
+ */
+export const markdownPreviewRules = {
+  ...markdownRules,
+  textgroup: (
+    node: { key: string },
+    children: React.ReactNode,
+    _parent: unknown,
+    styles: Record<string, object>,
+  ): React.JSX.Element => (
+    <Text key={node.key} selectable style={styles.textgroup}>{children}</Text>
+  ),
+  text: (
+    node: { key: string; content: string },
+    _children: React.ReactNode,
+    _parent: unknown,
+    styles: Record<string, object>,
+    inheritedStyles: object = {},
+  ): React.JSX.Element => (
+    <Text key={node.key} selectable style={[inheritedStyles, styles.text]}>{node.content}</Text>
+  ),
+}
+
 /** Typography shared by every Markdown surface. */
 export const markdownStyles = StyleSheet.create({
   body: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },

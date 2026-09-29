@@ -12,7 +12,7 @@ import Markdown from 'react-native-markdown-display'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
-import { markdownRules, markdownStyles } from '../markdown'
+import { markdownPreviewRules, markdownStyles } from '../markdown'
 import { fileOpener, openWithPhoneApp } from '../file-opener'
 import { imageMediaTypeOf, isMarkdown, previewKindOf, relativeImageRefs } from '../file-kinds'
 import { colors, fontSize, radius, spacing } from '../theme'
@@ -214,15 +214,15 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
     })
   }
 
+  /**
+   * Deliberately without `statusBarTranslucent` / `navigationBarTranslucent`:
+   * those window flags made every Text inside the dialog unselectable, so a long
+   * press on the document did nothing (verified on device: with the flags on, no
+   * selection toolbar ever appeared; without them it does). Android 15+ is
+   * edge-to-edge anyway, and the insets below cover the system bars either way.
+   */
   return (
-    <Modal
-      transparent
-      statusBarTranslucent
-      navigationBarTranslucent
-      visible={visible}
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
       <ModalBackdrop onClose={onClose}>
         <View style={[styles.card, { paddingTop: insets.top + spacing(2), paddingBottom: insets.bottom + spacing(2) }]}>
           <View style={styles.header}>
@@ -257,7 +257,7 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
                   // A Markdown document renders with the same rules as chat, so a
                   // lecture note opened here reads like the message that cited it.
                   <ScrollView style={styles.textScroll} contentContainerStyle={styles.textContent}>
-                    <Markdown style={markdownStyles} rules={markdownRules}>{state.text}</Markdown>
+                    <Markdown style={markdownStyles} rules={markdownPreviewRules}>{state.text}</Markdown>
                   </ScrollView>
                 ) : (
                   <ScrollView style={styles.textScroll} contentContainerStyle={styles.textContent}>
