@@ -95,7 +95,8 @@
 1. 工序分类词表 + 运行/完成文案（与 Web `message.stepProcess.*` 同词表）。
 2. 运行中表头显示"现在在做什么"：`正在调用工具 · job_output` 这类「分类 + 一行详情」，详情字段优先级与 Web 一致（`packages/core/src/activity.ts`）。
 3. `assistant/chunk` 的具名 `tool-call-delta` → "准备调用工具"行（Web 的 preparing 阶段），被 `tool/call` 取代、随 `turn/end` 清除。
-4. 完成后表头给分类汇总与用时：`执行了命令并已调用工具 · 用时 1分04秒`；取消/失败分别显示"已停止"/"处理失败"。
+4. 结束后表头只给 Web 的那一行：`用时 1分04秒`；无计时"已完成工作"、取消"已停止"、出错"处理失败"
+   （2026-09-29 起不再拼类别汇总——那是 App 自己的说法，Web 的折叠行上只有这一句）。
 5. 转写底部实时指示：`深度求索中，用时 49秒…`（本行自持 1 秒定时器，不触发整表重渲染）。
 6. 未知 surface 事件兜底行（对齐 Web 的 `unknown-surface`）：未认领的 append-origin surface 事件显示为「未知事件：{type}」折叠行，展开看原始数据。
 7. 未知提问意图不再丢帧（本轮 B）：`question/requested` 的 `intent` 被冻结 schema 拒绝时，由 `packages/protocol/src/mobile-questions.ts` 宽解析重读，未知 `kind` 降级成通用问答卡并注明类型。
