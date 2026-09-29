@@ -168,7 +168,23 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
         throw new Error('invalid local host or port')
       }
       const baseUrl = `http://${host}:${String(port)}`
-      const res = await fetch(`${baseUrl}/mobile-bridge/api/pair`, { method: 'POST' })
+      /**
+       * The console refuses a mutating request unless it carries its own header
+       * and a JSON content type (its same-origin / CSRF boundary — plugin
+       * 0.2.13 hardened this), so this dev shortcut presented itself as a bare
+       * POST and started answering 403. It is the console's own client, so it
+       * sends what the console asks for.
+       *
+       * It also insists the request's `Host` is loopback, so an emulator has to
+       * reach it through `adb reverse tcp:3080 tcp:3080` and name `127.0.0.1` in
+       * the host field above — the host-mapped alias `10.0.2.2` is refused before
+       * any of this. Pair the websocket the same way (`adb reverse tcp:8443`).
+       */
+      const res = await fetch(`${baseUrl}/mobile-bridge/api/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-dsh-mobile-console': '1' },
+        body: '{}',
+      })
       if (!res.ok) throw new Error(`console /pair HTTP ${res.status}`)
       const body = await res.json() as { payload?: PairingQrPayload }
       if (body.payload === undefined) throw new Error('console /pair: no payload')

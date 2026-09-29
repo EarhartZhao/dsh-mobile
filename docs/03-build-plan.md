@@ -137,6 +137,13 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 >   明确提示「当前是开发版，装正式版需要先卸载一次」。
 > - 验证：App 109、core 136、plugin 84、lint 0 error、typecheck 全绿；临时 keystore 实测
 >   `assembleDebug` 产物签名为该密钥（`apksigner --print-certs`），确认这条分支生效。
+> - 顺带修好 App 的「本地配对（真实 dsh）」：插件 0.2.13 起控制台的 mutating 路由要求自带
+>   `x-dsh-mobile-console` 头 + JSON content type 且 `Host` 必须是回环地址，旧的开箱 POST 一律
+>   403。App 现在带上这两项；模拟器上还需 `adb reverse tcp:3080 tcp:3080`（配对用的 ws 同理
+>   `tcp:8443`）并把 host 填 `127.0.0.1`，写成注释留在 PairingScreen 里。
+> - 正式包（v0.0.7）首次做了启动冒烟：卸载调试包 → 安装 release APK → 启动到配对页无崩溃；
+>   并检查 dex 里 `DshUpdater`/`DshFileOpener`/`ImagePickerModule`/`ThemeModule` 与
+>   `@ReactMethod` 名字都在，确认 R8 没削掉原生模块面。
 
 > 进度（2026-09-29 第九轮 · v0.0.5）：**对齐 Web 的消息级交互细节，并修掉两个真机缺陷。**
 > - 消息动作行：assistant/user 气泡下常驻 `复制 / 👍 / 👎 / 分支 / 时间`（Web 的
