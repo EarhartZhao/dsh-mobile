@@ -1,5 +1,5 @@
 /** Locale-aware labels for fixed host identifiers shown as ordinary UI text. */
-import type { ProcessActivitySummary, ToolActivity } from '@dsh-mobile/core'
+import type { ToolActivity } from '@dsh-mobile/core'
 import type { TranslationKey } from './i18n'
 
 export type LabelTranslate = (key: TranslationKey, values?: Record<string, string | number>) => string
@@ -83,57 +83,20 @@ const stepPreparing: Record<ToolActivity, TranslationKey> = {
   tools: 'chat.step.prepare.tools',
 }
 
-const stepDone: Record<ToolActivity, TranslationKey> = {
-  read: 'chat.step.done.read',
-  readImage: 'chat.step.done.readImage',
-  search: 'chat.step.done.search',
-  write: 'chat.step.done.write',
-  edit: 'chat.step.done.edit',
-  commands: 'chat.step.done.commands',
-  code: 'chat.step.done.code',
-  webSearch: 'chat.step.done.webSearch',
-  webFetch: 'chat.step.done.webFetch',
-  subagents: 'chat.step.done.subagents',
-  plan: 'chat.step.done.plan',
-  questions: 'chat.step.done.questions',
-  tools: 'chat.step.done.tools',
-}
-
-/** The label for the work happening right now, in whichever phase it is. */
+/**
+ * The label for the work happening right now: a running or announced step. A
+ * settled turn's own row carries only the web's toggle text (elapsed time, or
+ * why it stopped), so there is no completed-tense vocabulary here anymore — the
+ * categories a turn worked through are what its disclosure contains, not a
+ * title of their own.
+ */
 export function stepActivityLabel(
   activity: ToolActivity | 'thinking',
-  phase: 'running' | 'preparing' | 'done',
+  phase: 'running' | 'preparing',
   t: LabelTranslate,
 ): string {
-  if (activity === 'thinking') {
-    return phase === 'done' ? t('chat.step.done.thinking') : t('chat.step.thinking')
-  }
-  if (phase === 'preparing') return t(stepPreparing[activity])
-  if (phase === 'done') return t(stepDone[activity])
-  return t(stepRunning[activity])
-}
-
-/**
- * A settled turn's title: its top three categories, joined the way the web
- * joins them. Counts are deliberately absent — the row is a summary of kinds of
- * work, and a turn that only thought reads as "已完成分析".
- */
-export function stepSummaryTitle(summary: ProcessActivitySummary, t: LabelTranslate): string {
-  const labels = summary.counts.slice(0, 3).map(({ kind }) => stepActivityLabel(kind, 'done', t))
-  const first = labels[0]
-  if (first === undefined) return t('chat.step.done.thinking')
-  const second = labels[1]
-  if (second === undefined) return first
-  // English lowercases a continuation label; Chinese instead drops the shared
-  // leading 已 when both labels start with it (the web's own rule).
-  const continuation = (label: string): string => label.charAt(0).toLowerCase() + label.slice(1)
-  if (labels.length === 2) {
-    const prefix = t('chat.step.sharedPrefix')
-    const shared = prefix !== '' && first.startsWith(prefix) && second.startsWith(prefix)
-    return t('chat.step.joinTwo', { first, second: continuation(shared ? second.slice(prefix.length) : second) })
-  }
-  const title = [first, ...labels.slice(1).map(continuation)].join(t('chat.step.comma'))
-  return summary.counts.length > 3 ? t('chat.step.more', { title }) : title
+  if (activity === 'thinking') return t('chat.step.thinking')
+  return phase === 'preparing' ? t(stepPreparing[activity]) : t(stepRunning[activity])
 }
 
 /** Elapsed time, in the web's own duration shapes. */

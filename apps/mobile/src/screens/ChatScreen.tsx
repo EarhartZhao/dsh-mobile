@@ -53,7 +53,7 @@ import { QuestionCard, type QuestionAnswerPayload } from '../components/Question
 import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { colors, fontSize, radius, spacing } from '../theme'
-import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, stepSummaryTitle, toolDisplayName } from '../ui-labels'
+import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, toolDisplayName } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
 import { appendPendingImage, buildPromptContent, formatBytes, type ImageLimitsView, type ImageRejection, type PendingImage } from '../chat-images'
@@ -1937,10 +1937,14 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
   // settles it folds back to the answer, and a manual toggle always wins.
   const open = manual ?? turn.running
   /**
-   * The header says what the turn is doing, in the web's own two states: while
-   * it runs, the newest category and its one-line task detail; once it settles,
-   * the ranked categories plus how long it took (or why it stopped). A settled
-   * turn with no categories reasoned without calling anything.
+   * The header says what the turn is doing, in the web's own two states. While
+   * it runs, the newest step category and its one-line detail (`正在运行命令 ·
+   * pwsh`) — the web's live trace rows. Once it settles, the web's toggle text
+   * and nothing else: `用时 1分53秒`, or `已完成工作` without a timing, or
+   * `已停止` / `处理失败` when it did not complete. The phone used to prefix
+   * that with a ranked category summary (`已读取文件，执行了命令 · 用时 5秒`),
+   * which the web never puts on this row — those categories are what the
+   * disclosure contains, not a second title.
    */
   const summary = turn.summary
   const liveLabel = summary.running === undefined
@@ -1952,10 +1956,13 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
       ? t('chat.turn.failed')
       : turn.durationMs === undefined
         ? t('chat.turn.worked')
-        : t('chat.turn.took', { duration: runDurationLabel(turn.durationMs, t) })
-  const label = turn.live ? liveLabel : stepSummaryTitle(summary, t)
-  const detail = turn.live ? summary.runningDetail : settledLabel
-  const title = detail === '' ? label : `${label}${t('chat.step.separator')}${detail}`
+        // The web floors a measured turn at one second, so a turn that resolved
+        // within the same second reads `用时 1秒`, never `用时 0秒`.
+        : t('chat.turn.took', { duration: runDurationLabel(Math.max(1_000, turn.durationMs), t) })
+  const label = turn.live ? liveLabel : settledLabel
+  const title = turn.live && summary.runningDetail !== ''
+    ? `${label}${t('chat.step.separator')}${summary.runningDetail}`
+    : label
   const toggleStep = (key: string): void => {
     setOpenSteps(current => {
       const next = new Set(current)
