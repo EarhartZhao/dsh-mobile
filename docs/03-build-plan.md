@@ -119,6 +119,25 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 生成本地 PKCS12 release key（4096-bit RSA，10000 天），配置为 git-ignored `keystore.properties` + `release.keystore`；`storeFile` 支持相对 Android 工程根。
 > - `verifyReleaseSigning` 无签名默认失败，正式签名通过；`assembleRelease` 成功；`apksigner verify --print-certs` 确认 APK 为 release key 而非 debug key。
 
+> 进度（2026-09-29 第十轮 · v0.0.6/v0.0.7）：**预览面板三处体验修复 + 安装签名对齐。**
+> - 预览面板：Modal 是独立窗口，根部 `SafeAreaView` 的边距进不去，标题会被状态栏压住；
+>   现在面板自己按 `useSafeAreaInsets` 留边距，正文 `flex: 1` 占满整屏（原来是
+>   `maxHeight: 360` / `height: 320`，只填了半屏）。
+> - md 预览长按选中：渲染器自己的文本节点没有 `selectable`，预览专用规则补上；
+>   同时**去掉**了为贴齐系统栏而加的 `statusBarTranslucent` / `navigationBarTranslucent`
+>   ——实测这两个窗口 flag 会让 dialog 内所有 Text 都选不中。
+> - 预览底部四个动作按钮由两排改一排（收紧左右内边距与间距；`flexWrap` 留作英文兜底）。
+> - 空会话提示居中并留出内边距：判断条件原为 `visible.length === 0`（全局还有没有会话），
+>   选中空工作区时不成立，提示就退化成裸 `<Text>` 贴左上角。
+> - **安装签名对齐**：真机上装正式 APK 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`（已安装的是
+>   debug 签名）。Android 只允许同签名的包互相覆盖，所以从 `run-android` 的 dev 包切到正式包
+>   必须卸载一次；之后各版本（含 App 内更新）都能直接覆盖。为了让本地 dev 包与正式包同签名，
+>   `signingConfigs.debug` 现在在配置了正式密钥时直接使用它（`keystore.properties` 或
+>   `DSH_RELEASE_*`），没有配置时仍是内置 debug key；App 内更新弹窗在 `__DEV__` 构建上会
+>   明确提示「当前是开发版，装正式版需要先卸载一次」。
+> - 验证：App 109、core 136、plugin 84、lint 0 error、typecheck 全绿；临时 keystore 实测
+>   `assembleDebug` 产物签名为该密钥（`apksigner --print-certs`），确认这条分支生效。
+
 > 进度（2026-09-29 第九轮 · v0.0.5）：**对齐 Web 的消息级交互细节，并修掉两个真机缺陷。**
 > - 消息动作行：assistant/user 气泡下常驻 `复制 / 👍 / 👎 / 分支 / 时间`（Web 的
 >   MessageIconActions + MessageFeedbackActions）。评分走 messageFeedback RPC（已存评分再点即撤回），

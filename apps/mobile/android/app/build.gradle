@@ -126,11 +126,31 @@ android {
         versionName "0.0.7"
     }
     signingConfigs {
+        /**
+         * The debug variant signs with the release key whenever one is configured,
+         * so a dev build installed by `run-android` and the published release APK
+         * share one signature and update each other in place. Android refuses an
+         * update whose signer differs (INSTALL_FAILED_UPDATE_INCOMPATIBLE), which
+         * forced an uninstall — and the pairing token lives in that app's data.
+         * With no key configured this stays the stock debug keystore.
+         */
         debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            if (hasPropertySigning) {
+                storeFile rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword keystoreProperties.getProperty("storePassword")
+                keyAlias keystoreProperties.getProperty("keyAlias")
+                keyPassword keystoreProperties.getProperty("keyPassword")
+            } else if (hasReleaseSigning) {
+                storeFile rootProject.file(System.getenv("DSH_RELEASE_STORE_FILE"))
+                storePassword System.getenv("DSH_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("DSH_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("DSH_RELEASE_KEY_PASSWORD")
+            } else {
+                storeFile file('debug.keystore')
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
         }
         if (hasPropertySigning) {
             release {

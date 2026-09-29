@@ -600,6 +600,13 @@ function AppContent(): React.JSX.Element {
                 <Text style={styles.updateNotesText}>{appUpdate.notes}</Text>
               </ScrollView>
             )}
+            {/*
+              * Android only lets an identically signed package replace an
+              * installed one, so the first move from a `run-android` install to a
+              * published APK needs one uninstall. Say so here instead of letting
+              * the system installer fail with a bare "app not installed".
+              */}
+            {__DEV__ && <Text style={styles.updateHint}>{t('update.devBuild')}</Text>}
             <View style={styles.updateActions}>
               <TouchableOpacity style={styles.updateLater} disabled={updateDownloading} onPress={() => setAppUpdate(null)}>
                 <Text style={styles.updateLaterText}>{t('update.later')}</Text>
@@ -708,6 +715,8 @@ const styles = StyleSheet.create({
   updateVersion: { color: colors.accent, fontSize: 14, fontWeight: '600' },
   updateNotes: { maxHeight: 220 },
   updateNotesText: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
+  /** Dev-build signing note: same body copy as the release notes, quieter. */
+  updateHint: { color: colors.warning, fontSize: 12, lineHeight: 17 },
   updateActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
   updateLater: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   updateLaterText: { color: colors.textDim, fontSize: 14 },
