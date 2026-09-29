@@ -1,4 +1,5 @@
 import React from 'react'
+import { FlatList } from 'react-native'
 import renderer, { act } from 'react-test-renderer'
 import type { ConnectionManager } from '@dsh-mobile/core'
 
@@ -33,11 +34,11 @@ const manager = {
 
 const trees: renderer.ReactTestRenderer[] = []
 
-function render() {
+function render(source: ConnectionManager = manager) {
   let tree!: renderer.ReactTestRenderer
   act(() => {
     tree = renderer.create(
-      <SessionListScreen manager={manager} onOpenSession={jest.fn()} onOpenSettings={jest.fn()} />,
+      <SessionListScreen manager={source} onOpenSession={jest.fn()} onOpenSettings={jest.fn()} />,
     )
   })
   trees.push(tree)
@@ -63,6 +64,34 @@ describe('SessionListScreen header', () => {
 })
 
 describe('SessionListScreen grouping', () => {
+  it('centers the empty pane when a workspace chip filters the list to nothing', () => {
+    /**
+     * The pane's centering used to key off `visible` (sessions that exist
+     * anywhere); picking an empty workspace left a non-empty `visible` and no
+     * rows, so the message rendered bare against the top-left corner.
+     */
+    const withEmptyWorkspace = {
+      ...manager,
+      store: {
+        ...manager.store,
+        workspaces: [
+          { workspaceId: 'w1', title: 'dsh', path: '/tmp/dsh', sessionIds: ['s1'], createdAt: '' },
+          { workspaceId: 'w2', title: '空工作区', path: '/tmp/empty', sessionIds: [], createdAt: '' },
+        ],
+      },
+    } as unknown as ConnectionManager
+    const tree = render(withEmptyWorkspace)
+    const chip = tree.root.findAll(node =>
+      typeof node.props.onPress === 'function' && node.findAllByProps({ children: '空工作区' }).length > 0,
+    ).at(-1)
+
+    act(() => { chip!.props.onPress() })
+
+    const list = tree.root.findByType(FlatList)
+    expect(list.props.contentContainerStyle).toMatchObject({ flexGrow: 1, alignItems: 'center' })
+    expect(tree.root.findAllByProps({ children: 'session.noSessions' }).length).toBeGreaterThan(0)
+  })
+
   it('heads each workspace and buckets rows that belong to none', () => {
     const tree = render()
 

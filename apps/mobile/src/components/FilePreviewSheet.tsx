@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import Markdown from 'react-native-markdown-display'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { NatsApiClient } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
 import { markdownRules, markdownStyles } from '../markdown'
@@ -64,6 +65,13 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
   onNotice: (message: string) => void
 }): React.JSX.Element {
   const { t } = useI18n()
+  /**
+   * A Modal is its own window: it renders outside the app's `SafeAreaView`, so
+   * nothing here is inset by default. On Android the dialog covers the status
+   * bar, which used to put the title and the close control *under* the system
+   * clock and battery; the reader now pays the insets itself.
+   */
+  const insets = useSafeAreaInsets()
   const [state, setState] = useState<PreviewState>({ status: 'idle' })
   const canRead = features.includes('workspace-files')
   const canStat = features.includes('workspace-stat')
@@ -207,9 +215,16 @@ export function FilePreviewSheet({ visible, path, sessionId, client, features, o
   }
 
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+    <Modal
+      transparent
+      statusBarTranslucent
+      navigationBarTranslucent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <ModalBackdrop onClose={onClose}>
-        <View style={styles.card}>
+        <View style={[styles.card, { paddingTop: insets.top + spacing(2), paddingBottom: insets.bottom + spacing(2) }]}>
           <View style={styles.header}>
             <Text style={styles.title} numberOfLines={1}>{name === '' ? t('file.preview') : name}</Text>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose} hitSlop={8}>
@@ -314,21 +329,23 @@ function SheetAction({ label, onPress }: { label: string; onPress: () => void })
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.bgElevated,
-    /** Fullscreen surface: a preview is a reading view, not a dialog. */
+    /**
+     * Fullscreen surface: a preview is a reading view, not a dialog. The
+     * vertical padding comes from the window's safe-area insets at render time.
+     */
     flex: 1,
     paddingHorizontal: spacing(4),
-    paddingTop: spacing(6),
-    paddingBottom: spacing(4),
     gap: spacing(2),
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing(2) },
   title: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600' },
   close: { color: colors.accent, fontSize: fontSize.small },
   path: { color: colors.textDim, fontSize: fontSize.tiny },
-  body: { minHeight: spacing(12), justifyContent: 'center' },
+  /** The reading surface: it takes every row the header and actions leave. */
+  body: { flex: 1, minHeight: spacing(12), justifyContent: 'center' },
   hint: { color: colors.textDim, fontSize: fontSize.small },
-  image: { width: '100%', height: 320 },
-  textScroll: { maxHeight: 360 },
+  image: { flex: 1, width: '100%' },
+  textScroll: { flex: 1 },
   textContent: { paddingVertical: spacing(1) },
   text: { color: colors.text, fontSize: fontSize.tiny, fontFamily: 'monospace' },
   footerNote: { color: colors.textDim, fontSize: fontSize.tiny },

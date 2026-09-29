@@ -1,6 +1,7 @@
 /** Full-screen image preview; the scroll container provides pinch zoom. */
 import React from 'react'
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors, fontSize, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
@@ -11,9 +12,21 @@ export function ImageLightbox({ visible, source, name, onClose }: {
   onClose: () => void
 }): React.JSX.Element {
   const { t } = useI18n()
+  /** The lightbox is a Modal window of its own, so it pays the system bars itself. */
+  const insets = useSafeAreaInsets()
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.root} onPress={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      statusBarTranslucent
+      navigationBarTranslucent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <Pressable
+        style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        onPress={onClose}
+      >
         <View style={styles.header}>
           <Text style={styles.name} numberOfLines={1}>{name ?? t('image.preview')}</Text>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('image.closePreview')} onPress={onClose}>

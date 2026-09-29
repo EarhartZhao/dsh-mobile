@@ -1,5 +1,6 @@
 import React from 'react'
 import renderer, { act } from 'react-test-renderer'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import type { ConnectionManager, ConversationImage } from '@dsh-mobile/core'
 
 jest.mock('../i18n', () => ({
@@ -11,17 +12,28 @@ import { AttachmentImage } from './AttachmentImage'
 
 const trees: renderer.ReactTestRenderer[] = []
 
+/**
+ * The zoomed preview is a Modal of its own window and pays the system bars
+ * itself, so it reads the safe-area context the app provides at its root.
+ */
+const METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 47, left: 0, right: 0, bottom: 34 },
+}
+
 function render(image: ConversationImage, manager: ConnectionManager): renderer.ReactTestRenderer {
   let tree!: renderer.ReactTestRenderer
   act(() => {
     tree = renderer.create(
-      <AttachmentImage
-        image={image}
-        manager={manager}
-        sessionId="s1"
-        style={{ width: 100 }}
-        fallbackStyle={{ color: '#000' }}
-      />,
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AttachmentImage
+          image={image}
+          manager={manager}
+          sessionId="s1"
+          style={{ width: 100 }}
+          fallbackStyle={{ color: '#000' }}
+        />
+      </SafeAreaProvider>,
     )
   })
   trees.push(tree)
@@ -120,13 +132,15 @@ describe('AttachmentImage', () => {
 
     act(() => {
       tree.update(
-        <AttachmentImage
-          image={{ kind: 'attachment', attachmentId: 'a1' }}
-          manager={managerWith(attachment)}
-          sessionId="s1"
-          style={{ width: 100 }}
-          fallbackStyle={{ color: '#000' }}
-        />,
+        <SafeAreaProvider initialMetrics={METRICS}>
+          <AttachmentImage
+            image={{ kind: 'attachment', attachmentId: 'a1' }}
+            manager={managerWith(attachment)}
+            sessionId="s1"
+            style={{ width: 100 }}
+            fallbackStyle={{ color: '#000' }}
+          />
+        </SafeAreaProvider>,
       )
     })
     await act(async () => {})

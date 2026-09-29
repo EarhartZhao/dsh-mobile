@@ -465,7 +465,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
           <FlatList
             data={listEntries}
             keyExtractor={item => item.key}
-            contentContainerStyle={searchHits === null && visible.length === 0 ? styles.emptyContainer : undefined}
+            contentContainerStyle={listEntries.length === 0 ? styles.emptyContainer : undefined}
             ListEmptyComponent={<Text style={styles.empty}>{searchHits !== null ? t('session.noMatches') : t('session.noSessions')}</Text>}
             renderItem={({ item }) => {
               if (item.kind === 'hit') {
@@ -765,8 +765,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(1.5),
   },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  empty: { color: colors.textDim, fontSize: fontSize.small },
+  /**
+   * The empty state is a whole-pane message, not a list row: it centers in the
+   * space the list would have used and keeps real margins, so it never reads as
+   * text jammed against the search box and the left edge. It keys off the
+   * rendered entries (`listEntries`), because a workspace chip can filter the
+   * list to nothing while `visible` sessions still exist elsewhere.
+   */
+  emptyContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing(8),
+    paddingVertical: spacing(10),
+  },
+  empty: { color: colors.textDim, fontSize: fontSize.small, textAlign: 'center' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
