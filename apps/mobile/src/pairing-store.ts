@@ -10,6 +10,12 @@ export interface PairingRecord {
   user: string
   pass: string
   instance: string
+  /**
+   * The Hub's CA certificate (base64 DER) as delivered by the QR. Trust for
+   * `hub` comes from this, not from the build, so it has to outlive the
+   * process: the native anchor is re-installed from here on every boot.
+   */
+  ca?: string
   caFp: string
   token: string
   deviceId: string

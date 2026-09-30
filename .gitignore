@@ -14,5 +14,11 @@ apps/mobile/android/app/build/
 apps/mobile/android/app/.cxx/
 
 certs/*.key
+certs/**/*.key
+certs/**/*.pem
+# Signing state, not publishable material: the CA serial counter and any
+# leftover CSRs belong to whoever runs the CA, not to the repository.
+certs/*.srl
+certs/**/*.srl
 apps/mobile/android/*.keystore
 apps/mobile/android/keystore.properties

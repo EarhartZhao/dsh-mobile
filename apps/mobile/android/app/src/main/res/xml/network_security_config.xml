@@ -1,15 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Trust the dsh-mobile private CA only for the Hub IP (docs: plugin 02 §4).
-     Everything else keeps the system trust store, so the bundled CA never
-     widens the attack surface. -->
+<!-- Release baseline: no cleartext, and no CA of the app's own.
+     The Hub's certificate arrives in the pairing QR and is installed as a
+     runtime trust anchor by `HubTlsTrust` (docs: plugin 03 §0), so this file
+     has nothing left to pin. A Hub with a publicly signed certificate is
+     judged by the system trust store like any other host. -->
 <network-security-config>
-  <!-- The dev loop (Metro, local stand-in) speaks cleartext to localhost;
-       the release story can tighten this to debug-overrides only. -->
   <base-config cleartextTrafficPermitted="false" />
-  <domain-config>
-    <domain includeSubdomains="false">115.159.57.137</domain>
-    <trust-anchors>
-      <certificates src="@raw/dsh_root_ca" />
-    </trust-anchors>
-  </domain-config>
 </network-security-config>

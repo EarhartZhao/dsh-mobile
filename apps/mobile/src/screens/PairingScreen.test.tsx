@@ -1,5 +1,5 @@
 import React from 'react'
-import { BackHandler } from 'react-native'
+import { BackHandler, Platform } from 'react-native'
 import renderer, { act } from 'react-test-renderer'
 
 let mockHasPermission = true
@@ -16,6 +16,7 @@ jest.mock('react-native-vision-camera', () => ({
 
 jest.mock('nats.ws', () => ({ connect: jest.fn() }))
 jest.mock('../pairing-store', () => ({ savePairing: jest.fn() }))
+jest.mock('../hub-tls', () => ({ installHubAnchor: jest.fn(async () => null) }))
 jest.mock('@dsh-mobile/protocol', () => ({ headers: {}, redeemPairingCode: jest.fn() }))
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
@@ -82,10 +83,28 @@ describe('PairingScreen camera', () => {
 
     await openScanner(tree!)
     const camera = tree!.root.findAll(node => (node.type as unknown) === 'Camera')[0]
-    expect(camera.props.androidPreviewViewType).toBe('texture-view')
+    // `androidPreviewViewType` is an Android-only knob; the iOS camera must not
+    // receive it.
+    expect(camera.props.androidPreviewViewType).toBeUndefined()
     expect(tree!.root.findAllByProps({ children: 'pairing.title' })).toHaveLength(0)
     expect(tree!.root.findAll(node => (node.type as unknown) === 'TextInput')).toHaveLength(0)
     expect(tree!.root.findAllByProps({ children: 'pairing.scanHint' }).length).toBeGreaterThan(0)
+  })
+
+  it('asks the Android camera for the texture preview so scanning composites', async () => {
+    const platform = jest.replaceProperty(Platform, 'OS', 'android')
+    try {
+      let tree: renderer.ReactTestRenderer
+      act(() => {
+        tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      })
+
+      await openScanner(tree!)
+      const camera = tree!.root.findAll(node => (node.type as unknown) === 'Camera')[0]
+      expect(camera.props.androidPreviewViewType).toBe('texture-view')
+    } finally {
+      platform.restore()
+    }
   })
 
   it('puts the raw scanned value into the pairing input and returns to the pairing page', async () => {
@@ -220,6 +239,8 @@ describe('PairingScreen hub credential errors', () => {
   beforeEach(() => {
     jest.spyOn(console, 'error').mockImplementation(() => undefined)
     ;(jest.requireMock('nats.ws').connect as jest.Mock).mockReset()
+    ;(jest.requireMock('../hub-tls').installHubAnchor as jest.Mock).mockReset()
+    ;(jest.requireMock('../hub-tls').installHubAnchor as jest.Mock).mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -278,5 +299,89 @@ describe('PairingScreen hub credential errors', () => {
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
 
     expect(tree!.root.findAllByProps({ children: 'pairing.bridgeOffline' }).length).toBeGreaterThan(0)
+  })
+
+  it('explains a transport failure whose NatsError carries no message', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    // What a failed TLS handshake actually produces on the phone: `nats.ws`
+    // reports the code and leaves `message` undefined. Reading it as a string
+    // used to throw inside the error mapper, so the phone showed
+    // "Cannot read property 'trim' of undefined" instead of anything useful.
+    const transport = Object.assign(new Error(), { name: 'NatsError', code: 'CONNECTION_REFUSED' })
+    Object.defineProperty(transport, 'message', { value: undefined })
+    connect.mockRejectedValueOnce(transport)
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
+
+    expect(tree!.root.findAllByProps({ children: 'pairing.natsFailed' }).length).toBeGreaterThan(0)
+    expect(tree!.root.findAll(node => `${String(node.props.children)}`.includes('trim')).length).toBe(0)
+  })
+
+  it('installs the QR certificate as the anchor before dialling the hub', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    const install = jest.requireMock('../hub-tls').installHubAnchor as jest.Mock
+    const order: string[] = []
+    install.mockImplementationOnce(async () => { order.push('anchor'); return null })
+    connect.mockImplementationOnce(async () => { order.push('dial'); throw new Error('stop') })
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"MIIB","code":"ABCDEFGH"}')
+
+    expect(install).toHaveBeenCalledWith('wss://hub.test:8443', 'MIIB', 'AA:BB')
+    // The anchor has to exist before the first handshake: the QR is the only
+    // moment the app can learn it, and a handshake cannot ask again.
+    expect(order).toEqual(['anchor', 'dial'])
+  })
+
+  it('dials even when the QR carries no certificate, leaving TLS to the system store', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    const install = jest.requireMock('../hub-tls').installHubAnchor as jest.Mock
+    connect.mockRejectedValueOnce(new Error('stop'))
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"","code":"ABCDEFGH"}')
+
+    expect(install).toHaveBeenCalledWith('wss://hub.test:8443', undefined, '')
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a QR whose certificate cannot be read, without dialling', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    const install = jest.requireMock('../hub-tls').installHubAnchor as jest.Mock
+    install.mockRejectedValueOnce(new Error('hub-ca-invalid'))
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"not-a-certificate","code":"ABCDEFGH"}')
+
+    expect(tree!.root.findAllByProps({ children: 'pairing.caInvalid' }).length).toBeGreaterThan(0)
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('refuses a QR whose certificate contradicts its fingerprint', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    const install = jest.requireMock('../hub-tls').installHubAnchor as jest.Mock
+    install.mockRejectedValueOnce(new Error('hub-ca-mismatch'))
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"MIIB","code":"ABCDEFGH"}')
+
+    expect(tree!.root.findAllByProps({ children: 'pairing.caMismatch' }).length).toBeGreaterThan(0)
+    expect(connect).not.toHaveBeenCalled()
   })
 })

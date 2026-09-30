@@ -21,7 +21,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     reactNativeDelegate = delegate
     reactNativeFactory = factory
 
-    window = UIWindow(frame: UIScreen.main.bounds)
+    let window = UIWindow(frame: UIScreen.main.bounds)
+    // Same rehydration order as Android's MainActivity: the stored theme lands
+    // on the window before React starts, so the first frame already matches the
+    // user's choice, and the Hub's private CA is pinned before any socket opens.
+    DshApplyStoredInterfaceStyle(window)
+    DshInstallWebSocketSecurity()
+    self.window = window
 
     factory.startReactNative(
       withModuleName: "DshMobile",
@@ -30,6 +36,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     )
 
     return true
+  }
+
+  /// Forwards `dshmobile://` links to React Native's linking module.
+  ///
+  /// The schemes are declared in `Info.plist`, but UIKit only delivers them
+  /// here; without this hop `Linking.getInitialURL()` and the `url` events stay
+  /// empty and the Android-side `dshmobile://new-session` entry has no iOS
+  /// counterpart. Cold launches are covered by `launchOptions` above.
+  func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    RCTLinkingManager.application(app, open: url, options: options)
   }
 }
 

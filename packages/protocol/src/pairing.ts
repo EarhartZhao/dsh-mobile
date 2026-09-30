@@ -16,6 +16,13 @@ export interface PairingQrPayload {
   user: string
   pass: string
   instance: string
+  /**
+   * The Hub's CA certificate as base64 DER. Absent on QRs minted before the
+   * App learned to install anchors at runtime, in which case trust falls back
+   * to the CA the build carries.
+   */
+  ca?: string
+  /** SHA-256 of the certificate above, for the user to compare. */
   caFp: string
   code: string
 }

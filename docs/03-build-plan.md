@@ -77,6 +77,44 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-09-30 第十三轮）：**去掉 App 内置 CA，只认二维码；Android 真机验证。**
+> - App 不再随包携带任何 CA：删掉 `res/raw/dsh_root_ca.crt`、iOS `DshMobile/dsh_root_ca.crt` 与
+>   `project.pbxproj` 的三处条目；`HubTlsTrust.anchorsFor` 与 `DshPinnedCertificatesForDomain`
+>   （原 `DshCreateCertificateFromResource` 一并删除）只返回该 host 扫过码的锚，没有锚就交给系统信任库。
+>   `network_security_config.xml`（main/debug 两份）只剩 `cleartextTrafficPermitted`，`@raw/dsh_root_ca` 的
+>   `domain-config` 整段删除。副作用：公共 CA 签发的 Hub 照样能连（走系统库），自签 Hub 的二维码必须带 CA。
+> - 插件侧同步口径：`hub-check` 与设置卡的 CA 提示改成「App 里没有内置 CA」，平台文档 02/03 的
+>   「回退路径」段落改写。
+> - **修掉一个真机才暴露的 bug**：`nats.ws` 的 `NatsError` 常常 `message` 为空、含义只在 `code` 上，
+>   `pairingErrorMessage` 直接 `.trim()` 抛 `TypeError`，手机上前端显示的是一句 `Cannot read property
+>   'trim' of undefined`。现在先过 `describeError`（字符串 / `message [code]` / `name [code]` 三态），
+>   日志同时打码值；`[pairing]` 两条 catch 都改用它。
+> - Android 真机（vivo V2405A / Android 16，adb）实跑 debug 包：同一 Hub 同一账号做 A/B——
+>   二维码不带 `ca` → `NatsError [UNKNOWN_ERROR]`，界面给出「无法连接公网 NATS…自签证书请粘贴 ca.crt」；
+>   二维码带 `ca`（线上 CA）→ 直接走到 `mobile-pair-failed`（TLS 与 NATS 认证都过了，只差真配对码）。
+> - 验证：`unzip -l` 两个 APK 包内证书文件数均为 0；App jest 123/123、typecheck 干净、lint 0 error；
+>   `./gradlew assembleDebug` 与 `assembleRelease -PallowDebugSignedRelease=true` 均 BUILD SUCCESSFUL；
+>   插件 150/150、typecheck/client/build 全绿。
+> - 说明：手机上原有的是正式签名的 release 包，与 debug 签名不兼容，验证前卸载过一次；原 APK 在
+>   `/tmp/dsh-rel-v008.apk` 可随时装回。
+
+> 进度（2026-09-30 第十二轮）：**代码审计：修掉一处私钥入库事故，并补上轮换工具。**
+> - 发现：`certs/ca.key`、`certs/server.key` 在 `1c7930b` 入库、`3fc2171` 只从 HEAD 删除；仓库 `EarhartZhao/dsh-mobile` 是公开仓库，因此两把私钥仍在 git 历史中可读，且泄漏的就是生产密钥——`ca.key` 的公钥与 `certs/ca.crt` 逐位一致，指纹正是 App pin 的 `caFp`。
+> - 影响面：两端 pinning（Android `network_security_config.xml`、iOS `SRSecurityPolicy`）锚的是 CA 而不是叶子证书，拿到 `ca.key` 可为任意地址现签服务器证书使 pinning 归零；拿到 `server.key` 可冒充 Hub，把手机的 `x-dsh-token` 骗走。4222/7422 是明文 + 账号/ACL，与这对密钥无关。
+> - 新增 `scripts/rotate-hub-tls.sh`：一次生成新 CA 与新服务器证书（EC P-256、IP SAN、补上 `extendedKeyUsage=serverAuth`），私钥一律写到仓库外（默认 `~/.dsh-mobile-hub-tls`，脚本拒绝写进 checkout），`--apply` 只回写公开材料（`certs/ca.crt` + 两端 `dsh_root_ca.crt` + `certs/server.{crt,csr}` / `san.ext`）。在临时仓库副本上跑通了 `--force --apply`：三处 CA 一致、链校验通过、私钥 0600。顺手修掉 iOS 那条 `-67609` 回退路径的根因。
+> - 轮换与"作废"（含 git 历史清理、Hub 密码与设备 token 轮换）写进插件 `docs/02-nats-server.md` §1.1。
+> - `.gitignore` 加固：`certs/**/*.key`、`certs/**/*.pem`、`certs/**/*.srl`。
+> - 复核结论：两个仓库的工作区与全量历史里都没有 Hub 密码、没有完整 CA 指纹、没有其它私钥（`git rev-list --all --objects | grep -iE '\.key$'` 只剩历史里那两把）；`debug.keystore` 是 AOSP 标准公开调试密钥，`keystore.properties`/`release.keystore` 从未入库；开发用的 `demo/demo` 配对入口在 `__DEV__` 里，不会进 release。
+> - **待办**：轮换尚未执行（已生成的新材料在 `~/.dsh-mobile-hub-tls`，等 Hub 侧替换后再 `--apply` 并重建 App）；历史清理需用户确认后单独做。
+
+> 进度（2026-09-30 第十一轮）：**iOS 端落地并在本机模拟器跑通。**
+> - 原生面补齐：Android 的 `DshTheme` / `DshImagePicker` / `DshFilePicker` / `DshFileOpener` 在 iOS 各有一份 ObjC++ 实现，JS 入口和返回结构逐一对照（见 01-tech-stack 的对照表）；Android 专属的 `DshApp.moveTaskToBack` 与 `DshUpdater` 不移植，JS 侧运行时判空后静默降级。
+> - TLS：iOS 没有 `network_security_config` 等价物，改为在 RN 的 `RCTSetCustomSRWebSocketProvider` / `SRSecurityPolicy` 接缝上用与应用一起打包的 `dsh_root_ca.crt` 做唯一锚点（PEM/DER 都接受），非 Hub 域名继续走系统信任库。
+> - **踩坑（需插件侧配合）**：Hub 证书由 `certs/san.ext` 签发，只有 IP SAN、没有 `extendedKeyUsage = serverAuth`，Apple 的 SSL 策略以 `-67609` 拒绝；策略回退到「锚定 pinned CA + 自写 DER 解析校验 SAN 主机名」，与 Android `network_security_config` 实际执行的规则等价。给 Hub 证书补 `extendedKeyUsage = serverAuth` 重签后严格路径自动生效，App 无需改动。
+> - **踩坑（RN Modal 与系统 picker 竞态）**：`+` 面板是 RN Modal，JS 在同一 tick 里调起 picker，UIKit 把 picker 连同正在退场的 modal 一起撤掉（出现一帧即消失）。`DshPresentation.mm` 的 `DshPresentWhenSettled` 等宿主连续 3 tick 稳定再 present，并在 2.4s 内监视、宿主也被撤走时重新挂载（最多 3 次）。
+> - 工程：bundle id 改 `com.dshmobile`、版本对齐 App 0.0.8（`CURRENT_PROJECT_VERSION` 20007）、AppIcon、`dshmobile://` scheme、相机/麦克风/相册用途文案、竖屏锁定（与 Android `screenOrientation="portrait"` 一致）；`react-native-svg` 升到 15.15.5（15.12.1 在 RN 0.87 编译不过）；顺手去掉 `Info.plist` 里空的 `NSLocationWhenInUseUsageDescription` 构建 warning。
+> - 验证：`xcodebuild -workspace DshMobile.xcworkspace -scheme DshMobile -configuration Debug -sdk iphonesimulator`（iPhone 17 / iOS 26.5）BUILD SUCCEEDED；core 136/136、App 110/110、lint 0 error、typecheck 全绿、`sync-protocol:check` 通过；模拟器实测：连接与在线态、会话列表（分组/搜索/归档入口）、对话页（思考与工具折叠、复制/评分/分支）、`+` 四面板、相册多选/文件选择器、相机取景与拍照入口、主题切换、插件清单（399 项）、连接诊断、解除配对。
+
 > 进度（2026-08-29 第二轮）：**P0-P2 本地可实施面完成，附件和剩余指示已闭环。**
 > - 验证：`packages/core` 21/21、App `tsc --noEmit` 清洁、Android `gradlew assembleDebug` 通过；新 APK 已装回模拟器。
 > - 新增 P1/P2：Android 原生选图（ACTION_GET_CONTENT，超过 384KB 自动降采样/JPEG 压缩）、pending 预览、`session.prompt` 图片块、历史 data/attachment 图片渲染；长按「全部」打开目录浏览器（面包屑/子目录/新建目录，browse capability 缺失时显示宿主错误）；会话权限预设 chips（Full access 确认）；assistant 收尾交付物 chips；`compaction/summary` 标记。Core 推导新增图片/交付物/compaction 单测。
@@ -214,7 +252,7 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 ## Phase 3：M3 + M4（后续排期）
 
 - M3 任务面板：`session/jobs` 快照帧渲染、前台提醒。
-- M4：iOS 适配（需 Apple 开发者账号）。鸿蒙端已明确不做（2026-08-26）。
+- M4：iOS 适配 —— 已落地并在本机模拟器跑通（2026-09-30，见第十一轮进度）。模拟器不需要 Apple 开发者账号；只有真机分发/上架才需要。鸿蒙端已明确不做（2026-08-26）。
 
 ## 风险与预案（承接 00-overview 风险表）
 

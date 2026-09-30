@@ -11,6 +11,13 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		D551401DB18F6CCF53B6F775 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		D5B00000000000000000B003 /* DshThemeModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A003 /* DshThemeModule.mm */; };
+		D5B00000000000000000B004 /* DshFileModules.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A004 /* DshFileModules.mm */; };
+		D5B00000000000000000B005 /* DshImagePickerModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A005 /* DshImagePickerModule.mm */; };
+		D5B00000000000000000B006 /* DshWebSocketSecurity.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A006 /* DshWebSocketSecurity.mm */; };
+		D5B00000000000000000B008 /* DshPresentation.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A008 /* DshPresentation.mm */; };
+		D5B00000000000000000B009 /* DshHubTlsModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = D5A00000000000000000A009 /* DshHubTlsModule.mm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +30,14 @@
 		5DCACB8F33CDC322A6C60F78 /* libPods-DshMobile.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-DshMobile.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = DshMobile/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = DshMobile/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		D5A00000000000000000A001 /* DshMobileNative.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = DshMobileNative.h; path = DshMobile/DshMobileNative.h; sourceTree = "<group>"; };
+		D5A00000000000000000A002 /* DshMobile-Bridging-Header.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = "DshMobile-Bridging-Header.h"; path = "DshMobile/DshMobile-Bridging-Header.h"; sourceTree = "<group>"; };
+		D5A00000000000000000A003 /* DshThemeModule.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshThemeModule.mm; path = DshMobile/DshThemeModule.mm; sourceTree = "<group>"; };
+		D5A00000000000000000A004 /* DshFileModules.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshFileModules.mm; path = DshMobile/DshFileModules.mm; sourceTree = "<group>"; };
+		D5A00000000000000000A005 /* DshImagePickerModule.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshImagePickerModule.mm; path = DshMobile/DshImagePickerModule.mm; sourceTree = "<group>"; };
+		D5A00000000000000000A006 /* DshWebSocketSecurity.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshWebSocketSecurity.mm; path = DshMobile/DshWebSocketSecurity.mm; sourceTree = "<group>"; };
+		D5A00000000000000000A008 /* DshPresentation.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshPresentation.mm; path = DshMobile/DshPresentation.mm; sourceTree = "<group>"; };
+		D5A00000000000000000A009 /* DshHubTlsModule.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = DshHubTlsModule.mm; path = DshMobile/DshHubTlsModule.mm; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -46,6 +61,14 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
+				D5A00000000000000000A001 /* DshMobileNative.h */,
+				D5A00000000000000000A002 /* DshMobile-Bridging-Header.h */,
+				D5A00000000000000000A006 /* DshWebSocketSecurity.mm */,
+				D5A00000000000000000A009 /* DshHubTlsModule.mm */,
+				D5A00000000000000000A003 /* DshThemeModule.mm */,
+				D5A00000000000000000A004 /* DshFileModules.mm */,
+				D5A00000000000000000A005 /* DshImagePickerModule.mm */,
+				D5A00000000000000000A008 /* DshPresentation.mm */,
 			);
 			name = DshMobile;
 			sourceTree = "<group>";
@@ -159,6 +182,7 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				D551401DB18F6CCF53B6F775 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -245,6 +269,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				D5B00000000000000000B003 /* DshThemeModule.mm in Sources */,
+				D5B00000000000000000B004 /* DshFileModules.mm in Sources */,
+				D5B00000000000000000B005 /* DshImagePickerModule.mm in Sources */,
+				D5B00000000000000000B006 /* DshWebSocketSecurity.mm in Sources */,
+				D5B00000000000000000B008 /* DshPresentation.mm in Sources */,
+				D5B00000000000000000B009 /* DshHubTlsModule.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -257,7 +287,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 20007;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = DshMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -265,15 +295,20 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.1;
+				MARKETING_VERSION = 0.0.8;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					"PhotosUI",
+					"-framework",
+					"UniformTypeIdentifiers",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dshmobile;
 				PRODUCT_NAME = DshMobile;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OBJC_BRIDGING_HEADER = "DshMobile/DshMobile-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -287,22 +322,27 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 20007;
 				INFOPLIST_FILE = DshMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.1;
+				MARKETING_VERSION = 0.0.8;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-framework",
+					"PhotosUI",
+					"-framework",
+					"UniformTypeIdentifiers",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dshmobile;
 				PRODUCT_NAME = DshMobile;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OBJC_BRIDGING_HEADER = "DshMobile/DshMobile-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
@@ -370,6 +410,10 @@
 				);
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"$(OTHER_CFLAGS)",
 					"-DFOLLY_NO_CONFIG",
@@ -377,8 +421,13 @@
 					"-DFOLLY_USE_LIBCPP=1",
 					"-DFOLLY_CFG_NO_COROUTINES=1",
 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
 				);
+				PODFILE_DIR = "$(SRCROOT)";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../node_modules/.pnpm/react-native@0.87.1_@babel+core@7.29.7_supports-color@8.1.1__@react-native-community+cl_ba1c5d23cf351680714314275c037165/node_modules/react-native";
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				USE_HERMES = true;
 			};
 			name = Debug;
 		};
@@ -435,6 +484,10 @@
 					"\"$(inherited)\"",
 				);
 				MTL_ENABLE_DEBUG_INFO = NO;
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"$(OTHER_CFLAGS)",
 					"-DFOLLY_NO_CONFIG",
@@ -442,8 +495,12 @@
 					"-DFOLLY_USE_LIBCPP=1",
 					"-DFOLLY_CFG_NO_COROUTINES=1",
 					"-DFOLLY_HAVE_CLOCK_GETTIME=1",
+					"-DRCT_REMOVE_LEGACY_ARCH=1",
 				);
+				PODFILE_DIR = "$(SRCROOT)";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../node_modules/.pnpm/react-native@0.87.1_@babel+core@7.29.7_supports-color@8.1.1__@react-native-community+cl_ba1c5d23cf351680714314275c037165/node_modules/react-native";
 				SDKROOT = iphoneos;
+				USE_HERMES = true;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;

@@ -14,6 +14,7 @@ import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
 import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
+import { activateHub, clearHubAnchor } from './hub-tls'
 import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
 import { inventoryChangedByEvent } from './plugin-inventory'
 import { createManager } from './connection'
@@ -175,7 +176,17 @@ function AppContent(): React.JSX.Element {
     : new Date(value).toLocaleString(locale, { hour12: false }), [locale, t])
 
   useEffect(() => {
-    void Promise.all([loadPairing(), loadPreferences()]).then(([record, stored]) => {
+    void Promise.all([loadPairing(), loadPreferences()]).then(async ([record, stored]) => {
+      // The Hub's TLS trust lives in native storage, not in the pairing file,
+      // so a stored pairing has to be pushed back before the first connect
+      // attempt — a restart would otherwise dial a Hub the app no longer
+      // anchors. Failure is not fatal: without the anchor the handshake fails
+      // loudly, which is better than connecting to something unverified.
+      if (record !== null) {
+        await activateHub(record.hub, record.ca).catch((cause: unknown) => {
+          console.warn('[hub-tls] anchor restore failed:', cause)
+        })
+      }
       setPairing(record)
       setPreferences(stored)
       setBooted(true)
@@ -184,6 +195,10 @@ function AppContent(): React.JSX.Element {
 
   useEffect(() => {
     if (!booted) return
+    // The updater only ever installs Android packages: the release feed carries
+    // APKs, and iOS has no equivalent side-loaded path (its updates belong to
+    // the App Store), so asking would only ever offer something uninstallable.
+    if (Platform.OS !== 'android') return
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 10_000)
     void checkForAppUpdate(controller.signal)
@@ -310,10 +325,14 @@ function AppContent(): React.JSX.Element {
 
   const onPaired = useCallback((record: PairingRecord) => setPairing(record), [])
   const onUnpair = useCallback(() => {
+    const hub = pairing?.hub
     void clearPairing()
+    // Removing a pairing removes what it taught the app to trust, so a later
+    // pairing of the same Hub has to arrive with its own certificate again.
+    if (hub !== undefined) void clearHubAnchor(hub).catch(() => undefined)
     setRoute({ name: 'list' })
     setPairing(null)
-  }, [])
+  }, [pairing])
 
   const retryConnection = useCallback(async (): Promise<void> => {
     const manager = managerRef.current
@@ -393,10 +412,12 @@ function AppContent(): React.JSX.Element {
         hub: record.hub,
         instance: record.instance,
         caFp: record.caFp,
-        // Recorded from the QR payload, but the transport cannot enforce it:
-        // RN's WebSocket does not expose the peer certificate, so pinning needs
-        // a native implementation. Say so here instead of implying trust.
-        caFpEnforced: false,
+        // True once the pairing carried a certificate: the native layer then
+        // anchors the handshake on it, and the QR's fingerprint is checked
+        // against it before the first connection. A pairing that predates that
+        // field still falls back to whatever CA the build carries, which is
+        // the weaker promise this flag is here to make visible.
+        caFpEnforced: typeof record.ca === 'string' && record.ca !== '',
         deviceId: record.deviceId,
       },
       recentErrors: errors,

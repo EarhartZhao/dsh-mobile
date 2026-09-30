@@ -27,6 +27,10 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // React Native caches its OkHttp client the first time a WebSocket or fetch
+    // asks for one, and the Hub's trust anchor comes from the pairing QR, so
+    // the trust manager has to be in place before any JavaScript runs.
+    HubTlsTrust.install(this)
     loadReactNative(this)
   }
 }

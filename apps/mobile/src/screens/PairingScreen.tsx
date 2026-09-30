@@ -4,12 +4,13 @@
  * paste path remains the always-available fallback.
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { BackHandler, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
+import { BackHandler, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
 import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { savePairing, type PairingRecord } from '../pairing-store'
+import { installHubAnchor } from '../hub-tls'
 import { useI18n, type TranslationKey } from '../i18n'
 
 interface Props {
@@ -19,10 +20,37 @@ interface Props {
 
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
 
-function pairingErrorMessage(message: string, t: Translate): string {
-  const text = message.trim()
+/**
+ * One readable line for anything a `catch` can hand us.
+ *
+ * `nats.ws` throws `NatsError`s whose meaning lives in `code`, and whose
+ * `message` is often empty — the pairing screen used to call `.trim()` on the
+ * result and die with `Cannot read property 'trim' of undefined`, which is what
+ * a phone showed when the Hub's TLS handshake failed.
+ */
+function describeError(cause: unknown): string {
+  if (typeof cause === 'string') return cause
+  if (cause instanceof Error) {
+    const raw: unknown = (cause as unknown as { code?: unknown }).code
+    const code = typeof raw === 'string' ? raw : ''
+    const message = typeof cause.message === 'string' ? cause.message : ''
+    // `wss` transport failures carry the code alone, and NATS's own "503" is
+    // both — printing "503 [503]" would only make the mapper's job harder.
+    if (message === '') return code === '' ? cause.name : `${cause.name} [${code}]`
+    return code === '' || message.includes(code) ? message : `${message} [${code}]`
+  }
+  return String(cause)
+}
+
+function pairingErrorMessage(cause: unknown, t: Translate): string {
+  const text = describeError(cause).trim()
   if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
   if (text === 'mobile-device-limit') return t('pairing.deviceLimit')
+  // The QR's own certificate did not survive the trip, or disagrees with the
+  // fingerprint printed beside it. Both are the App refusing to trust a Hub it
+  // cannot verify, and both are fixed by minting a fresh QR on the desktop.
+  if (text === 'hub-ca-invalid') return t('pairing.caInvalid')
+  if (text === 'hub-ca-mismatch') return t('pairing.caMismatch')
   // Hub rejected the account credentials the QR carried. The raw NATS text
   // ("Authorization Violation") says nothing about which side to fix.
   if (text.includes('Authorization Violation')) return t('pairing.authFailed')
@@ -33,7 +61,7 @@ function pairingErrorMessage(message: string, t: Translate): string {
   if (text.includes('Failed to fetch') || text.includes('Network request failed')) {
     return t('pairing.networkFailed')
   }
-  if (text === '' || message.includes('NatsError') || message.includes('WebSocket')) {
+  if (text === '' || text.includes('NatsError') || text.includes('WebSocket')) {
     return t('pairing.natsFailed')
   }
   if (text.startsWith('console /pair HTTP')) return t('pairing.httpFailed', { status: text.split(' ').at(-1) ?? '' })
@@ -56,13 +84,22 @@ function parseQr(text: string): PairingQrPayload {
       throw new Error(`missing-field:${key}`)
     }
   }
-  return { caFp: '', ...parsed } as PairingQrPayload
+  // `ca` only exists on QRs minted by a plugin that carries one; an empty
+  // string means the same thing as absent.
+  const { ca, ...rest } = parsed
+  return {
+    caFp: '',
+    ...rest,
+    ...(typeof ca === 'string' && ca !== '' ? { ca } : {}),
+  } as PairingQrPayload
 }
 
 export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [text, setText] = useState('')
-  const [localHost, setLocalHost] = useState('10.0.2.2')
+  // The dev rig reaches the host machine: an Android emulator through its
+  // 10.0.2.2 alias, an iOS simulator through loopback (which is the Mac).
+  const [localHost, setLocalHost] = useState(Platform.OS === 'ios' ? '127.0.0.1' : '10.0.2.2')
   const [localWebPort, setLocalWebPort] = useState('3080')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -89,14 +126,23 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
     setError(null)
     let nc: Awaited<ReturnType<typeof connect>> | null = null
     try {
+      // Trust for this Hub arrives inside the QR, so the anchor has to be
+      // installed before the first handshake — this is the only moment the App
+      // can learn it. A QR without a certificate leaves whatever the build
+      // pins in place, which is how every existing pairing works.
+      await installHubAnchor(payload.hub, payload.ca, payload.caFp)
       nc = await connect({ servers: payload.hub, user: payload.user, pass: payload.pass })
-      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, 'android')
+      // The name is what the desktop console shows in its device roster, so it
+      // has to say which phone actually paired.
+      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, Platform.OS === 'ios' ? 'ios' : 'android')
       const record: PairingRecord = { ...payload, ...device }
       await savePairing(record)
       onPaired(record)
     } catch (cause) {
-      console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
-      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
+      // The code, not just the stack: `nats.ws` puts the reason there and
+      // leaves the stack looking identical for every transport failure.
+      console.error('[pairing]', describeError(cause), cause instanceof Error ? cause.stack : cause)
+      setError(pairingErrorMessage(cause, t))
     } finally {
       setBusy(false)
       if (nc !== null) await nc.close().catch(() => undefined)
@@ -111,7 +157,7 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
       await pairWith(parseQr(text.trim()))
     } catch (cause) {
       console.error('[pairing-parse]', cause instanceof Error ? cause.stack : cause)
-      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
+      setError(pairingErrorMessage(cause, t))
     }
   }
 
@@ -190,14 +236,18 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
       if (body.payload === undefined) throw new Error('console /pair: no payload')
       // In React-Native dev builds the emulator cannot reach a host loopback
       // listener or the production TLS Hub address. Use the host-mapped local
-      // NATS WebSocket while retaining the Hub payload for release builds.
+      // NATS WebSocket while retaining the Hub payload for release builds — but
+      // only for the plaintext stand-in. A payload carrying a certificate names
+      // a Hub this device is meant to reach over TLS, and rewriting it to `ws`
+      // would skip the very handshake the certificate is there to secure.
       const hubHost = host
-      await pairWith(__DEV__
+      const devPayload = body.payload.ca === undefined
         ? { ...body.payload, hub: `ws://${hubHost}:8443`, caFp: '' }
-        : body.payload)
+        : body.payload
+      await pairWith(__DEV__ ? devPayload : body.payload)
     } catch (cause) {
-      console.error('[pairing]', cause instanceof Error ? cause.stack : cause)
-      setError(pairingErrorMessage(cause instanceof Error ? cause.message : String(cause), t))
+      console.error('[pairing]', describeError(cause), cause instanceof Error ? cause.stack : cause)
+      setError(pairingErrorMessage(cause, t))
       setBusy(false)
     }
   }
@@ -211,7 +261,9 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
           device={device}
           isActive
           codeScanner={codeScanner}
-          androidPreviewViewType="texture-view"
+          // Texture preview is what keeps the scanner usable on top of Android's
+          // view hierarchy; iOS has no such switch and ignores the prop.
+          androidPreviewViewType={Platform.OS === 'android' ? 'texture-view' : undefined}
           onInitialized={() => setCameraError(null)}
           onError={handleCameraError}
         />
