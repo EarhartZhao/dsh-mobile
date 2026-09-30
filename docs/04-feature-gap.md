@@ -61,6 +61,26 @@
 > `caFpEnforced: false`。剩余三项分别卡在：上游 fs seam 的 `listDir` 上限与 Remote 游标（分页）、
 > Hub 中继或局域网端点（大文件）、FCM/APNs 凭据（推送）与原生 TLS pinning（CA 指纹强制）。
 
+> 2026-09-30 追加（dsh 0.2.0-rc.2 上游核对）：区间 `21638c5631`（0.1.7-rc.2）→
+> `639ed01539`，293 个提交。结论是**零破坏，两个项目都不用改代码**：
+> `sync-protocol --check` 报 `frozen mobile wire verified (36 files)` +
+> `Remote surface verified (51 endpoints)`；移动端相关包无删除/重命名；durable 事件词汇表
+> （`packages/core/session/src/known-event-types.ts`）、宿主可转发事件名单（`remote-events.ts`）、
+> 会话格式（仍是 v4）与 `agent-tool-presentation` 全部未变；`api/gateway` 只新增
+> `hasLiveClient()`，移动侧不依赖。真机 + 桥探针复核（宿主 0.2.0-rc.2 / 插件 0.2.14）：
+> `host.describe`、`session.list`(49)、`workspace.list`、`session.history`(22 事件)、`file.list`、
+> `goal.get`、`session.models`、`feedback.list`、`command.list` 全通，App 会话渲染与统计条正常
+> （`session.projections` 回 `mobile-forbidden` 属预期——该方法不在插件白名单里，App 走
+> `session/projection` 帧）。
+> 区间唯一实质变化在 `packages/interaction`：新增 `questions` 会话投影
+> （`userQuestionProjectionDefinition`）与 `ask_user_question` 的 timed 模式
+> （`mode: 'legacy' | 'timed'`，默认 legacy；请求多一个可选 `wait: { callId, … }`；超时后
+> 工具返回 `{ pending: true, callId }`，答复改为进 inbox 的 `user-question-reply`）。
+> 当前没有 bundle 打开 timed，故 App/插件行为不变。三项可选跟进：① 接 `questions` 投影
+> （App 目前只靠 `question/requested` 帧，重载后拿不回待答问题）；② 若启用 timed，手机端需要
+> 「倒计时 + claim」UI（Web 才有）；③ 上游新注册的 `userQuestions` Remote 命名空间未进移动
+> manifest，是否暴露取决于前两项。
+
 > 2026-09-29 追加（对齐 Web 的三处交互细节 + 两处真机缺陷）：
 > ① **消息动作行**。Web 的答案下常驻一行 `复制 / 👍 / 👎 / 分支 / 时间`（`MessageIconActions` +
 > `MessageFeedbackActions`），App 此前只有长按菜单。现在 assistant 与 user 气泡下都渲染同一行：

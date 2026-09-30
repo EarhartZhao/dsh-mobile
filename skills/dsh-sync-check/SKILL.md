@@ -78,6 +78,7 @@ pnpm test
 | 0.1.5-rc.1（2026-09-10 核对） | 同上；`connection` / `typertGateway` 服务名与 `createSharedFetchHandler('/api')` 未变 | 插件 0.2.2 + App 0.0.3 直接兼容；PTC 事件改名已由 App 归一层兼容 |
 | 0.1.6-alpha.2（2026-09-22 核对） | 同上；删除 `session/control` 的 `queues` 与 `queue` 帧，改由会话 `inbox` 投影提供待处理输入 | 插件 0.2.8+ 把 `inbox` 翻译回 `session/queue`，App 与冻结 wire 不变；新增面：引用候选 `displayTitle`、插件清单 `managementAvailable`、转发的 `plugin-manager/*` 事件 |
 | 0.1.7-rc.2（2026-09-28 核对） | 同上；`wireStream.open` 增加 uplink/peer 参数、`readBytes` 窗口移入 `options` 且 `data` 变原生字节、`readRelated` 与 `subagents/list` 删除、`changes` 改为单目标、`session/control` 的 jobs 改到 `job` 命名空间 | 插件 0.2.9+ 在桥内吸收全部五处（含旧宿主回退）；App 侧仅 `file.watch/unwatch` 增加可选 `path`、目录自身变更也触发刷新 |
+| 0.2.0-rc.2（2026-09-30 核对） | 同上；`api/gateway` 只新增 `hasLiveClient()`（移动侧不依赖），冻结 wire（36 文件）与 51 个 Remote endpoint 全部命中，移动端相关包无删除/重命名 | **无需改动**：插件 0.2.14 + App 0.0.8 直接兼容。区间唯一实质变化在 `packages/interaction`——新增 `questions` 会话投影与 `ask_user_question` 可选 timed 模式（`mode` 默认仍是 `legacy`，请求多一个可选 `wait`，超时后返回 `{ pending, callId }` 并经 inbox 回灌答复；当前没有 bundle 打开它）。durable 事件词汇表与会话格式 v4 均未变 |
 
 ## 防止遗漏
 
