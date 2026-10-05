@@ -19,7 +19,24 @@ TLSDIR=/etc/nats/tls
 
 echo "==> 1/5 install TLS material"
 install -d -m 700 "$TLSDIR"
-install -m 600 "$HERE/server.crt" "$TLSDIR/server.crt"
+# `cert_file` is a PEM bundle, and Go — nats-server — reads the first
+# certificate as the identity and everything after it as the chain it sends.
+# Keeping the CA in there is what lets a client reach the trust anchor without
+# being handed ca.crt: the plugin's「从 Hub 获取 CA」button reads it straight out
+# of the handshake, so a second machine needs no file copied to it. `ca.crt` is
+# public material (the private half, ca.key, never comes here). The bare leaf
+# stays beside the bundle so re-running this script rebuilds it rather than
+# appending to it twice.
+if [ -f "$HERE/ca.crt" ]; then
+  install -m 600 "$HERE/server.crt" "$TLSDIR/server.leaf.crt"
+  cat "$HERE/server.crt" "$HERE/ca.crt" > "$TLSDIR/server.crt"
+  chmod 600 "$TLSDIR/server.crt"
+else
+  echo "    note: no ca.crt next to this script — installing the leaf alone."
+  echo "          Clients then cannot fetch the anchor, and every machine has to"
+  echo "          paste ca.crt by hand (dsh-mobile-plugin/docs/03「让新机器一键取到 CA」)."
+  install -m 600 "$HERE/server.crt" "$TLSDIR/server.crt"
+fi
 install -m 600 "$HERE/server.key" "$TLSDIR/server.key"
 
 echo "==> 2/5 websocket listener (wss :8443, native TLS)"
@@ -78,6 +95,15 @@ echo "==> 5/5 verify wss handshake"
 echo | openssl s_client -connect 127.0.0.1:8443 -verify_return_error 2>/dev/null | grep -q 'Verify return code: 0' \
   && echo "    TLS OK (self-signed chain: expected 18/19 without CAfile on other hosts)" \
   || echo "    note: run 'openssl s_client -connect 127.0.0.1:8443 -CAfile <ca.crt>' for full-chain verification"
+# What the Hub puts on the wire decides whether another machine can fetch the
+# anchor: one certificate is a leaf-only Hub, two means the CA rides along.
+CHAIN="$(echo | openssl s_client -connect 127.0.0.1:8443 -showcerts 2>/dev/null | grep -c 's:/CN=')"
+if [ "${CHAIN:-0}" -ge 2 ]; then
+  echo "    chain: ${CHAIN} certificates — other machines can fetch the CA (插件「从 Hub 获取 CA」)"
+else
+  echo "    note: the Hub sent ${CHAIN:-0} certificate(s); put ca.crt into the same file as"
+  echo "          server.crt (then restart nats) so clients can fetch it automatically."
+fi
 
 if [ -n "${CEND_PASS:-}" ]; then
   echo ""

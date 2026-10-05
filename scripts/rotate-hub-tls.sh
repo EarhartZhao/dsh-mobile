@@ -191,8 +191,6 @@ printf '%s\n' "$CA_FP" > "$CA_FP_FILE"
 if [ "$APPLY" -eq 1 ]; then
   echo "==> re-pinning the public CA in ${REPO_ROOT}"
   cp "$CA_CRT" "$REPO_ROOT/certs/ca.crt"
-  cp "$CA_CRT" "$REPO_ROOT/apps/mobile/android/app/src/main/res/raw/dsh_root_ca.crt"
-  cp "$CA_CRT" "$REPO_ROOT/apps/mobile/ios/DshMobile/dsh_root_ca.crt"
   # Public record of what was deployed; also refresh the signing request so the
   # tracked copy cannot be mistaken for the live one later.
   cp "$SERVER_CRT" "$REPO_ROOT/certs/server.crt"
@@ -200,7 +198,10 @@ if [ "$APPLY" -eq 1 ]; then
   cp "$OUT_DIR/san.ext" "$REPO_ROOT/certs/san.ext"
   # The serial counter is signing state, not material to publish.
   rm -f "$REPO_ROOT/certs/ca.srl"
-  echo "    updated certs/ca.crt, both dsh_root_ca.crt copies, certs/server.{crt,csr}, certs/san.ext"
+  # The App carries no CA of its own (the QR is the only trust bootstrap), so
+  # certs/ca.crt is a deployment record for humans and the Hub, not a bundle
+  # the app build reads.
+  echo "    updated certs/ca.crt, certs/server.{crt,csr}, certs/san.ext"
   echo "    removed certs/ca.srl (signing state; git rm it if it is tracked)"
 fi
 
@@ -218,25 +219,35 @@ Next:
   1. Install the new identity on the Hub (paired apps keep working only until
      this swap; they re-anchor at step 3):
 
-       scp ${SERVER_CRT} ${SERVER_KEY} ubuntu@${HUB_IP}:/tmp/
-       ssh ubuntu@${HUB_IP} 'sudo install -m 600 /tmp/server.crt /etc/nats/tls/server.crt \\
+       scp ${SERVER_CRT} ${CA_CRT} ${SERVER_KEY} ubuntu@${HUB_IP}:/tmp/
+       ssh ubuntu@${HUB_IP} 'sudo install -m 600 /tmp/server.crt /etc/nats/tls/server.leaf.crt \\
+         && sudo cat /tmp/server.crt /tmp/ca.crt > /tmp/bundle.crt \\
+         && sudo install -m 600 /tmp/bundle.crt /etc/nats/tls/server.crt \\
          && sudo install -m 600 /tmp/server.key /etc/nats/tls/server.key \\
-         && rm -f /tmp/server.key \\
+         && rm -f /tmp/server.key /tmp/ca.crt /tmp/bundle.crt \\
          && sudo systemctl restart nats && systemctl is-active --quiet nats && echo "nats restarted"'
+
+     The served file is leaf + CA, not the leaf alone: Go reads `cert_file` as a
+     bundle, and the CA in it is what lets another machine fill its CA field
+     with「从 Hub 获取 CA」instead of being handed ca.crt by hand. ca.crt is
+     public material — ca.key never goes to the Hub.
 
   2. Verify the Hub now presents the new chain:
 
        openssl s_client -connect ${HUB_IP}:8443 -CAfile ${CA_CRT} \\
          -verify_return_error </dev/null 2>/dev/null | grep -E '^(subject|Verify return code)'
+       openssl s_client -connect ${HUB_IP}:8443 -showcerts </dev/null 2>/dev/null | grep -c 's:/CN='
+       # 2 means the CA is on the wire; 1 means the bundle step above was skipped
 
   3. Re-pin the repository's public copy of the CA, then re-anchor every phone:
 
        scripts/rotate-hub-tls.sh --apply --out ${OUT_DIR}
-       - paste the new ca.crt into each host's plugin settings card (CA field),
-         then re-scan the QR on every phone. Re-scanning is the revocation.
-       - rebuild + reinstall the App when convenient: the bundled CA is only the
-         fallback for a QR without a certificate, and an old bundle keeps
-         trusting the retired root on devices that never scanned.
+       - each host's plugin: click「从 Hub 获取 CA」(it reads the new CA out of
+         the handshake), save, then re-scan the QR on every phone that talks to
+         that host. On a Hub still serving a leaf-only chain, paste ca.crt into
+         the CA field instead. Re-scanning is the revocation.
+       - nothing to rebuild: the App ships no CA and takes the anchor from the
+         QR it scanned, so a retired root is simply no longer installed.
 
   4. Rotate the Hub account password and revoke every device token — a client
      that talked to an impostor may have handed over its token:
