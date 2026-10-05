@@ -3,7 +3,7 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { BackHandler, Clipboard, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native'
+import { BackHandler, Clipboard, DeviceEventEmitter, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { APP_VERSION } from '@dsh-mobile/core'
@@ -74,6 +74,11 @@ function DiagnosticRow({ label, value }: { label: string, value: string }): Reac
 interface DiagnosticEvent {
   at: string
   state: ConnectionState
+}
+
+/** One decimal of MB: 82.2 MB reads, 86_230_000 bytes does not. */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function connectionStateKey(state: ConnectionState): TranslationKey {
@@ -158,6 +163,10 @@ function AppContent(): React.JSX.Element {
   const [healthLoading, setHealthLoading] = useState(false)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
+  // `null` until the native side reports the first byte; `total` is 0 when the
+  // server omitted a content length, which the label renders as bytes alone.
+  // `retrying` is set while the downloader is resuming after a stall.
+  const [updateProgress, setUpdateProgress] = useState<{ received: number, total: number, retrying: boolean } | null>(null)
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastBackPress = useRef(0)
@@ -271,6 +280,19 @@ function AppContent(): React.JSX.Element {
       ?.getMode()
       .then(setThemeMode)
       .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    // The native download is one long await; these ticks are the only thing
+    // that tells the owner it is moving rather than stuck.
+    const subscription = DeviceEventEmitter.addListener('DshUpdaterProgress', (payload: { received?: number, total?: number, retrying?: boolean }) => {
+      setUpdateProgress({
+        received: payload?.received ?? 0,
+        total: payload?.total ?? 0,
+        retrying: payload?.retrying === true,
+      })
+    })
+    return () => subscription.remove()
   }, [])
 
   const handleBackNavigation = useCallback(() => {
@@ -498,15 +520,44 @@ function AppContent(): React.JSX.Element {
       return
     }
     setUpdateDownloading(true)
+    setUpdateProgress(null)
     try {
       await updater.downloadAndInstall(appUpdate.downloadUrl)
     } catch (error) {
       const code = (error as { code?: unknown })?.code
-      showAlert(code === 'INSTALL_PERMISSION_REQUIRED' ? t('update.installPermission') : t('update.failed'))
+      // The downloader names what went wrong (a stall, an HTTP code, a size
+      // mismatch); the blanket message hid a stuck transfer behind "稍后重试"
+      // with no hint of whether waiting would help.
+      const message = (error as { message?: unknown })?.message
+      showAlert(code === 'INSTALL_PERMISSION_REQUIRED'
+        ? t('update.installPermission')
+        : typeof message === 'string' && message !== ''
+          ? t('update.failedDetail', { message })
+          : t('update.failed'))
     } finally {
       setUpdateDownloading(false)
     }
   }, [appUpdate, showAlert, t])
+
+  // Download progress for the update dialog. `total === 0` means the server
+  // sent no content length, so the bar stays empty and the label falls back to
+  // bytes alone rather than showing a percent of an unknown whole.
+  const updatePercent = updateProgress === null || updateProgress.total <= 0
+    ? 0
+    : Math.round(Math.max(0, Math.min(1, updateProgress.received / updateProgress.total)) * 100)
+  const updateLabel = updateProgress === null
+    ? t('update.preparing')
+    : updateProgress.retrying
+      // A resumed transfer keeps the bytes already on disk, so the number it
+      // shows is progress, not a restart.
+      ? t('update.retrying', { received: formatMegabytes(updateProgress.received) })
+      : updateProgress.total <= 0
+        ? t('update.progressUnknown', { received: formatMegabytes(updateProgress.received) })
+        : t('update.progress', {
+            percent: updatePercent,
+            received: formatMegabytes(updateProgress.received),
+            total: formatMegabytes(updateProgress.total),
+          })
 
   const copyDiagnostics = useCallback(() => {
     const compatibility = managerRef.current?.compatibility
@@ -759,6 +810,14 @@ function AppContent(): React.JSX.Element {
               * the system installer fail with a bare "app not installed".
               */}
             {__DEV__ && <Text style={styles.updateHint}>{t('update.devBuild')}</Text>}
+            {updateDownloading && (
+              <View style={styles.updateProgress}>
+                <View style={styles.updateProgressTrack}>
+                  <View style={[styles.updateProgressFill, { width: `${updatePercent}%` }]} />
+                </View>
+                <Text style={styles.updateProgressText}>{updateLabel}</Text>
+              </View>
+            )}
             <View style={styles.updateActions}>
               <TouchableOpacity style={styles.updateLater} disabled={updateDownloading} onPress={() => setAppUpdate(null)}>
                 <Text style={styles.updateLaterText}>{t('update.later')}</Text>
@@ -767,6 +826,14 @@ function AppContent(): React.JSX.Element {
                 <Text style={styles.updateNowText}>{updateDownloading ? t('update.downloading') : t('update.install')}</Text>
               </TouchableOpacity>
             </View>
+            {/*
+              * The in-app download goes straight to GitHub; on a network that
+              * throttles it, the phone's browser (which resumes and retries on
+              * its own) is the way through. Keep that path visible.
+              */}
+            <TouchableOpacity style={styles.updateBrowser} onPress={() => { if (appUpdate !== null) void Linking.openURL(appUpdate.downloadUrl) }}>
+              <Text style={styles.updateBrowserText}>{t('update.browser')}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -869,9 +936,15 @@ const styles = StyleSheet.create({
   updateNotesText: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
   /** Dev-build signing note: same body copy as the release notes, quieter. */
   updateHint: { color: colors.warning, fontSize: 12, lineHeight: 17 },
+  updateProgress: { gap: 6 },
+  updateProgressTrack: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
+  updateProgressFill: { height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  updateProgressText: { color: colors.textDim, fontSize: 12, fontVariant: ['tabular-nums'] },
   updateActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
   updateLater: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   updateLaterText: { color: colors.textDim, fontSize: 14 },
   updateNow: { backgroundColor: colors.accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   updateNowText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  updateBrowser: { alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 8 },
+  updateBrowserText: { color: colors.textDim, fontSize: 13, textDecorationLine: 'underline' },
 })
