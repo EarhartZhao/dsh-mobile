@@ -77,6 +77,15 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-05 第十四轮）：**配对二维码在真机上扫不出来，修掉取景分辨率与缩放。**
+> - 根因：配对二维码约 105 模块宽（它要装 Hub 地址、leaf 账号密码和 Hub 的 CA 证书）。CameraX 的
+>   `ImageAnalysis` 默认出 VGA（640×480），对着笔记本屏幕时每模块只剩 ~2.4 像素，ML Kit 的 QR 检测
+>   在这个密度上不再解码；取景预览本身清楚，所以现象是「看得到、扫不到」。
+> - 修法有两处，缺一不可：`patches/react-native-vision-camera@4.7.3.patch` 让 code scanner 的
+>   `ImageAnalysis` 走 `ResolutionSelector` 请求 1080p（16:9 fallback，取最接近的较低档，避免旧设备
+>   直接拿不到支持的尺寸）；`PairingScreen` 的取景起始 `zoom` 设为 2 并打开 `enableZoomGesture`，
+>   用户还能再双指放大。Android 真机（vivo V2405A / Android 16）实测扫码成功。
+
 > 进度（2026-09-30 第十三轮）：**去掉 App 内置 CA，只认二维码；Android 真机验证。**
 > - App 不再随包携带任何 CA：删掉 `res/raw/dsh_root_ca.crt`、iOS `DshMobile/dsh_root_ca.crt` 与
 >   `project.pbxproj` 的三处条目；`HubTlsTrust.anchorsFor` 与 `DshPinnedCertificatesForDomain`
@@ -252,7 +261,7 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 ## Phase 3：M3 + M4（后续排期）
 
 - M3 任务面板：`session/jobs` 快照帧渲染、前台提醒。
-- M4：iOS 适配 —— 已落地并在本机模拟器跑通（2026-09-30，见第十一轮进度）。模拟器不需要 Apple 开发者账号；只有真机分发/上架才需要。鸿蒙端已明确不做（2026-08-26）。
+- M4：iOS 适配 —— 已落地并在本机模拟器跑通（2026-09-30，见第十一轮进度）。模拟器不需要 Apple 开发者账号；只有真机分发/上架才需要。发布侧只交付未签名 IPA（`release.yml` 的 `ios-unsigned-ipa` job，见第十五轮进度），安装到真机仍需自备证书自签。鸿蒙端已明确不做（2026-08-26）。
 
 ## 风险与预案（承接 00-overview 风险表）
 

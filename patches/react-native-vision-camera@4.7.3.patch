@@ -1,0 +1,46 @@
+diff --git a/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt b/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt
+index 1e9c0def6444656112c34856f70eddda982a6b55..e5222ea689ab039d913a14d4941cf35a5740e9f8 100644
+--- a/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt
++++ b/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt
+@@ -2,6 +2,7 @@ package com.mrousavy.camera.core
+ 
+ import android.annotation.SuppressLint
+ import android.util.Log
++import android.util.Size
+ import androidx.annotation.OptIn
+ import androidx.camera.core.CameraSelector
+ import androidx.camera.core.CameraState
+@@ -12,7 +13,9 @@ import androidx.camera.core.ImageCapture
+ import androidx.camera.core.MirrorMode
+ import androidx.camera.core.Preview
+ import androidx.camera.core.TorchState
++import androidx.camera.core.resolutionselector.AspectRatioStrategy
+ import androidx.camera.core.resolutionselector.ResolutionSelector
++import androidx.camera.core.resolutionselector.ResolutionStrategy
+ import androidx.camera.extensions.ExtensionMode
+ import androidx.camera.lifecycle.ProcessCameraProvider
+ import androidx.camera.video.Recorder
+@@ -220,7 +223,22 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration)
+   val codeScannerConfig = configuration.codeScanner as? CameraConfiguration.Output.Enabled<CameraConfiguration.CodeScanner>
+   if (codeScannerConfig != null) {
+     Log.i(CameraSession.TAG, "Creating CodeScanner output...")
+-    val analyzer = ImageAnalysis.Builder().build()
++    // dsh: CameraX sizes ImageAnalysis at VGA (640x480) unless told otherwise,
++    // and a dsh pairing QR is ~105 modules per side because it carries the Hub
++    // address, the leaf credentials and the Hub's CA certificate. At VGA that
++    // bottoms out around 2.4 pixels per module, which ML Kit cannot resolve, so
++    // the code scanner asks for 1080p and lets CameraX fall back to the closest
++    // supported size below it. See docs/03-build-plan.md.
++    val analyzer = ImageAnalysis.Builder().also { analysis ->
++      analysis.setResolutionSelector(
++        ResolutionSelector.Builder()
++          .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
++          .setResolutionStrategy(
++            ResolutionStrategy(Size(1920, 1080), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
++          )
++          .build()
++      )
++    }.build()
+     val pipeline = CodeScannerPipeline(codeScannerConfig.config, callback)
+     analyzer.setAnalyzer(CameraQueues.analyzerExecutor, pipeline)
+     codeScannerOutput = analyzer

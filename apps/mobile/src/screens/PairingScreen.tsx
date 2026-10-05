@@ -21,6 +21,18 @@ interface Props {
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
 
 /**
+ * Zoom the scanner starts at.
+ *
+ * A dsh pairing QR is 105 modules wide — it carries the Hub's CA certificate —
+ * and a phone held at a comfortable distance from a laptop screen lands around
+ * four pixels per module, which is where ML Kit's QR detector gives up. Two
+ * factors is enough to double that without narrowing the view so far that the
+ * code falls out of it; the preview shows the zoomed image, so the user frames
+ * what they see either way, and the pinch gesture still adjusts from here.
+ */
+const SCAN_ZOOM = 2
+
+/**
  * One readable line for anything a `catch` can hand us.
  *
  * `nats.ws` throws `NatsError`s whose meaning lives in `code`, and whose
@@ -261,6 +273,12 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
           device={device}
           isActive
           codeScanner={codeScanner}
+          // A dsh pairing QR is dense (it carries the Hub's CA certificate), so
+          // the scan is often a matter of getting a few more pixels per module.
+          // Pinch-to-zoom is how the user buys them when the QR sits on a screen
+          // they cannot walk closer to.
+          zoom={SCAN_ZOOM}
+          enableZoomGesture
           // Texture preview is what keeps the scanner usable on top of Android's
           // view hierarchy; iOS has no such switch and ignores the prop.
           androidPreviewViewType={Platform.OS === 'android' ? 'texture-view' : undefined}
