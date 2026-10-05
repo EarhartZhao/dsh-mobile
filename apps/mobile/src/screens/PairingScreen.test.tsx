@@ -56,7 +56,7 @@ describe('PairingScreen camera', () => {
   it('shows an open-scanner button before mounting the camera', () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     expect(tree!.root.findAll(node => (node.type as unknown) === 'Camera')).toHaveLength(0)
@@ -66,7 +66,7 @@ describe('PairingScreen camera', () => {
   it('keeps the scan launcher down to the button alone', () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     // The launcher used to repeat the scan instruction above the button; the
@@ -78,7 +78,7 @@ describe('PairingScreen camera', () => {
   it('opens the QR scanner after tapping the open-scanner button', async () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await openScanner(tree!)
@@ -96,7 +96,7 @@ describe('PairingScreen camera', () => {
     try {
       let tree: renderer.ReactTestRenderer
       act(() => {
-        tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+        tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
       })
 
       await openScanner(tree!)
@@ -112,7 +112,7 @@ describe('PairingScreen camera', () => {
     const onPaired = jest.fn()
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={onPaired} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={onPaired} />)
     })
     await openScanner(tree!)
     const scanner = tree!.root.findAll(node => (node.type as unknown) === 'Camera')[0].props.codeScanner
@@ -131,7 +131,7 @@ describe('PairingScreen camera', () => {
   it('closes the scanner and unmounts the camera when returning to pairing', async () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
     await openScanner(tree!)
     expect(tree!.root.findAll(node => (node.type as unknown) === 'Camera')).toHaveLength(1)
@@ -149,7 +149,7 @@ describe('PairingScreen camera', () => {
   it('handles the Android system back button while scanning', async () => {
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
     await openScanner(tree!)
     expect(backPressHandler).toBeDefined()
@@ -165,7 +165,7 @@ describe('PairingScreen camera', () => {
   it('delegates system back to the root-page handler outside the scanner', () => {
     const onSystemBack = jest.fn(() => true)
     act(() => {
-      renderer.create(<PairingScreen onPaired={jest.fn()} onSystemBack={onSystemBack} />)
+      renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} onSystemBack={onSystemBack} />)
     })
 
     expect(backPressHandler!(undefined as unknown as BackPressEvent)).toBe(true)
@@ -176,7 +176,7 @@ describe('PairingScreen camera', () => {
     mockHasPermission = false
     let tree: renderer.ReactTestRenderer
     act(() => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     expect(tree!.root.findAll(node => (node.type as unknown) === 'Camera')).toHaveLength(0)
@@ -191,7 +191,7 @@ describe('PairingScreen camera', () => {
   it('ignores empty QR values', async () => {
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
     await openScanner(tree!)
     const scanner = tree!.root.findAll(node => (node.type as unknown) === 'Camera')[0].props.codeScanner
@@ -210,7 +210,7 @@ describe('PairingScreen camera', () => {
     const error = jest.spyOn(console, 'error').mockImplementation(() => undefined)
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
     await openScanner(tree!)
     const before = tree!.root.findAll(node => (node.type as unknown) === 'Camera')[0]
@@ -263,7 +263,7 @@ describe('PairingScreen hub credential errors', () => {
     const connect = jest.requireMock('nats.ws').connect as jest.Mock
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"","instance":"home","code":"ABCDEFGH"}')
@@ -277,7 +277,7 @@ describe('PairingScreen hub credential errors', () => {
     connect.mockRejectedValueOnce(new Error("'Authorization Violation'"))
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"123456","instance":"home","code":"ABCDEFGH"}')
@@ -293,7 +293,7 @@ describe('PairingScreen hub credential errors', () => {
     connect.mockRejectedValueOnce(Object.assign(new Error('503'), { code: '503' }))
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
@@ -312,13 +312,42 @@ describe('PairingScreen hub credential errors', () => {
     connect.mockRejectedValueOnce(transport)
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
 
     expect(tree!.root.findAllByProps({ children: 'pairing.natsFailed' }).length).toBeGreaterThan(0)
     expect(tree!.root.findAll(node => `${String(node.props.children)}`.includes('trim')).length).toBe(0)
+  })
+
+  it('redeems the code with this phone own name, so the console roster is readable', async () => {
+    const connect = jest.requireMock('nats.ws').connect as jest.Mock
+    const redeem = jest.requireMock('@dsh-mobile/protocol').redeemPairingCode as jest.Mock
+    const onPaired = jest.fn()
+    redeem.mockResolvedValueOnce({ token: 'tok', deviceId: 'dev-1', expiresAt: '2027-01-01T00:00:00.000Z' })
+    connect.mockResolvedValueOnce({ close: jest.fn(async () => undefined) })
+    let tree: renderer.ReactTestRenderer
+    await act(async () => {
+      tree = renderer.create(<PairingScreen deviceName="Pixel 8 · Android 16" onPaired={onPaired} />)
+    })
+
+    await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","code":"ABCDEFGH"}')
+
+    // Index-based: the header factory comes from the mocked `nats.ws`, so
+    // matching the whole call would assert on a stub this test does not own.
+    expect(redeem).toHaveBeenCalledTimes(1)
+    expect(redeem.mock.calls[0][2]).toBe('home')
+    expect(redeem.mock.calls[0][3]).toBe('ABCDEFGH')
+    expect(redeem.mock.calls[0][4]).toBe('Pixel 8 · Android 16')
+    // The screen hands back the QR payload plus the redeemed token; saving and
+    // switch handling belong to the root, which now keeps a list of them.
+    expect(onPaired).toHaveBeenCalledWith(expect.objectContaining({
+      hub: 'wss://hub.test:8443',
+      instance: 'home',
+      token: 'tok',
+      deviceId: 'dev-1',
+    }))
   })
 
   it('installs the QR certificate as the anchor before dialling the hub', async () => {
@@ -329,7 +358,7 @@ describe('PairingScreen hub credential errors', () => {
     connect.mockImplementationOnce(async () => { order.push('dial'); throw new Error('stop') })
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"MIIB","code":"ABCDEFGH"}')
@@ -346,7 +375,7 @@ describe('PairingScreen hub credential errors', () => {
     connect.mockRejectedValueOnce(new Error('stop'))
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"","code":"ABCDEFGH"}')
@@ -361,7 +390,7 @@ describe('PairingScreen hub credential errors', () => {
     install.mockRejectedValueOnce(new Error('hub-ca-invalid'))
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"not-a-certificate","code":"ABCDEFGH"}')
@@ -376,7 +405,7 @@ describe('PairingScreen hub credential errors', () => {
     install.mockRejectedValueOnce(new Error('hub-ca-mismatch'))
     let tree: renderer.ReactTestRenderer
     await act(async () => {
-      tree = renderer.create(<PairingScreen onPaired={jest.fn()} />)
+      tree = renderer.create(<PairingScreen deviceName="test-phone" onPaired={jest.fn()} />)
     })
 
     await pasteAndPair(tree!, '{"hub":"wss://hub.test:8443","user":"c-end-dsh","pass":"p","instance":"home","caFp":"AA:BB","ca":"MIIB","code":"ABCDEFGH"}')

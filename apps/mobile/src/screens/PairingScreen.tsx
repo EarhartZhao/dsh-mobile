@@ -9,12 +9,17 @@ import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, 
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
-import { savePairing, type PairingRecord } from '../pairing-store'
+import type { PairingResult } from '../pairing-store'
 import { installHubAnchor } from '../hub-tls'
 import { useI18n, type TranslationKey } from '../i18n'
 
 interface Props {
-  onPaired: (record: PairingRecord) => void
+  onPaired: (result: PairingResult) => void
+  /**
+   * What this phone calls itself, sent with the redeem so the plugin's device
+   * roster names the phone instead of its platform.
+   */
+  deviceName: string
   onSystemBack?: () => boolean
 }
 
@@ -106,7 +111,7 @@ function parseQr(text: string): PairingQrPayload {
   } as PairingQrPayload
 }
 
-export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Element {
+export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [text, setText] = useState('')
   // The dev rig reaches the host machine: an Android emulator through its
@@ -145,11 +150,11 @@ export function PairingScreen({ onPaired, onSystemBack }: Props): React.JSX.Elem
       await installHubAnchor(payload.hub, payload.ca, payload.caFp)
       nc = await connect({ servers: payload.hub, user: payload.user, pass: payload.pass })
       // The name is what the desktop console shows in its device roster, so it
-      // has to say which phone actually paired.
-      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, Platform.OS === 'ios' ? 'ios' : 'android')
-      const record: PairingRecord = { ...payload, ...device }
-      await savePairing(record)
-      onPaired(record)
+      // has to say which phone actually paired — not just which platform it
+      // runs on. It is also restated on every later `hello`, so renaming the
+      // phone does not need another pairing round.
+      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, deviceName)
+      onPaired({ ...payload, ...device })
     } catch (cause) {
       // The code, not just the stack: `nats.ws` puts the reason there and
       // leaves the stack looking identical for every transport failure.

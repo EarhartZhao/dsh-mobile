@@ -13,19 +13,42 @@ import { DEFAULT_PREFERENCES, loadPreferences, savePreferences, type Preferences
 import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
 import { toolDisplayName } from './ui-labels'
-import { clearPairing, loadPairing, type PairingRecord } from './pairing-store'
+import {
+  EMPTY_PAIRING_STATE,
+  activeProfile,
+  hostStillUsed,
+  loadPairingState,
+  profileTitle,
+  removeProfile,
+  savePairingState,
+  setActiveProfile,
+  setProfileLabel,
+  setProfileMachineName,
+  upsertProfile,
+  type PairingResult,
+  type PairingState,
+  type Profile,
+} from './pairing-store'
+import { defaultDeviceName, loadDeviceName, saveDeviceName } from './device-name'
 import { activateHub, clearHubAnchor } from './hub-tls'
 import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
 import { inventoryChangedByEvent } from './plugin-inventory'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
+import { ConnectionSwitcherScreen } from './screens/ConnectionSwitcherScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
 import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
 import { handleSystemBack } from './system-back'
 
-type Route = { name: 'list' } | { name: 'chat'; sessionId: string } | { name: 'settings' } | { name: 'plugins' }
+type Route =
+  | { name: 'list' }
+  | { name: 'chat'; sessionId: string }
+  | { name: 'settings' }
+  | { name: 'plugins' }
+  | { name: 'connections' }
+  | { name: 'pairing' }
 
 interface DiagnosticError {
   at: string
@@ -98,7 +121,14 @@ function compatibilityMessage(result: CompatibilityResult | null, t: (key: Trans
 
 function AppContent(): React.JSX.Element {
   const { language, locale, setLanguage, t } = useI18n()
-  const [pairing, setPairing] = useState<PairingRecord | null>(null)
+  /**
+   * Every paired Hub, plus which one is in use. The active profile is what the
+   * rest of this component means by "the connection"; the manager effect below
+   * is keyed on it, so switching connections tears the old manager down and
+   * builds one for the new profile.
+   */
+  const [connections, setConnections] = useState<PairingState>(EMPTY_PAIRING_STATE)
+  const [deviceName, setDeviceName] = useState(defaultDeviceName())
   const [booted, setBooted] = useState(false)
   const [route, setRoute] = useState<Route>({ name: 'list' })
   /**
@@ -131,6 +161,27 @@ function AppContent(): React.JSX.Element {
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastBackPress = useRef(0)
+  /**
+   * The saved connections, readable synchronously. Mutations happen from
+   * several callbacks that must not race each other through React state, and
+   * every one of them has to land on disk — so the ref is the source of truth
+   * and the state is the render.
+   */
+  const connectionsRef = useRef<PairingState>(EMPTY_PAIRING_STATE)
+  /** The connection in use; null means nothing is paired. */
+  const pairing: Profile | null = activeProfile(connections)
+
+  /** Applies one change to the saved connections and persists the result. */
+  const mutateConnections = useCallback((update: (state: PairingState) => PairingState): PairingState => {
+    const next = update(connectionsRef.current)
+    if (next === connectionsRef.current) return next
+    connectionsRef.current = next
+    setConnections(next)
+    void savePairingState(next).catch((cause: unknown) => {
+      console.warn('[pairing-store] save failed:', cause)
+    })
+    return next
+  }, [])
 
   const showAlert = useCallback((text: string) => {
     setAlert(text)
@@ -176,21 +227,25 @@ function AppContent(): React.JSX.Element {
     : new Date(value).toLocaleString(locale, { hour12: false }), [locale, t])
 
   useEffect(() => {
-    void Promise.all([loadPairing(), loadPreferences()]).then(async ([record, stored]) => {
-      // The Hub's TLS trust lives in native storage, not in the pairing file,
-      // so a stored pairing has to be pushed back before the first connect
-      // attempt — a restart would otherwise dial a Hub the app no longer
-      // anchors. Failure is not fatal: without the anchor the handshake fails
-      // loudly, which is better than connecting to something unverified.
-      if (record !== null) {
-        await activateHub(record.hub, record.ca).catch((cause: unknown) => {
-          console.warn('[hub-tls] anchor restore failed:', cause)
-        })
-      }
-      setPairing(record)
-      setPreferences(stored)
-      setBooted(true)
-    })
+    void Promise.all([loadPairingState(), loadPreferences(), loadDeviceName()])
+      .then(async ([saved, stored, storedDeviceName]) => {
+        connectionsRef.current = saved
+        setConnections(saved)
+        if (storedDeviceName !== null) setDeviceName(storedDeviceName)
+        setPreferences(stored)
+        // The Hub's TLS trust lives in native storage, not in the pairing file,
+        // so the active profile has to be pushed back before the first connect
+        // attempt — a restart would otherwise dial a Hub the app no longer
+        // anchors. Failure is not fatal: without the anchor the handshake fails
+        // loudly, which is better than connecting to something unverified.
+        const restored = activeProfile(saved)
+        if (restored !== null) {
+          await activateHub(restored.hub, restored.ca).catch((cause: unknown) => {
+            console.warn('[hub-tls] anchor restore failed:', cause)
+          })
+        }
+        setBooted(true)
+      })
   }, [])
 
   useEffect(() => {
@@ -258,7 +313,9 @@ function AppContent(): React.JSX.Element {
 
   useEffect(() => {
     if (pairing === null) return
-    const manager = createManager(pairing)
+    // The device name is a dependency on purpose: it travels on `hello`, so
+    // renaming the phone reconnects once and the plugin's roster follows.
+    const manager = createManager(pairing, deviceName)
     managerRef.current = manager
     const off = manager.on('state', ({ state }) => {
       setConnState(state)
@@ -268,6 +325,13 @@ function AppContent(): React.JSX.Element {
     setEvents([])
     const offManagerError = manager.on('error', ({ message, kind }) => recordError(message, kind))
     const offHealth = manager.on('health', report => setHealthReport(report))
+    // The machine states its own name in `mobile.info`; keeping it with the
+    // profile is what makes the switcher readable while that Hub is offline.
+    const offInfo = manager.on('info', ({ info }) => {
+      const machineName = info?.instanceName
+      if (machineName === undefined) return
+      mutateConnections(state => setProfileMachineName(state, pairing.id, machineName))
+    })
     const offStoreError = manager.store.on('error', ({ message }) => recordError(message))
     // Foreground alerts: task settlement + answerable frames (M3 scope: no
     // system push, foreground banner only).
@@ -292,11 +356,12 @@ function AppContent(): React.JSX.Element {
       offAttention()
       offManagerError()
       offHealth()
+      offInfo()
       offStoreError()
       void manager.stop()
       managerRef.current = null
     }
-  }, [pairing, recordError, showAlert, t])
+  }, [pairing, deviceName, mutateConnections, recordError, showAlert, t])
 
   useEffect(() => {
     if (connState !== 'online') {
@@ -323,16 +388,59 @@ function AppContent(): React.JSX.Element {
     return () => { alive = false }
   }, [connState, pairing])
 
-  const onPaired = useCallback((record: PairingRecord) => setPairing(record), [])
-  const onUnpair = useCallback(() => {
-    const hub = pairing?.hub
-    void clearPairing()
-    // Removing a pairing removes what it taught the app to trust, so a later
-    // pairing of the same Hub has to arrive with its own certificate again.
-    if (hub !== undefined) void clearHubAnchor(hub).catch(() => undefined)
+  /**
+   * A finished pairing becomes a saved connection and the one in use — either
+   * the first one, or another machine added later from the switcher.
+   */
+  const onPaired = useCallback((result: PairingResult) => {
+    mutateConnections(state => upsertProfile(state, result))
     setRoute({ name: 'list' })
-    setPairing(null)
-  }, [pairing])
+  }, [mutateConnections])
+
+  /**
+   * Drops one saved connection. What it taught the app to trust only goes with
+   * it when no other connection points at the same Hub: anchors live per host,
+   * so forgetting `home`'s certificate would also break a sibling `home-mac`.
+   */
+  const removeConnection = useCallback((id: string) => {
+    const state = connectionsRef.current
+    const target = state.profiles.find(profile => profile.id === id)
+    const stillNeeded = hostStillUsed(state, id)
+    mutateConnections(current => removeProfile(current, id))
+    if (target !== undefined && !stillNeeded) {
+      void clearHubAnchor(target.hub).catch(() => undefined)
+    }
+    setRoute({ name: 'list' })
+  }, [mutateConnections])
+
+  /** The settings screen's 解除配对 acts on whatever is currently in use. */
+  const onUnpair = useCallback(() => {
+    if (pairing !== null) removeConnection(pairing.id)
+  }, [pairing, removeConnection])
+
+  const switchConnection = useCallback((id: string) => {
+    mutateConnections(state => setActiveProfile(state, id))
+    // Whatever was open belongs to the Hub being left behind.
+    setLastChatSessionId(null)
+    setRoute({ name: 'list' })
+  }, [mutateConnections])
+
+  const renameConnection = useCallback((id: string, label: string) => {
+    mutateConnections(state => setProfileLabel(state, id, label))
+  }, [mutateConnections])
+
+  /**
+   * Renaming the phone only takes effect on the next connection: the name is
+   * announced in `hello`, and `deviceName` is a manager dependency, so saving a
+   * new one reconnects and the plugin's roster follows immediately.
+   */
+  const updateDeviceName = useCallback((name: string) => {
+    const trimmed = name.trim()
+    setDeviceName(trimmed === '' ? defaultDeviceName() : trimmed)
+    void saveDeviceName(trimmed).catch((cause: unknown) => {
+      console.warn('[device-name] save failed:', cause)
+    })
+  }, [])
 
   const retryConnection = useCallback(async (): Promise<void> => {
     const manager = managerRef.current
@@ -479,7 +587,7 @@ function AppContent(): React.JSX.Element {
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" />
       {pairing === null || managerRef.current === null ? (
-        <PairingScreen onPaired={onPaired} onSystemBack={handleBackNavigation} />
+        <PairingScreen onPaired={onPaired} deviceName={deviceName} onSystemBack={handleBackNavigation} />
       ) : (
         <>
           {connState !== 'online' && (
@@ -503,6 +611,24 @@ function AppContent(): React.JSX.Element {
               onOpenSettings={() => setRoute({ name: 'settings' })}
               currentSessionId={lastChatSessionId}
             />
+          ) : route.name === 'connections' ? (
+            <ConnectionSwitcherScreen
+              profiles={connections.profiles}
+              activeId={connections.activeId}
+              onSwitch={switchConnection}
+              onRemove={removeConnection}
+              onRename={renameConnection}
+              onAdd={() => setRoute({ name: 'pairing' })}
+              onBack={() => setRoute({ name: 'settings' })}
+            />
+          ) : route.name === 'pairing' ? (
+            // Adding a second machine: the first pairing is untouched until the
+            // new one succeeds, so a cancelled scan leaves the app where it was.
+            <PairingScreen
+              onPaired={onPaired}
+              deviceName={deviceName}
+              onSystemBack={() => { setRoute({ name: 'connections' }); return true }}
+            />
           ) : route.name === 'settings' ? (
             <SettingsScreen
               manager={managerRef.current}
@@ -516,6 +642,11 @@ function AppContent(): React.JSX.Element {
               setLanguage={setLanguage}
               enterToSend={preferences.enterToSend}
               setEnterToSend={value => updatePreferences({ enterToSend: value })}
+              connectionCount={connections.profiles.length}
+              connectionTitle={pairing === null ? '' : profileTitle(pairing)}
+              deviceName={deviceName}
+              setDeviceName={updateDeviceName}
+              onOpenConnections={() => setRoute({ name: 'connections' })}
               onOpenDiagnostics={() => setDiagnosticsOpen(true)}
               onOpenPlugins={() => setRoute({ name: 'plugins' })}
               onUnpair={onUnpair}

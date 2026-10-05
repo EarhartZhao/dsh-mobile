@@ -77,6 +77,29 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-05 第十六轮）：**一个 App 连多台电脑 / 多个 Hub，可随时切换。**
+> - 数据层：`apps/mobile/src/pairing-store.ts` 升到 v2（`{version, profiles[], activeId}`，
+>   v1 单条记录自动迁移并删掉旧键），去重键是 `hub|instance|user`；重新配对同一实例只换 token，
+>   不新增行。删除连接时只有"这个 Hub 再没别的连接"才清原生锚点（同 Hub 双实例共用一份锚点）。
+> - 连接层：`connection.ts` 的 `connect` 回调改成"每次拨号都 `activateHub` 当前 host"，
+>   修掉 Android 只认 `activeHost` 锚点导致切换后握手失败的问题；切换 = 换 active profile，
+>   root 的 manager effect 整体重建。
+> - 界面：新增 `ConnectionSwitcherScreen`（列表 + 当前标记 + 行内重命名 + `ConfirmModal` 二次确认
+>   删除 + 「扫码添加」），设置页加「连接」入口与「本机设备名称」输入框，中英 i18n 各补 15 个键。
+> - 设备名：`apps/mobile/src/device-name.ts` 默认「系统 + 系统版本 + 型号」，随 `hello` 上报；
+>   插件侧新增 `instanceName`（设置卡「本机名称」、`mobile.info` 上报，空值回退 `instanceId`），
+>   控制台与 App 列表都用它显示"这是哪台机器"。
+> - 版本：App 提到 0.1.0（`package.json` / `compatibility.ts` / Android `versionName` /
+>   iOS `MARKETING_VERSION`）；插件 0.2.23 只在工作区，未提交未打 tag。
+> - 验证：App 165 个测试、插件 170 个测试、workspace typecheck/test、`sync-protocol:check`、
+>   `verify-plugin-contract`（插件 0.2.23 / mobileApi 2 对上 App `>=0.2.2 <0.3.0`）全绿；
+>   真机双实例/双 Hub 联调待设备接入。详见 `docs/07-multi-connection-plan.md`。
+> - 本机联调（web profile 装本仓库构建的插件）：保存「本机名称」立即生效；`pair` 带设备名 →
+>   `mobile.info` 回 `instanceName` → `hello` 带新设备名后控制台设备行改名，三段都实测通过。
+>   顺手修掉一个真 bug：插件 `sameConfig` 漏比较 `instanceName`，导致保存本机名称其实
+>   不生效（要再存一次或重启 dsh）；`tests/config.spec.ts` 加了按 schema 逐字段的漂移守卫。
+>   插件测试 172 条、App 测试 165 条全绿，`assembleDebug` 产出 versionName 0.1.0 的 APK。
+
 > 进度（2026-10-05 第十五轮）：**iOS 版本号与发布流程纳入 CI。**
 > - 版本流程：`scripts/release-version.mjs` 的 `bump`/`check` 现在同时负责
 >   `apps/mobile/ios/DshMobile.xcodeproj/project.pbxproj` 的两处 `MARKETING_VERSION` /

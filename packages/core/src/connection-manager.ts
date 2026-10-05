@@ -19,6 +19,7 @@ import {
   type RpcId,
   type MobileInventorySnapshot,
   type MobileHealthSnapshot,
+  type MobilePluginInfo,
 } from '@dsh-mobile/protocol'
 import { Emitter } from './emitter.ts'
 import { SessionStore } from './session-store.ts'
@@ -81,6 +82,8 @@ type ManagerEvents = {
   state: { state: ConnectionState }
   hostInfo: { info: unknown }
   compatibility: { result: import('./compatibility.ts').CompatibilityResult }
+  /** The plugin's self-description, refreshed on every successful establish. */
+  info: { info: import('@dsh-mobile/protocol').MobilePluginInfo | null }
   error: { message: string, kind: ConnectionFailureKind }
   health: { snapshot: MobileHealthSnapshot | null, latencyMs: number | null, error: string | null }
 }
@@ -91,6 +94,12 @@ export interface ConnectionManagerOptions {
   headers: NatsHeadersFactory
   instanceId: string
   getToken: () => string | undefined
+  /**
+   * What this phone calls itself, reported on every `hello` so the plugin's
+   * device roster names the phone instead of its platform. Optional because a
+   * caller without an opinion should not have to invent a name.
+   */
+  deviceName?: string
   store?: SessionStore
   /**
    * Bridge liveness probe period in milliseconds; 0 disables it. The phone
@@ -106,6 +115,8 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
   client: NatsApiClient | null = null
   hostInfo: unknown = null
   compatibility: CompatibilityResult | null = null
+  /** Last self-description served by the plugin; null before the first one. */
+  pluginInfo: MobilePluginInfo | null = null
   health: MobileHealthSnapshot | null = null
   healthLatencyMs: number | null = null
   healthError: string | null = null
@@ -258,6 +269,8 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     if (client === null || token === undefined) throw new Error('connection not ready')
 
     const mobileInfo = await fetchMobileInfo(this.conn!, this.options.headers, this.options.instanceId, token)
+    this.pluginInfo = mobileInfo
+    this.emit('info', { info: mobileInfo })
     this.compatibility = checkMobileCompatibility(mobileInfo)
     this.emit('compatibility', { result: this.compatibility })
     if (this.compatibility.status !== 'compatible') {
@@ -317,7 +330,11 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     }
 
     await Promise.all([muxOpen.waited, hostOpen.waited])
-    await sendHello(this.conn!, this.options.headers, this.options.instanceId, token)
+    await sendHello(this.conn!, this.options.headers, this.options.instanceId, token, {
+      // Restated on every establish, not only at pairing time: this is the
+      // phone's chance to correct the name the plugin's roster shows.
+      ...(this.options.deviceName === undefined ? {} : { deviceName: this.options.deviceName }),
+    })
     this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
     // A list-changing frame can land while the baseline above is in flight (it

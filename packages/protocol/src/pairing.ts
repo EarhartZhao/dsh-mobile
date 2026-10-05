@@ -89,15 +89,27 @@ export async function redeemPairingCode(
 /**
  * Reconnect hook: after the app resubscribes to the evt subjects, ask the
  * plugin to re-publish the current pending approval/question set.
+ *
+ * It also carries the device name. The plugin's roster lists one row per
+ * paired device, and a phone that renames itself should not have to pair again
+ * to be called something else — older plugins ignore the extra payload field.
  */
 export async function sendHello(
   conn: NatsConnLike,
   headersFactory: NatsHeadersFactory,
   instanceId: string,
   token: string,
-  timeoutMs = 10_000,
+  options: { timeoutMs?: number, deviceName?: string } = {},
 ): Promise<void> {
-  await callPlugin(conn, headersFactory, instanceId, 'hello', {}, token, timeoutMs)
+  await callPlugin(
+    conn,
+    headersFactory,
+    instanceId,
+    'hello',
+    { deviceName: options.deviceName },
+    token,
+    options.timeoutMs ?? 10_000,
+  )
 }
 
 /** Self-description returned by dsh-mobile-plugin v0.1 and newer. */
@@ -105,6 +117,12 @@ export interface MobilePluginInfo {
   pluginVersion: string
   mobileApi: number
   features: string[]
+  /**
+   * What this machine calls itself, as configured in the plugin settings card.
+   * Absent on plugins before 0.2.23, which is why callers fall back to the
+   * instance id.
+   */
+  instanceName?: string
 }
 
 /** Read-only Loader entry projection served by mobile.inventory on plugin 0.2+. */
@@ -168,6 +186,9 @@ export async function fetchMobileInfo(
       pluginVersion: candidate.pluginVersion,
       mobileApi: candidate.mobileApi,
       features: candidate.features,
+      ...(typeof candidate.instanceName === 'string' && candidate.instanceName !== ''
+        ? { instanceName: candidate.instanceName }
+        : {}),
     }
   } catch (error) {
     if (error instanceof PairingError && error.message === 'mobile-forbidden') return null

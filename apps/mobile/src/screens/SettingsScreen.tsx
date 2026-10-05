@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import { useI18n, type Language, type TranslationKey } from '../i18n'
@@ -33,6 +33,16 @@ interface SettingsScreenProps {
   setLanguage: (language: Language) => void
   enterToSend: boolean
   setEnterToSend: (value: boolean) => void
+  /** How many Hubs are saved, and which one is in use. */
+  connectionCount: number
+  connectionTitle: string
+  /**
+   * What this phone calls itself on the Hub. Edited here rather than in the
+   * connection list because it belongs to the phone, not to one connection.
+   */
+  deviceName: string
+  setDeviceName: (name: string) => void
+  onOpenConnections: () => void
   onOpenDiagnostics: () => void
   onOpenPlugins: () => void
   onUnpair: () => void
@@ -60,6 +70,11 @@ export function SettingsScreen({
   setLanguage,
   enterToSend,
   setEnterToSend,
+  connectionCount,
+  connectionTitle,
+  deviceName,
+  setDeviceName,
+  onOpenConnections,
   onOpenDiagnostics,
   onOpenPlugins,
   onUnpair,
@@ -70,6 +85,9 @@ export function SettingsScreen({
   const [themePickerOpen, setThemePickerOpen] = useState(false)
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false)
   const [unpairConfirmOpen, setUnpairConfirmOpen] = useState(false)
+  // Committed on blur or submit rather than per keystroke: the name rides the
+  // next `hello`, and saving it reconnects, so typing must not be a live edit.
+  const [deviceNameDraft, setDeviceNameDraft] = useState(deviceName)
   const counts = inventoryCounts(inventory)
 
   return (
@@ -163,6 +181,42 @@ export function SettingsScreen({
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.settingRow, styles.rowDivider]}
+            onPress={onOpenConnections}
+            accessibilityRole="button"
+            accessibilityLabel={t('connections.title')}
+          >
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>{t('connections.title')}</Text>
+              <Text style={styles.settingHint}>
+                {connectionCount === 0
+                  ? t('connections.empty')
+                  : t('connections.summary', { count: connectionCount, name: connectionTitle })}
+              </Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+          <View style={[styles.settingRow, styles.rowDivider]}>
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>{t('settings.deviceName')}</Text>
+              <Text style={styles.settingHint}>{t('settings.deviceNameHint')}</Text>
+              <TextInput
+                style={styles.deviceNameInput}
+                value={deviceNameDraft}
+                onChangeText={setDeviceNameDraft}
+                // Committed on submit/blur: the name travels on the next
+                // `hello`, and saving one reconnects the app to send it.
+                onSubmitEditing={() => setDeviceName(deviceNameDraft)}
+                onBlur={() => {
+                  if (deviceNameDraft.trim() !== deviceName) setDeviceName(deviceNameDraft)
+                }}
+                placeholder={t('settings.deviceNamePlaceholder')}
+                placeholderTextColor={colors.textDim}
+                accessibilityLabel={t('settings.deviceName')}
+              />
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[styles.settingRow, styles.rowDivider]}
             onPress={() => setUnpairConfirmOpen(true)}
             accessibilityRole="button"
           >
@@ -249,6 +303,14 @@ const styles = StyleSheet.create({
   rowCopy: { flex: 1, gap: 2 },
   settingLabel: { color: colors.text, fontSize: fontSize.body, fontWeight: '500' },
   settingHint: { color: colors.textDim, fontSize: fontSize.tiny },
+  deviceNameInput: {
+    marginTop: spacing(1),
+    color: colors.text,
+    fontSize: fontSize.small,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    paddingVertical: spacing(0.5),
+  },
   chevron: { color: colors.textDim, fontSize: 24, marginLeft: spacing(2) },
   pickerCard: { backgroundColor: colors.bgElevated, borderRadius: radius.card, marginHorizontal: spacing(7), paddingVertical: spacing(2), overflow: 'hidden' },
   pickerTitle: { color: colors.text, fontSize: 18, fontWeight: '700', paddingHorizontal: spacing(5), paddingVertical: spacing(3) },
