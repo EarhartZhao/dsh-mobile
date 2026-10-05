@@ -142,3 +142,80 @@ jobs:
           else
             gh release create "$tag" "$apk" --title "dsh-mobile v${version}" --generate-notes
           fi
+
+  # The iOS side has no signing material in CI (no Apple Distribution
+  # certificate, no provisioning profile), so it cannot produce an installable
+  # IPA. What it can do is prove the iOS target still archives at the released
+  # version and hand out an unsigned IPA that a self-signing tool can re-sign.
+  # Unlike the Android job this never creates the release; it only attaches to
+  # the one the Android job published.
+  ios-unsigned-ipa:
+    name: iOS unsigned IPA
+    needs: android-release
+    runs-on: macos-15
+    env:
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install CocoaPods
+        run: |
+          set -euo pipefail
+          gem install cocoapods --no-document
+      - name: Install pods
+        working-directory: apps/mobile/ios
+        run: pod install
+      - name: Archive for iOS
+        working-directory: apps/mobile/ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace DshMobile.xcworkspace \
+            -scheme DshMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/DshMobile.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+      - name: Package unsigned IPA
+        id: ipa
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/mobile/package.json').version")"
+          app="$RUNNER_TEMP/DshMobile.xcarchive/Products/Applications/DshMobile.app"
+          test -d "$app"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          ipa="DshMobile-v${version}-ios-unsigned.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/$ipa" Payload)
+          # `zip` stores mtimes, so the size is the only boring sanity check
+          # that the payload really made it in.
+          unzip -l "$GITHUB_WORKSPACE/$ipa" | grep -q 'Payload/DshMobile.app/DshMobile'
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "ipa=${ipa}" >> "$GITHUB_OUTPUT"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-mobile-ios-unsigned-ipa
+          path: ${{ steps.ipa.outputs.ipa }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Attach IPA to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.ipa.outputs.version }}"
+          ipa="${{ steps.ipa.outputs.ipa }}"
+          gh release upload "v${version}" "$ipa" --clobber

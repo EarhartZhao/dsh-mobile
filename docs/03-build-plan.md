@@ -77,6 +77,15 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-05 第十五轮）：**iOS 版本号与发布流程纳入 CI。**
+> - 版本流程：`scripts/release-version.mjs` 的 `bump`/`check` 现在同时负责
+>   `apps/mobile/ios/DshMobile.xcodeproj/project.pbxproj` 的两处 `MARKETING_VERSION` /
+>   `CURRENT_PROJECT_VERSION`，此前 iOS 一直停在 0.0.8 而 App 已到 0.0.9。
+> - 发布流程：`.github/workflows/release.yml` 增加 `ios-unsigned-ipa` job，在 macOS runner 上
+>   `pod install` + `xcodebuild archive`（`CODE_SIGNING_ALLOWED=NO`）并打包未签名 IPA 挂到同名 Release。
+>   CI 里没有 Apple 分发证书与描述文件，所以这一步只验证 iOS 目标能归档并交付可自签的 IPA；真机安装
+>   仍需自备证书（模拟器不需要 Apple 开发者账号，本机 `xcodebuild -sdk iphonesimulator` 已通过）。
+
 > 进度（2026-10-05 第十四轮）：**配对二维码在真机上扫不出来，修掉取景分辨率与缩放。**
 > - 根因：配对二维码约 105 模块宽（它要装 Hub 地址、leaf 账号密码和 Hub 的 CA 证书）。CameraX 的
 >   `ImageAnalysis` 默认出 VGA（640×480），对着笔记本屏幕时每模块只剩 ~2.4 像素，ML Kit 的 QR 检测

@@ -9,6 +9,7 @@ const root = process.cwd();
 const appPackagePath = path.join(root, 'apps/mobile/package.json');
 const compatibilityPath = path.join(root, 'packages/core/src/compatibility.ts');
 const androidGradlePath = path.join(root, 'apps/mobile/android/app/build.gradle');
+const iosProjectPath = path.join(root, 'apps/mobile/ios/DshMobile.xcodeproj/project.pbxproj');
 
 function usage() {
   console.log(`Usage:
@@ -107,11 +108,14 @@ async function check(expectedVersion) {
   const appPackage = await readJson(appPackagePath);
   const compatibility = await fs.readFile(compatibilityPath, 'utf8');
   const gradle = await fs.readFile(androidGradlePath, 'utf8');
+  const iosProject = await fs.readFile(iosProjectPath, 'utf8');
 
   const packageVersion = appPackage.version;
   const appVersion = /export const APP_VERSION = '([^']+)'/.exec(compatibility)?.[1];
   const versionName = /^\s*versionName "([^"]+)"$/m.exec(gradle)?.[1];
   const versionCode = /^\s*versionCode (\d+)$/m.exec(gradle)?.[1];
+  const marketingVersions = [...iosProject.matchAll(/MARKETING_VERSION = ([^;]+);/g)].map(match => match[1].trim());
+  const projectVersions = [...iosProject.matchAll(/CURRENT_PROJECT_VERSION = ([^;]+);/g)].map(match => match[1].trim());
 
   const mismatches = [];
   if (packageVersion !== normalized) mismatches.push(`apps/mobile/package.json: ${packageVersion}`);
@@ -119,6 +123,21 @@ async function check(expectedVersion) {
   if (versionName !== normalized) mismatches.push(`versionName: ${versionName}`);
   if (!/^\d+$/.test(versionCode ?? '') || Number(versionCode) <= 0) {
     mismatches.push(`versionCode: ${versionCode}`);
+  }
+  // The iOS project carries the same version twice, once per build configuration.
+  if (marketingVersions.length === 0) {
+    mismatches.push('iOS MARKETING_VERSION: not found');
+  } else {
+    for (const value of marketingVersions) {
+      if (value !== normalized) mismatches.push(`iOS MARKETING_VERSION: ${value}`);
+    }
+  }
+  if (projectVersions.length === 0) {
+    mismatches.push('iOS CURRENT_PROJECT_VERSION: not found');
+  } else {
+    for (const value of projectVersions) {
+      if (value !== versionCode) mismatches.push(`iOS CURRENT_PROJECT_VERSION: ${value}`);
+    }
   }
 
   if (mismatches.length > 0) {
@@ -159,6 +178,19 @@ async function bump(expectedVersion, versionCode) {
     throw new Error('Failed to update Android version metadata');
   }
   await fs.writeFile(androidGradlePath, gradle);
+
+  // The iOS project keeps the version in two build configurations, so replace
+  // every occurrence instead of the first one.
+  const iosBefore = await fs.readFile(iosProjectPath, 'utf8');
+  const marketingCount = [...iosBefore.matchAll(/MARKETING_VERSION = [^;]+;/g)].length;
+  const projectVersionCount = [...iosBefore.matchAll(/CURRENT_PROJECT_VERSION = [^;]+;/g)].length;
+  const iosAfter = iosBefore
+    .replace(/MARKETING_VERSION = [^;]+;/g, `MARKETING_VERSION = ${normalized};`)
+    .replace(/CURRENT_PROJECT_VERSION = [^;]+;/g, `CURRENT_PROJECT_VERSION = ${code};`);
+  if (marketingCount === 0 || projectVersionCount === 0) {
+    throw new Error('Failed to find iOS version metadata');
+  }
+  await fs.writeFile(iosProjectPath, iosAfter);
 
   console.log(`Bumped release version to ${normalized} (versionCode ${code}).`);
 }

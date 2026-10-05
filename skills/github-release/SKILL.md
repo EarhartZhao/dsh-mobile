@@ -43,6 +43,10 @@ workflow 会：
 5. 运行 `./gradlew assembleRelease`。
 6. 用 `apksigner` 验证 APK，并上传 workflow artifact。
 7. 对同名 tag 创建或更新 GitHub Release，上传对应版本的 `DshMobile-v<version>-release.apk`。
+8. `ios-unsigned-ipa` job（macOS runner，`needs` Android job）执行 `pod install` + `xcodebuild archive`
+   （`CODE_SIGNING_ALLOWED=NO`），打包 `DshMobile-v<version>-ios-unsigned.ipa` 并挂到同一个 Release。
+   CI 里没有 Apple 分发证书与描述文件，所以它是**未签名** IPA：用来证明 iOS 目标能在发布版本上归档，
+   并提供给用户自签安装；它不会创建 Release，Android job 失败时它会被跳过。
 
 检查结果：
 
@@ -50,6 +54,9 @@ workflow 会：
 gh run list --workflow=release.yml --limit 5
 gh release view v0.0.3
 ```
+
+Release 上应当同时有 `DshMobile-v<version>-release.apk`（正式签名）和
+`DshMobile-v<version>-ios-unsigned.ipa`（未签名，需自签才能装真机）。
 
 失败时不要重打同名 tag；先修正代码或 secrets，再递增/保留版本并重新走 `release-prep`。如果只是 rerun，workflow 可以覆盖同名 Release 的同名 APK 附件。
 

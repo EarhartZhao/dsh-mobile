@@ -73,6 +73,8 @@ node scripts/release-version.mjs check 0.0.3
 - `packages/core/src/compatibility.ts` 的 `APP_VERSION`
 - `apps/mobile/android/app/build.gradle` 的 `versionName`
 - Android `versionCode`，默认映射为 `MAJOR * 1000000 + MINOR * 10000 + PATCH * 100`
+- `apps/mobile/ios/DshMobile.xcodeproj/project.pbxproj` 的两处 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`
+  （iOS 与 Android 共用同一个版本号与 `versionCode`；`check` 会一并校验，iOS 漏改会被拦住）
 
 未显式指定 `versionCode` 时，脚本会取“版本映射值”和当前 `versionCode + 1` 的较大值，避免 Android 升级被版本号降级阻断。如需显式指定 Android `versionCode`：
 
@@ -111,7 +113,9 @@ pnpm --config.verify-deps-before-run=false run test
 验证通过后确认仍在 `master` 且工作区干净，再创建 annotated tag：
 
 ```bash
-git add apps/mobile/package.json packages/core/src/compatibility.ts apps/mobile/android/app/build.gradle
+git add apps/mobile/package.json packages/core/src/compatibility.ts \
+  apps/mobile/android/app/build.gradle \
+  apps/mobile/ios/DshMobile.xcodeproj/project.pbxproj
 git commit -m "chore(release): v0.0.3"
 git push origin master
 git tag -a v0.0.3 -m "dsh-mobile v0.0.3"
