@@ -6,8 +6,7 @@
  * plugin's fake-app.ts — it validates our side of the contract without a
  * live harness.
  */
-import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { connect, headers as natsHeaders, type NatsConnection } from 'nats'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { fetchMobileInfo, NatsApiClient, redeemPairingCode, TOKEN_HEADER } from '@dsh-mobile/protocol'
@@ -18,8 +17,12 @@ const PORT = 16500 + Math.floor(Math.random() * 500)
 const URL = `nats://127.0.0.1:${PORT}`
 const INSTANCE = 'test-pc'
 const VALID_TOKEN = 'test-token-123'
-const NATS_SERVER_BIN = process.env.NATS_SERVER_BIN ?? 'C:\\nats-server\\nats-server.exe'
-const describeNats = existsSync(NATS_SERVER_BIN) ? describe : describe.skip
+const NATS_SERVER_BIN = process.env.NATS_SERVER_BIN
+  ?? (process.platform === 'win32' ? 'C:\\nats-server\\nats-server.exe' : 'nats-server')
+const HAS_NATS = spawnSync(NATS_SERVER_BIN, ['-v'], { stdio: 'ignore' }).status === 0
+const describeNats = HAS_NATS
+  ? describe
+  : describe.skip
 
 let server: ChildProcess
 let pluginSide: NatsConnection
@@ -48,9 +51,9 @@ function replyErr(rpcId: string, message: string): Uint8Array {
   }))
 }
 
-function pushMuxFrame(frame: unknown): void {
+function pushMuxFrame(frame: unknown, eventKey?: string): void {
   pluginSide.publish(
-    `evt.dsh.${INSTANCE}.mux`,
+    eventKey === undefined ? `evt.dsh.${INSTANCE}.mux` : `evt.dsh.${INSTANCE}.${eventKey}.mux`,
     encoder.encode(JSON.stringify({ type: 'server-request', rpcId: crypto.randomUUID(), method: 'events.mux', payload: frame })),
   )
 }
@@ -64,6 +67,8 @@ function pushHostFrame(frame: unknown): void {
 }
 
 beforeAll(async () => {
+  if (!HAS_NATS) return
+
   server = spawn(NATS_SERVER_BIN, ['-p', String(PORT)], { stdio: 'ignore' })
   await new Promise(r => setTimeout(r, 1500))
   pluginSide = await connect({ servers: URL })
@@ -77,7 +82,12 @@ beforeAll(async () => {
       if (method === 'pair') {
         const ok = body.payload?.['code'] === 'GOOD-CODE'
         msg.respond(ok
-          ? replyOk(body.rpcId, { token: VALID_TOKEN, deviceId: 'dev-1', expiresAt: new Date(Date.now() + 86400_000).toISOString() })
+          ? replyOk(body.rpcId, {
+              token: VALID_TOKEN,
+              deviceId: 'dev-1',
+              expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+              eventKey: 'device-event-key',
+            })
           : replyErr(body.rpcId, 'mobile-pair-failed'))
         continue
       }
@@ -142,6 +152,8 @@ beforeAll(async () => {
 }, 20000)
 
 afterAll(async () => {
+  if (!HAS_NATS) return
+
   await pluginSide?.drain()
   server?.kill()
 })
@@ -208,6 +220,32 @@ describeNats('NatsApiClient over real NATS', () => {
     // Give the subscription a beat to register, then publish.
     await new Promise(r => setTimeout(r, 300))
     pushMuxFrame({ type: 'session/subscribed', sessionId: 's-live', lastSeq: 0 })
+    await reader
+    abort.abort()
+    expect(frames[0]).toMatchObject({ type: 'session/subscribed', sessionId: 's-live' })
+    await nc.close()
+  })
+
+  it('subscribes to a device-scoped event subject when pairing returned an event key', async () => {
+    const nc = await appConn()
+    const client = new NatsApiClient({
+      conn: nc,
+      instanceId: INSTANCE,
+      getToken: () => VALID_TOKEN,
+      headers: natsHeaders,
+      eventKey: 'device-event-key',
+    })
+    const abort = new AbortController()
+    const frames: unknown[] = []
+    const stream = client.events.mux({}, abort.signal)
+    const reader = (async () => {
+      for await (const frame of stream) {
+        frames.push(frame.payload)
+        if (frames.length >= 1) break
+      }
+    })()
+    await new Promise(r => setTimeout(r, 300))
+    pushMuxFrame({ type: 'session/subscribed', sessionId: 's-live', lastSeq: 0 }, 'device-event-key')
     await reader
     abort.abort()
     expect(frames[0]).toMatchObject({ type: 'session/subscribed', sessionId: 's-live' })
@@ -290,7 +328,7 @@ describeNats('NatsApiClient over real NATS', () => {
   })
 })
 
-describe('ConnectionManager', () => {
+describeNats('ConnectionManager', () => {
   it('runs the full establish pass: describe → baseline → hello replay → online', async () => {
     const manager = new ConnectionManager({
       connect: appConn,

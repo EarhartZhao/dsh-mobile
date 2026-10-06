@@ -63,10 +63,16 @@ export function classifyConnectionFailure(message: string): ConnectionFailureKin
   const text = message.toLowerCase()
   if (text.includes('mobile-unauthenticated') || text.includes('authorization') || text.includes('authentication')) return 'authentication'
   if (text.includes('certificate') || text.includes('tls') || text.includes('ssl')) return 'tls'
+  if (text.includes('gateway-identity-mismatch')) return 'protocol'
   if (text.includes('no responders') || text.includes('503') || text.includes('timeout')) return 'bridge-unavailable'
   if (text.includes('mobile-info-invalid') || text.includes('mobile-health-invalid') || text.includes('parse') || text.includes('json') || text.includes('zod')) return 'protocol'
   if (text.includes('network') || text.includes('socket') || text.includes('connection refused') || text.includes('dns')) return 'network'
   return 'unknown'
+}
+
+/** A saved gateway id is enforced only when the plugin supplies one. */
+export function gatewayIdentityMismatch(expected: string | undefined, actual: string | undefined): boolean {
+  return expected !== undefined && actual !== undefined && expected !== actual
 }
 
 /** Optional status stream both nats flavors expose (`conn.status()`). */
@@ -100,6 +106,12 @@ export interface ConnectionManagerOptions {
    * caller without an opinion should not have to invent a name.
    */
   deviceName?: string
+  /** Device-scoped event subject segment returned by pairing. */
+  eventKey?: string
+  /** Stable app-install id, sent on pairing and every hello. */
+  installationId?: string
+  /** Gateway identity saved at pairing; enforced when the plugin returns one. */
+  gatewayId?: string
   store?: SessionStore
   /**
    * Bridge liveness probe period in milliseconds; 0 disables it. The phone
@@ -158,6 +170,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       instanceId: this.options.instanceId,
       getToken: this.options.getToken,
       headers: this.options.headers,
+      ...(this.options.eventKey === undefined ? {} : { eventKey: this.options.eventKey }),
     })
     if (hasStatus(this.conn)) void this.watchStatus(this.conn, ++this.generation)
     try {
@@ -277,6 +290,18 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       this.setState('incompatible')
       return
     }
+    if (mobileInfo !== null && gatewayIdentityMismatch(this.options.gatewayId, mobileInfo.gatewayId)) {
+      this.compatibility = {
+        ...this.compatibility,
+        status: 'incompatible',
+        title: '网关身份不一致',
+        message: `配对时保存的是 ${this.options.gatewayId}，当前连接返回 ${mobileInfo.gatewayId}。为避免把设备凭证发送到另一台机器，已停止业务连接；请重新扫码确认这个网关。`,
+      }
+      this.emit('compatibility', { result: this.compatibility })
+      this.emitError(new Error('gateway-identity-mismatch'))
+      this.setState('incompatible')
+      return
+    }
 
     if (this.compatibility.features.includes('health-check')) {
       await this.probeHealth().catch(() => undefined)
@@ -334,6 +359,8 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
       // Restated on every establish, not only at pairing time: this is the
       // phone's chance to correct the name the plugin's roster shows.
       ...(this.options.deviceName === undefined ? {} : { deviceName: this.options.deviceName }),
+      ...(this.options.installationId === undefined ? {} : { installationId: this.options.installationId }),
+      ...(this.options.eventKey === undefined ? {} : { eventKey: this.options.eventKey }),
     })
     this.lastOnlineAt = new Date().toISOString()
     this.setState('online')

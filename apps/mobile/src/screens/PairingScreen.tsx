@@ -8,6 +8,7 @@ import { BackHandler, Keyboard, Platform, StyleSheet, Text, TextInput, Touchable
 import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'
+import { getInstallationId } from '../installation-id'
 import { colors, fontSize, radius, spacing } from '../theme'
 import type { PairingResult } from '../pairing-store'
 import { installHubAnchor } from '../hub-tls'
@@ -63,6 +64,8 @@ function pairingErrorMessage(cause: unknown, t: Translate): string {
   const text = describeError(cause).trim()
   if (text === 'mobile-pair-failed') return t('pairing.codeFailed')
   if (text === 'mobile-device-limit') return t('pairing.deviceLimit')
+  if (text === 'pairing-expired') return t('pairing.expired')
+  if (text === 'pairing-version-unsupported') return t('pairing.versionUnsupported')
   // The QR's own certificate did not survive the trip, or disagrees with the
   // fingerprint printed beside it. Both are the App refusing to trust a Hub it
   // cannot verify, and both are fixed by minting a fresh QR on the desktop.
@@ -96,6 +99,12 @@ function pairingErrorMessage(cause: unknown, t: Translate): string {
 
 function parseQr(text: string): PairingQrPayload {
   const parsed = JSON.parse(text) as Partial<PairingQrPayload>
+  if (parsed.version !== undefined && parsed.version !== 1) {
+    throw new Error('pairing-version-unsupported')
+  }
+  if (typeof parsed.expiresAt === 'number' && parsed.expiresAt <= Date.now()) {
+    throw new Error('pairing-expired')
+  }
   for (const key of ['hub', 'user', 'pass', 'instance', 'code'] as const) {
     if (typeof parsed[key] !== 'string' || parsed[key] === '') {
       throw new Error(`missing-field:${key}`)
@@ -153,8 +162,11 @@ export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): Re
       // has to say which phone actually paired — not just which platform it
       // runs on. It is also restated on every later `hello`, so renaming the
       // phone does not need another pairing round.
-      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, deviceName)
-      onPaired({ ...payload, ...device })
+      const installationId = await getInstallationId()
+      const device = await redeemPairingCode(nc, headers, payload.instance, payload.code, deviceName, {
+        installationId,
+      })
+      onPaired({ ...payload, ...device, installationId: device.installationId ?? installationId })
     } catch (cause) {
       // The code, not just the stack: `nats.ws` puts the reason there and
       // leaves the stack looking identical for every transport failure.

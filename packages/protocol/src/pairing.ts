@@ -12,10 +12,17 @@ import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 
 /** QR payload shown on the dsh host's settings card (docs/01-auth-pairing.md). */
 export interface PairingQrPayload {
+  /** Additive payload revision; absent on QRs minted before plugin 0.2.35. */
+  version?: number
+  /** Unix milliseconds; older plugins did not put expiry inside the QR. */
+  expiresAt?: number
   hub: string
   user: string
   pass: string
   instance: string
+  /** Stable installation id; absent on older plugins. */
+  gatewayId?: string
+  gatewayName?: string
   /**
    * The Hub's CA certificate as base64 DER. Absent on QRs minted before the
    * App learned to install anchors at runtime, in which case trust falls back
@@ -31,6 +38,14 @@ export interface PairedDevice {
   token: string
   deviceId: string
   expiresAt: string
+  /**
+   * Random per-device subject segment. When present, new clients subscribe to
+   * `evt.dsh.{instance}.{eventKey}.mux|host` instead of the shared legacy
+   * subjects. Older plugins omit it.
+   */
+  eventKey?: string
+  /** Stable app-install id echoed by installation-aware plugins. */
+  installationId?: string
 }
 
 export class PairingError extends Error {
@@ -80,9 +95,21 @@ export async function redeemPairingCode(
   instanceId: string,
   code: string,
   deviceName: string,
-  timeoutMs = 10_000,
+  options: { installationId?: string, timeoutMs?: number } = {},
 ): Promise<PairedDevice> {
-  const value = await callPlugin(conn, headersFactory, instanceId, 'pair', { code, deviceName }, undefined, timeoutMs)
+  const value = await callPlugin(
+    conn,
+    headersFactory,
+    instanceId,
+    'pair',
+    {
+      code,
+      deviceName,
+      ...(options.installationId === undefined ? {} : { installationId: options.installationId }),
+    },
+    undefined,
+    options.timeoutMs ?? 10_000,
+  )
   return value as PairedDevice
 }
 
@@ -99,14 +126,23 @@ export async function sendHello(
   headersFactory: NatsHeadersFactory,
   instanceId: string,
   token: string,
-  options: { timeoutMs?: number, deviceName?: string } = {},
+  options: {
+    timeoutMs?: number
+    deviceName?: string
+    installationId?: string
+    eventKey?: string
+  } = {},
 ): Promise<void> {
   await callPlugin(
     conn,
     headersFactory,
     instanceId,
     'hello',
-    { deviceName: options.deviceName },
+    {
+      deviceName: options.deviceName,
+      ...(options.installationId === undefined ? {} : { installationId: options.installationId }),
+      ...(options.eventKey === undefined ? {} : { eventKey: options.eventKey }),
+    },
     token,
     options.timeoutMs ?? 10_000,
   )
@@ -123,6 +159,8 @@ export interface MobilePluginInfo {
    * instance id.
    */
   instanceName?: string
+  /** Stable plugin installation identity; absent on older bridges. */
+  gatewayId?: string
 }
 
 /** Read-only Loader entry projection served by mobile.inventory on plugin 0.2+. */
@@ -188,6 +226,9 @@ export async function fetchMobileInfo(
       features: candidate.features,
       ...(typeof candidate.instanceName === 'string' && candidate.instanceName !== ''
         ? { instanceName: candidate.instanceName }
+        : {}),
+      ...(typeof candidate.gatewayId === 'string' && candidate.gatewayId !== ''
+        ? { gatewayId: candidate.gatewayId }
         : {}),
     }
   } catch (error) {

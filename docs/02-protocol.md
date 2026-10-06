@@ -15,7 +15,7 @@ harness 协议是四象限信封（`ClientRequest` / `ServerResponse` / `ServerR
 | `ClientRequest` | POST `/api/<method>` body | publish 到 `svc.dsh.{instance}.{method}`，带 reply-to |
 | `ServerResponse` | POST 响应 body | request-reply 的回复载荷（回显同一 `rpcId`） |
 | `ClientResponse` | POST `/api/respond` body | publish 到 `svc.dsh.{instance}.respond`，带 reply-to |
-| `ServerRequest` | WS 下行文本帧 | 插件 publish 到 `evt.dsh.{instance}.mux` / `evt.dsh.{instance}.host`，App 订阅 |
+| `ServerRequest` | WS 下行文本帧 | 插件 publish 到 `evt.dsh.{instance}.{eventKey}.mux` / `.host`；旧设备回退共享主题，App 优先订阅设备主题 |
 
 subject 布局沿用既有 Hub 的命名约定（`svc.<服务>.<动作>` / `evt.<服务>.<事件>`，见 distributed-knowledge-architecture.md 第 5.1 节），`{instance}` 为 harness 实例 id（配对时下发）：
 
@@ -23,8 +23,10 @@ subject 布局沿用既有 Hub 的命名约定（`svc.<服务>.<动作>` / `evt.
 svc.dsh.{instance}.{method}     request-reply    一元 RPC（白名单方法，如 session.prompt）
 svc.dsh.{instance}.respond      request-reply    审批/提问回答（RpcReceipt）
 svc.dsh.{instance}.pair         request-reply    配对码核销（无 token 时唯一可用）
-evt.dsh.{instance}.mux          pub/sub          会话域下行帧（ServerRequest）
-evt.dsh.{instance}.host         pub/sub          宿主域下行帧（ServerRequest）
+evt.dsh.{instance}.{eventKey}.mux   pub/sub     会话域下行帧（ServerRequest，推荐）
+evt.dsh.{instance}.{eventKey}.host  pub/sub     宿主域下行帧（ServerRequest，推荐）
+evt.dsh.{instance}.mux              pub/sub     旧共享主题，仅兼容未升级设备
+evt.dsh.{instance}.host             pub/sub     旧共享主题，仅兼容未升级设备
 ```
 
 NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。插件内部通过 Typert Gateway 调用当前 Remote，并把 `session/follow`、`session/control`、`workspace/follow` 和 `$events` 投影成移动端 mux/host 帧。
@@ -34,12 +36,12 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 ## 连接生命周期
 
 ```text
-1. 配对（一次性）     扫 PC 上的二维码 → { natsUrl, instance, pairCode }
+1. 配对（一次性）     扫 PC 上的二维码 → { version, expiresAt, hub, instance, gatewayId, code }
                      → 连 NATS → request svc.dsh.{instance}.pair { code, deviceName }
-                     → 得到 { token, expiresAt }（之后每个 RPC 帧头携带）
+                     → 得到 { token, expiresAt, eventKey, deviceId }（之后每个 RPC 帧头携带 token）
 2. 连接              nats.ws 拨 WSS（Hub 的 8443，C 端账号凭证，App 内置/配对下发）
 3. 握手              mobile.info → mobileApi/features 门禁 → host.describe
-4. 订阅下行          sub evt.dsh.{instance}.mux + evt.dsh.{instance}.host
+4. 订阅下行          有 eventKey 时 sub evt.dsh.{instance}.{eventKey}.mux + .host；旧插件回退共享主题
 5. 就绪              订阅建立 + describe 成功 → 在线
 6. 运行期            一元调用走 rpc subject；一切实时数据由两个事件 subject 推下来
 7. 断线              nats.ws 自动重连；重连成功后按"重连基线"重拉（不重放差分）
@@ -54,7 +56,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 - 打开中的会话：`session.history` 尾页（含 `projections` 水位线块）
 - 实时控制：`session/control` baseline 覆盖 queue/jobs/projections；App 在新 generation 前清空旧瞬态快照
 - 工作区：`workspace/follow` baseline 与增量，`workspace.list` 仍作为重连权威快照
-- 待处理提问/审批：插件在 App 重新订阅 `evt.dsh.{instance}.mux` 后重发当前待处理集合（对齐官方"mux 重开时重放"语义）
+- 待处理提问/审批：插件在 App 重新订阅对应 mux 主题后重发当前待处理集合（对齐官方"mux 重开时重放"语义）
 
 ## 最小 RPC 清单（按里程碑）
 
@@ -87,7 +89,7 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 
 ### M3 任务面板
 
-无需新 RPC：`session/jobs` 快照帧、`host/session-status`、`session/projection` 帧全部走 `evt.dsh.{instance}.mux` 下行。
+无需新 RPC：`session/jobs` 快照帧、`host/session-status`、`session/projection` 帧全部走 mux 下行。
 
 ### 明确不做（v1）
 
@@ -130,6 +132,8 @@ NATS 帧继续使用已发布 App 的 `ServerRequest`/`ServerResponse` 信封。
 2. **应用层**：每个 RPC/respond 请求携带设备 token（配对时签发），插件逐请求校验并执行方法白名单。这层防"拿到 NATS 账号的人直接操作 harness"，也是吊销设备的真实开关。
 
 配对失败会保留可操作原因：无效/过期配对码返回 `mobile-pair-failed`；有效码因有效设备达到上限被拒绝时返回 `mobile-device-limit`，App 引导用户在电脑端吊销旧设备。插件健康状态的设备数只统计未吊销且未过期的有效设备。
+
+插件 0.2.35 起，配对载荷增加可选的 `version`、`expiresAt`、`gatewayId`、`gatewayName`，配对响应增加 `eventKey` 与 `installationId`。App 保存 `eventKey` 后使用设备隔离主题；旧 App/旧插件缺字段时保持原共享主题和原配对流程。连接时 App 会把 `mobile.info.gatewayId` 与配对时保存的值核对；新插件返回不同身份时停止业务连接并要求重新扫码，双方任一缺字段时保持兼容。`installationId` 是本安装随机 UUID，用于同一手机重新配对时替换同一设备记录并轮换 token。
 
 ## 版本兼容
 

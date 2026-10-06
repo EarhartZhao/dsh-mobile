@@ -38,5 +38,8 @@ export function createManager(profile: Profile, deviceName: string): ConnectionM
     instanceId: profile.instance,
     getToken: () => profile.token,
     deviceName,
+    ...(profile.gatewayId === undefined ? {} : { gatewayId: profile.gatewayId }),
+    ...(profile.eventKey === undefined ? {} : { eventKey: profile.eventKey }),
+    ...(profile.installationId === undefined ? {} : { installationId: profile.installationId }),
   })
 }

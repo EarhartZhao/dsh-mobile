@@ -3,8 +3,10 @@ export function svcSubject(instanceId: string, method: string): string {
   return `svc.dsh.${instanceId}.${method}`
 }
 
-export function evtSubject(instanceId: string, stream: 'mux' | 'host'): string {
-  return `evt.dsh.${instanceId}.${stream}`
+export function evtSubject(instanceId: string, stream: 'mux' | 'host', eventKey?: string): string {
+  return eventKey === undefined || eventKey === ''
+    ? `evt.dsh.${instanceId}.${stream}`
+    : `evt.dsh.${instanceId}.${eventKey}.${stream}`
 }
 
 /** NATS header carrying the application-layer device token (plugin TOKEN_HEADER). */

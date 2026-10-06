@@ -31,6 +31,8 @@ export interface NatsApiClientOptions {
   /** headers() factory from the injected nats flavor. */
   headers: NatsHeadersFactory
   timeoutMs?: number
+  /** Device-scoped event subject segment returned by pairing. */
+  eventKey?: string
 }
 
 export class NatsApiClient extends AbstractApiClient {
@@ -38,6 +40,7 @@ export class NatsApiClient extends AbstractApiClient {
   private readonly instanceId: string
   private readonly getToken: () => string | undefined
   private readonly headersFactory: NatsHeadersFactory
+  private readonly eventKey: string | undefined
   readonly commands: ReturnType<typeof createMobileCommands>
   readonly references: ReturnType<typeof createMobileReferences>
   readonly fileUploads: ReturnType<typeof createMobileFileUploads>
@@ -54,6 +57,7 @@ export class NatsApiClient extends AbstractApiClient {
     this.instanceId = options.instanceId
     this.getToken = options.getToken
     this.headersFactory = options.headers
+    this.eventKey = options.eventKey
     this.commands = createMobileCommands(options.conn, options.headers, options.instanceId, options.getToken)
     this.references = createMobileReferences(options.conn, options.headers, options.instanceId, options.getToken)
     this.fileUploads = createMobileFileUploads(options.conn, options.headers, options.instanceId, options.getToken)
@@ -97,7 +101,7 @@ export class NatsApiClient extends AbstractApiClient {
     signal: AbortSignal,
     onOpen?: () => void,
   ): AsyncIterable<RpcRequest<MuxFrame>> {
-    return this.readSubject(evtSubject(this.instanceId, 'mux'), signal, muxFrameSchema, onOpen)
+    return this.readSubject(evtSubject(this.instanceId, 'mux', this.eventKey), signal, muxFrameSchema, onOpen)
   }
 
   protected override openHost(
@@ -105,7 +109,7 @@ export class NatsApiClient extends AbstractApiClient {
     signal: AbortSignal,
     onOpen?: () => void,
   ): AsyncIterable<RpcRequest<HostFrame>> {
-    return this.readSubject(evtSubject(this.instanceId, 'host'), signal, hostFrameSchema, onOpen)
+    return this.readSubject(evtSubject(this.instanceId, 'host', this.eventKey), signal, hostFrameSchema, onOpen)
   }
 
   /**

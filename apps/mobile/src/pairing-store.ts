@@ -20,6 +20,9 @@ export interface PairingResult {
   user: string
   pass: string
   instance: string
+  /** Stable gateway identity from the QR, when the plugin provides it. */
+  gatewayId?: string
+  gatewayName?: string
   /**
    * The Hub's CA certificate (base64 DER) as delivered by the QR. Trust for
    * `hub` comes from this, not from the build, so it has to outlive the
@@ -30,6 +33,10 @@ export interface PairingResult {
   token: string
   deviceId: string
   expiresAt: string
+  /** Per-device event subject segment; absent for pre-0.2.35 pairings. */
+  eventKey?: string
+  /** Stable app-install id associated with this pairing. */
+  installationId?: string
 }
 
 /** One saved connection. */
@@ -93,11 +100,17 @@ function parseProfile(value: unknown): Profile | null {
     user,
     pass: typeof value.pass === 'string' ? value.pass : '',
     instance,
+    gatewayId: typeof value.gatewayId === 'string' ? value.gatewayId : undefined,
+    gatewayName: typeof value.gatewayName === 'string' ? value.gatewayName : undefined,
     ca: typeof value.ca === 'string' ? value.ca : undefined,
     caFp: typeof value.caFp === 'string' ? value.caFp : '',
     token,
     deviceId: typeof value.deviceId === 'string' ? value.deviceId : '',
     expiresAt: typeof value.expiresAt === 'string' ? value.expiresAt : '',
+    eventKey: typeof value.eventKey === 'string' && value.eventKey !== '' ? value.eventKey : undefined,
+    installationId: typeof value.installationId === 'string' && value.installationId !== ''
+      ? value.installationId
+      : undefined,
   }
 }
 
