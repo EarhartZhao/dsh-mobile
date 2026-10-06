@@ -7,8 +7,10 @@
  */
 import React from 'react'
 import renderer, { act } from 'react-test-renderer'
+import { FlatList } from 'react-native'
 import { SafeAreaProvider, type Metrics } from 'react-native-safe-area-context'
 import { SessionStore, type ConnectionManager } from '@dsh-mobile/core'
+import { RpcId } from '@dsh-mobile/protocol'
 
 /**
  * `t` is one stable function, the way the real provider hands it over: a fresh
@@ -217,5 +219,105 @@ describe('ChatScreen transcript backfill', () => {
     expect(manager.store.sessions.get('s1')?.events.map(entry => entry.event.seq)).toEqual([4, 5])
     expect(history).toHaveBeenCalledTimes(2)
     expect(screenText(tree)).toContain('chat.loadOlder')
+  })
+})
+
+/**
+ * Following the newest row, and leaving a transcript alone.
+ *
+ * The follow scroll used to aim with `scrollToEnd`, which asks VirtualizedList
+ * for the last cell's metrics — an average-based guess for a cell it has never
+ * measured, and streaming rows are the tallest in the transcript. Landing short
+ * of the bottom then fed back into the scroll anchor
+ * (`maintainVisibleContentPosition`), so every chunk pulled the list down and
+ * the anchor pulled it back: the up-and-down the reader saw while the model was
+ * thinking. Exactly one of the two may hold the offset, and only while the
+ * reader is at the tail.
+ */
+describe('ChatScreen tail following', () => {
+  const listLayout = (height: number): unknown => ({
+    nativeEvent: { layout: { x: 0, y: 0, width: 390, height } },
+  })
+  const scrollTo = (y: number, contentHeight: number, viewportHeight: number): unknown => ({
+    nativeEvent: {
+      contentOffset: { x: 0, y },
+      contentSize: { width: 390, height: contentHeight },
+      layoutMeasurement: { width: 390, height: viewportHeight },
+    },
+  })
+
+  /** The list's own scroll commands, as the screen issues them. */
+  function scrollCommands(tree: renderer.ReactTestRenderer) {
+    const list = tree.root.findByType(FlatList)
+    const instance = list.instance as unknown as {
+      scrollToEnd: (params: unknown) => void
+      scrollToOffset: (params: unknown) => void
+    }
+    return {
+      list,
+      toEnd: jest.spyOn(instance, 'scrollToEnd').mockImplementation(() => undefined),
+      toOffset: jest.spyOn(instance, 'scrollToOffset').mockImplementation(() => undefined),
+    }
+  }
+
+  /** The follow scroll is coalesced into one animation frame. */
+  async function frame(): Promise<void> {
+    await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 20)) })
+  }
+
+  it('pins the newest row to the measured bottom while the model streams', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    // The turn the reader is watching: reasoning arrives, no answer text yet.
+    act(() => {
+      manager.store.applyMuxFrame(RpcId('reasoning-1'), {
+        type: 'session/event', sessionId: 's1' as never,
+        event: {
+          seq: 2, time: 2, type: 'assistant/chunk',
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: '先看目录' } },
+        } as never,
+      })
+    })
+    await settle()
+    expect(screenText(tree)).toContain('chat.step.thinking')
+
+    const { list, toEnd, toOffset } = scrollCommands(tree)
+    act(() => { list.props.onLayout(listLayout(800)) })
+    // Two chunks land inside one frame: the second height is the one to aim at.
+    act(() => { list.props.onContentSizeChange(390, 1_800) })
+    act(() => { list.props.onContentSizeChange(390, 2_000) })
+    await frame()
+
+    expect(toOffset.mock.calls).toEqual([[{ offset: 1_200, animated: false }]])
+    expect(toEnd).not.toHaveBeenCalled()
+    // The anchor stays unarmed while this side owns the offset.
+    expect(list.props.maintainVisibleContentPosition).toBeUndefined()
+  })
+
+  it('does not drag back a transcript the reader scrolled away from', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    const { list, toEnd, toOffset } = scrollCommands(tree)
+    act(() => { list.props.onLayout(listLayout(800)) })
+    act(() => { list.props.onScrollBeginDrag() })
+    act(() => { list.props.onScroll(scrollTo(200, 2_000, 800)) })
+    act(() => { list.props.onScrollEndDrag() })
+    // The unlock is deliberately delayed past the drag's own momentum.
+    await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 200)) })
+
+    // An older page is prepended under the reader's finger.
+    act(() => { list.props.onContentSizeChange(390, 2_400) })
+    await frame()
+
+    expect(toOffset).not.toHaveBeenCalled()
+    expect(toEnd).not.toHaveBeenCalled()
+    // The anchor is what holds their place now.
+    expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
   })
 })
