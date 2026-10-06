@@ -35,3 +35,13 @@ interface Response {
 }
 
 declare function fetch(input: URL, init?: RequestInit): Promise<Response>
+
+/**
+ * Bundled image assets. Metro resolves the import through its asset plugin and
+ * hands back the resource id `Image` takes as `source`; react-native's own type
+ * set does not declare the extension modules.
+ */
+declare module '*.png' {
+  const source: number
+  export default source
+}
