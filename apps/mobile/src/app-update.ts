@@ -9,6 +9,19 @@ export interface AppUpdateInfo {
   downloadUrl: string
 }
 
+/**
+ * What the last look at the release feed found. The settings row renders this
+ * directly, and the boot check feeds the same state so a version found on
+ * launch and one found by hand behave identically.
+ */
+export type AppUpdateStatus =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'latest' }
+  | { kind: 'available'; version: string }
+  | { kind: 'unsupported' }
+  | { kind: 'error'; message: string }
+
 function versionParts(value: string): number[] | null {
   const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?$/u.exec(value.trim())
   if (match === null) return null

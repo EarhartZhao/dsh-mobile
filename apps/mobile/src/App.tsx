@@ -31,7 +31,7 @@ import {
 } from './pairing-store'
 import { defaultDeviceName, loadDeviceName, saveDeviceName } from './device-name'
 import { activateHub, clearHubAnchor } from './hub-tls'
-import { checkForAppUpdate, type AppUpdateInfo } from './app-update'
+import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateStatus } from './app-update'
 import { inventoryChangedByEvent } from './plugin-inventory'
 import { createManager } from './connection'
 import { PairingScreen } from './screens/PairingScreen'
@@ -60,6 +60,29 @@ interface HealthReport {
   snapshot: MobileHealthSnapshot | null
   latencyMs: number | null
   error: string | null
+}
+
+interface DownloadedUpdate {
+  downloaded: boolean
+  bytes: number
+}
+
+/**
+ * The Android half of the in-app update: it downloads the APK, resumes a
+ * paused transfer, and hands the file to the system installer. iOS has no
+ * equivalent (its updates belong to the App Store), so the module is optional
+ * at every call site, and the methods beyond `downloadAndInstall` are optional
+ * too — an older native module on the device simply loses the extras.
+ */
+interface UpdaterModule {
+  downloadAndInstall(url: string, version: string): Promise<null>
+  cancelDownload?(keepPartial: boolean): Promise<null>
+  downloadedUpdate?(version: string): Promise<DownloadedUpdate | null>
+}
+
+function updaterModule(): UpdaterModule | undefined {
+  const module = NativeModules.DshUpdater as Partial<UpdaterModule> | undefined
+  return typeof module?.downloadAndInstall === 'function' ? module as UpdaterModule : undefined
 }
 
 function DiagnosticRow({ label, value }: { label: string, value: string }): React.JSX.Element {
@@ -162,7 +185,16 @@ function AppContent(): React.JSX.Element {
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
-  const [updateDownloading, setUpdateDownloading] = useState(false)
+  /** What the last release-feed query found; the settings row renders it. */
+  const [updateCheck, setUpdateCheck] = useState<AppUpdateStatus>({ kind: 'idle' })
+  /**
+   * `idle` → the dialog offers download/install, `downloading` → 暂停/取消,
+   * `paused` → 继续下载/取消. Pausing keeps the bytes on disk, so resuming is
+   * a range request rather than a fresh 80 MB.
+   */
+  const [updatePhase, setUpdatePhase] = useState<'idle' | 'downloading' | 'paused'>('idle')
+  /** Size of a finished APK already in the cache, or null when there is none. */
+  const [updateDownloaded, setUpdateDownloaded] = useState<number | null>(null)
   // `null` until the native side reports the first byte; `total` is 0 when the
   // server omitted a content length, which the label renders as bytes alone.
   // `retrying` is set while the downloader is resuming after a stall.
@@ -170,6 +202,8 @@ function AppContent(): React.JSX.Element {
   const managerRef = useRef<ConnectionManager | null>(null)
   const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastBackPress = useRef(0)
+  /** The launch-time release check runs once, however often `t` is rebuilt. */
+  const bootUpdateChecked = useRef(false)
   /**
    * The saved connections, readable synchronously. Mutations happen from
    * several callbacks that must not race each other through React state, and
@@ -197,6 +231,54 @@ function AppContent(): React.JSX.Element {
     if (alertTimer.current !== null) clearTimeout(alertTimer.current)
     alertTimer.current = setTimeout(() => setAlert(null), 5000)
   }, [])
+
+  /** Size of a finished APK already sitting in the cache, or null. */
+  const refreshDownloadedUpdate = useCallback(async (version: string): Promise<void> => {
+    const probe = updaterModule()?.downloadedUpdate
+    if (probe === undefined) return
+    try {
+      const state = await probe(version)
+      setUpdateDownloaded(state?.downloaded === true ? state.bytes : null)
+    } catch {
+      setUpdateDownloaded(null)
+    }
+  }, [])
+
+  /**
+   * One query, two callers: the silent check on launch and the 检查更新 row in
+   * settings. Both land in the same status line, so a version found on launch
+   * and one found by hand behave identically.
+   */
+  const checkUpdate = useCallback(async (mode: 'boot' | 'manual'): Promise<void> => {
+    // The updater only ever installs Android packages: the release feed carries
+    // APKs, and iOS has no equivalent side-loaded path (its updates belong to
+    // the App Store), so asking would only ever offer something uninstallable.
+    if (Platform.OS !== 'android') {
+      if (mode === 'manual') setUpdateCheck({ kind: 'unsupported' })
+      return
+    }
+    setUpdateCheck({ kind: 'checking' })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10_000)
+    try {
+      const found = await checkForAppUpdate(controller.signal)
+      if (found === null) {
+        setUpdateCheck({ kind: 'latest' })
+        if (mode === 'manual') showAlert(t('update.upToDate'))
+        return
+      }
+      setAppUpdate(found)
+      setUpdatePhase('idle')
+      setUpdateCheck({ kind: 'available', version: found.version })
+      void refreshDownloadedUpdate(found.version)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setUpdateCheck({ kind: 'error', message })
+      if (mode === 'manual') showAlert(t('update.checkFailed', { message }))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }, [refreshDownloadedUpdate, showAlert, t])
 
   const moveToBackground = useCallback(() => {
     const app = NativeModules.DshApp as { moveTaskToBack(): Promise<boolean> } | undefined
@@ -259,21 +341,13 @@ function AppContent(): React.JSX.Element {
 
   useEffect(() => {
     if (!booted) return
-    // The updater only ever installs Android packages: the release feed carries
-    // APKs, and iOS has no equivalent side-loaded path (its updates belong to
-    // the App Store), so asking would only ever offer something uninstallable.
-    if (Platform.OS !== 'android') return
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 10_000)
-    void checkForAppUpdate(controller.signal)
-      .then(setAppUpdate)
-      .catch(() => undefined)
-      .finally(() => clearTimeout(timeout))
-    return () => {
-      controller.abort()
-      clearTimeout(timeout)
-    }
-  }, [booted])
+    // Once per launch, and silently: the settings row is how the owner asks
+    // again. Guarded by a ref so a language change (which rebuilds `t`) does
+    // not re-open a dialog the owner has already dismissed.
+    if (bootUpdateChecked.current) return
+    bootUpdateChecked.current = true
+    void checkUpdate('boot')
+  }, [booted, checkUpdate])
 
   useEffect(() => {
     void (NativeModules.DshTheme as { getMode(): Promise<ThemeMode> } | undefined)
@@ -513,18 +587,25 @@ function AppContent(): React.JSX.Element {
   }, [showAlert, t])
 
   const installUpdate = useCallback(async (): Promise<void> => {
-    if (appUpdate === null) return
-    const updater = NativeModules.DshUpdater as { downloadAndInstall(url: string): Promise<null> } | undefined
+    const target = appUpdate
+    if (target === null) return
+    const updater = updaterModule()
     if (updater === undefined) {
       showAlert(t('update.unavailable'))
       return
     }
-    setUpdateDownloading(true)
+    setUpdatePhase('downloading')
     setUpdateProgress(null)
     try {
-      await updater.downloadAndInstall(appUpdate.downloadUrl)
+      await updater.downloadAndInstall(target.downloadUrl, target.version)
+      // The installer is up. The APK stays in the cache, so tapping 安装 again
+      // re-opens the installer instead of pulling the same file over the link.
+      void refreshDownloadedUpdate(target.version)
     } catch (error) {
       const code = (error as { code?: unknown })?.code
+      // Pause and cancel both arrive here; the handler that asked for them has
+      // already put the dialog in the state it should be in.
+      if (code === 'UPDATE_CANCELLED') return
       // The downloader names what went wrong (a stall, an HTTP code, a size
       // mismatch); the blanket message hid a stuck transfer behind "稍后重试"
       // with no hint of whether waiting would help.
@@ -535,9 +616,26 @@ function AppContent(): React.JSX.Element {
           ? t('update.failedDetail', { message })
           : t('update.failed'))
     } finally {
-      setUpdateDownloading(false)
+      // Never overwrite a pause or a cancel that landed while the promise was
+      // in flight.
+      setUpdatePhase(phase => (phase === 'downloading' ? 'idle' : phase))
     }
-  }, [appUpdate, showAlert, t])
+  }, [appUpdate, refreshDownloadedUpdate, showAlert, t])
+
+  /** Stop transferring, keep the bytes: 继续下载 resumes from here. */
+  const pauseUpdate = useCallback((): void => {
+    setUpdatePhase('paused')
+    void updaterModule()?.cancelDownload?.(true)?.catch(() => undefined)
+  }, [])
+
+  /** Stop transferring and drop the partial file, then close the dialog. */
+  const cancelUpdate = useCallback((): void => {
+    setUpdatePhase('idle')
+    setUpdateProgress(null)
+    setUpdateDownloaded(null)
+    setAppUpdate(null)
+    void updaterModule()?.cancelDownload?.(false)?.catch(() => undefined)
+  }, [])
 
   // Download progress for the update dialog. `total === 0` means the server
   // sent no content length, so the bar stays empty and the label falls back to
@@ -547,7 +645,9 @@ function AppContent(): React.JSX.Element {
     : Math.round(Math.max(0, Math.min(1, updateProgress.received / updateProgress.total)) * 100)
   const updateLabel = updateProgress === null
     ? t('update.preparing')
-    : updateProgress.retrying
+    : updatePhase === 'paused'
+      ? t('update.paused', { received: formatMegabytes(updateProgress.received) })
+      : updateProgress.retrying
       // A resumed transfer keeps the bytes already on disk, so the number it
       // shows is progress, not a restart.
       ? t('update.retrying', { received: formatMegabytes(updateProgress.received) })
@@ -703,6 +803,8 @@ function AppContent(): React.JSX.Element {
               onUnpair={onUnpair}
               onBack={() => setRoute({ name: 'list' })}
               appVersion={APP_VERSION}
+              updateStatus={updateCheck}
+              onCheckUpdate={() => { void checkUpdate('manual') }}
             />
           ) : route.name === 'plugins' ? (
             <PluginInventoryScreen
@@ -793,7 +895,17 @@ function AppContent(): React.JSX.Element {
           </View>
         </Modal>
       )}
-      <Modal transparent visible={appUpdate !== null} animationType="fade" onRequestClose={() => setAppUpdate(null)}>
+      <Modal
+        transparent
+        visible={appUpdate !== null}
+        animationType="fade"
+        onRequestClose={() => {
+          // Back while transferring means pause, not cancel: the bytes already
+          // on disk are worth keeping, and the dialog can resume them.
+          if (updatePhase === 'downloading') pauseUpdate()
+          setAppUpdate(null)
+        }}
+      >
         <View style={styles.backdrop}>
           <View style={styles.updateCard}>
             <Text style={styles.updateTitle}>{t('update.title')}</Text>
@@ -810,7 +922,7 @@ function AppContent(): React.JSX.Element {
               * the system installer fail with a bare "app not installed".
               */}
             {__DEV__ && <Text style={styles.updateHint}>{t('update.devBuild')}</Text>}
-            {updateDownloading && (
+            {updatePhase !== 'idle' && (
               <View style={styles.updateProgress}>
                 <View style={styles.updateProgressTrack}>
                   <View style={[styles.updateProgressFill, { width: `${updatePercent}%` }]} />
@@ -818,13 +930,33 @@ function AppContent(): React.JSX.Element {
                 <Text style={styles.updateProgressText}>{updateLabel}</Text>
               </View>
             )}
+            {updatePhase === 'idle' && updateDownloaded !== null && (
+              <Text style={styles.updateHint}>{t('update.cachedHint', { size: formatMegabytes(updateDownloaded) })}</Text>
+            )}
             <View style={styles.updateActions}>
-              <TouchableOpacity style={styles.updateLater} disabled={updateDownloading} onPress={() => setAppUpdate(null)}>
-                <Text style={styles.updateLaterText}>{t('update.later')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.updateNow} disabled={updateDownloading} onPress={() => void installUpdate()}>
-                <Text style={styles.updateNowText}>{updateDownloading ? t('update.downloading') : t('update.install')}</Text>
-              </TouchableOpacity>
+              {updatePhase === 'downloading' ? (
+                <>
+                  <TouchableOpacity style={styles.updateLater} onPress={pauseUpdate} accessibilityRole="button">
+                    <Text style={styles.updateLaterText}>{t('update.pause')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.updateLater} onPress={cancelUpdate} accessibilityRole="button">
+                    <Text style={styles.updateCancelText}>{t('common.cancel')}</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity style={styles.updateLater} onPress={() => setAppUpdate(null)} accessibilityRole="button">
+                    <Text style={styles.updateLaterText}>{t('update.later')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.updateNow} onPress={() => void installUpdate()} accessibilityRole="button">
+                    <Text style={styles.updateNowText}>
+                      {updatePhase === 'paused'
+                        ? t('update.resume')
+                        : updateDownloaded === null ? t('update.install') : t('update.installCached')}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
             {/*
               * The in-app download goes straight to GitHub; on a network that
@@ -943,6 +1075,7 @@ const styles = StyleSheet.create({
   updateActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
   updateLater: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   updateLaterText: { color: colors.textDim, fontSize: 14 },
+  updateCancelText: { color: colors.danger, fontSize: 14 },
   updateNow: { backgroundColor: colors.accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   updateNowText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   updateBrowser: { alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 8 },

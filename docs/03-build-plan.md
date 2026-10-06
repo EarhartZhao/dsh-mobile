@@ -77,6 +77,26 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-06 第十七轮）：**修掉 App 内更新的四个使用缺陷。**
+> - 版本查询：更新检查原只在启动时静默跑一次，必须完全退出重进才知道有新版本。现在提取成
+>   `checkUpdate('boot' | 'manual')`，设置页第一张卡片多一行「检查更新」，显示上次查询结果
+>   （查询中／已是最新／发现新版本 x.y.z／查询失败原因），点击即查，查到就弹同一个更新弹窗。
+>   启动那次改为 ref 守卫，切换语言重建 `t` 不会再弹一次已经关掉的对话框。
+> - 设置页顺序：连接行（进连接切换页）原来在「连接设置」最底部、主题在最上面。现在连接行
+>   移到主题行上方，检查更新行又在连接行上方——版本、连的是哪台电脑、外观，按这个顺序读。
+> - 暂停/取消：原先下载中两个按钮都是 `disabled`，点不动。原生 `DshUpdater` 新增
+>   `cancelDownload(keepPartial)`（断开正在读的 socket，否则要等 30 s 读超时才停）与
+>   `downloadedUpdate(version)`；JS 侧弹窗变为三态——下载中「暂停／取消」、暂停后
+>   「继续下载／取消」。暂停保留 `.part`，续传就是原有的 range 续传路径；取消删掉半包。
+>   弹窗的返回键等同于暂停，不丢已下载的字节。原生取消用 `UPDATE_CANCELLED` 回绝 promise，
+>   JS 据此不再弹「更新失败」。
+> - 重复下载：下载完成后目标文件从固定的 `dsh-mobile-update.apk` 改成按版本命名
+>   （`dsh-mobile-update-<version>.apk`），`downloadAndInstall(url, version)` 先查缓存命中就直接
+>   调系统安装器，并把命中大小回给 JS（弹窗显示「更新包已经下载完成（82.2 MB），点安装直接装」）。
+>   装完/杀掉进程再回来都不会重下 80 MB；同目录其他版本的残留包在开始新下载时清掉。
+> - 验证：`apps/mobile` typecheck / test（27 套 183 例，新增 `app-update` 9 例与设置页 3 例）/
+>   lint 0 error；`:app:compileDebugKotlin` 通过。真机复测（暂停后续传、装包不重下）留待设备。
+
 > 进度（2026-10-05 第十六轮）：**一个 App 连多台电脑 / 多个 Hub，可随时切换。**
 > - 数据层：`apps/mobile/src/pairing-store.ts` 升到 v2（`{version, profiles[], activeId}`，
 >   v1 单条记录自动迁移并删掉旧键），去重键是 `hub|instance|user`；重新配对同一实例只换 token，

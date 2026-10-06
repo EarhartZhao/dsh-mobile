@@ -43,6 +43,8 @@ function render(overrides: Partial<React.ComponentProps<typeof SettingsScreen>> 
     onUnpair: jest.fn(),
     onBack: jest.fn(),
     appVersion: '0.0.3',
+    updateStatus: { kind: 'idle' } as const,
+    onCheckUpdate: jest.fn(),
     ...overrides,
   }
   let tree!: renderer.ReactTestRenderer
@@ -116,3 +118,47 @@ describe('SettingsScreen unpair', () => {
     expect(props.onUnpair).not.toHaveBeenCalled()
   })
 })
+
+describe('SettingsScreen update check', () => {
+  it('queries the release feed from the update row', () => {
+    const { tree, props } = render()
+
+    press(tree, 'settings.checkUpdate')
+
+    expect(props.onCheckUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders what the last check found, without inventing a version', () => {
+    expect(render({ updateStatus: { kind: 'latest' } }).tree.root.findAllByProps({ children: 'settings.updateLatest' }).length)
+      .toBeGreaterThan(0)
+    expect(render({ updateStatus: { kind: 'checking' } }).tree.root.findAllByProps({ children: 'settings.updateChecking' }).length)
+      .toBeGreaterThan(0)
+    expect(render({ updateStatus: { kind: 'available', version: '0.2.0' } }).tree.root.findAllByProps({ children: 'settings.updateAvailable(0.2.0)' }).length)
+      .toBeGreaterThan(0)
+    expect(render({ updateStatus: { kind: 'error', message: 'HTTP 500' } }).tree.root.findAllByProps({ children: 'settings.updateFailed(HTTP 500)' }).length)
+      .toBeGreaterThan(0)
+  })
+})
+
+describe('SettingsScreen row order', () => {
+  it('puts the connection row above the theme row', () => {
+    const { tree } = render()
+    // Both rows sit in the first card, in this order: the Hub this phone talks
+    // to is worth more than the colour scheme, and it used to be at the bottom.
+    const order = textOrder(tree)
+
+    expect(order.indexOf('settings.updateHint')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('connections.summary(2,家里的 Mac)')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('app.theme.chooseHint')).toBeGreaterThanOrEqual(0)
+    // The update row leads the same card.
+    expect(order.indexOf('settings.updateHint')).toBeLessThan(order.indexOf('connections.summary(2,家里的 Mac)'))
+    expect(order.indexOf('connections.summary(2,家里的 Mac)')).toBeLessThan(order.indexOf('app.theme.chooseHint'))
+  })
+})
+
+/** Every label the tree renders, in render order. */
+function textOrder(tree: renderer.ReactTestRenderer): string[] {
+  return tree.root
+    .findAll(node => typeof node.props.children === 'string')
+    .map(node => node.props.children as string)
+}

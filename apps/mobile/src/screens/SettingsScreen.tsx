@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
+import type { AppUpdateStatus } from '../app-update'
 import { useI18n, type Language, type TranslationKey } from '../i18n'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -48,6 +49,9 @@ interface SettingsScreenProps {
   onUnpair: () => void
   onBack: () => void
   appVersion: string
+  /** Result of the last look at the release feed, rendered under 检查更新. */
+  updateStatus: AppUpdateStatus
+  onCheckUpdate: () => void
 }
 
 function themeLabel(mode: ThemeMode, t: (key: TranslationKey) => string): string {
@@ -56,6 +60,21 @@ function themeLabel(mode: ThemeMode, t: (key: TranslationKey) => string): string
 
 function languageLabel(mode: Language, t: (key: TranslationKey) => string): string {
   return mode === 'system' ? t('app.language.system') : mode === 'zh' ? t('app.language.zh') : t('app.language.en')
+}
+
+/** The subtitle of the 检查更新 row: what the last check found. */
+function updateStatusLabel(
+  status: AppUpdateStatus,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string,
+): string {
+  switch (status.kind) {
+    case 'checking': return t('settings.updateChecking')
+    case 'latest': return t('settings.updateLatest')
+    case 'available': return t('settings.updateAvailable', { version: status.version })
+    case 'unsupported': return t('settings.updateUnsupported')
+    case 'error': return t('settings.updateFailed', { message: status.message })
+    default: return t('settings.updateHint')
+  }
 }
 
 export function SettingsScreen({
@@ -80,6 +99,8 @@ export function SettingsScreen({
   onUnpair,
   onBack,
   appVersion,
+  updateStatus,
+  onCheckUpdate,
 }: SettingsScreenProps): React.JSX.Element {
   const { t } = useI18n()
   const [themePickerOpen, setThemePickerOpen] = useState(false)
@@ -109,8 +130,41 @@ export function SettingsScreen({
           </Text>
         </View>
 
+        {/*
+          * Version, then the Hub this phone talks to, then cosmetics. The
+          * updater used to be reachable only by restarting the app, and the
+          * connection switch sat at the bottom under everything else.
+          */}
         <View style={styles.sectionCard}>
-          <TouchableOpacity style={styles.settingRow} onPress={() => setThemePickerOpen(true)}>
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={onCheckUpdate}
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.checkUpdate')}
+          >
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>{t('settings.checkUpdate')}</Text>
+              <Text style={styles.settingHint}>{updateStatusLabel(updateStatus, t)}</Text>
+            </View>
+            <Text style={styles.chevron}>{updateStatus.kind === 'checking' ? '…' : '›'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.settingRow, styles.rowDivider]}
+            onPress={onOpenConnections}
+            accessibilityRole="button"
+            accessibilityLabel={t('connections.title')}
+          >
+            <View style={styles.rowCopy}>
+              <Text style={styles.settingLabel}>{t('connections.title')}</Text>
+              <Text style={styles.settingHint}>
+                {connectionCount === 0
+                  ? t('connections.empty')
+                  : t('connections.summary', { count: connectionCount, name: connectionTitle })}
+              </Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.settingRow, styles.rowDivider]} onPress={() => setThemePickerOpen(true)}>
             <View style={styles.rowCopy}>
               <Text style={styles.settingLabel}>{t('app.theme')}：{themeLabel(themeMode, t)}</Text>
               <Text style={styles.settingHint}>{t('app.theme.chooseHint')}</Text>
@@ -178,22 +232,6 @@ export function SettingsScreen({
           </View>
           <TouchableOpacity style={styles.primaryButton} onPress={onOpenDiagnostics}>
             <Text style={styles.primaryButtonText}>{t('diagnostics.open')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.settingRow, styles.rowDivider]}
-            onPress={onOpenConnections}
-            accessibilityRole="button"
-            accessibilityLabel={t('connections.title')}
-          >
-            <View style={styles.rowCopy}>
-              <Text style={styles.settingLabel}>{t('connections.title')}</Text>
-              <Text style={styles.settingHint}>
-                {connectionCount === 0
-                  ? t('connections.empty')
-                  : t('connections.summary', { count: connectionCount, name: connectionTitle })}
-              </Text>
-            </View>
-            <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
           <View style={[styles.settingRow, styles.rowDivider]}>
             <View style={styles.rowCopy}>
