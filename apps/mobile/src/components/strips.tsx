@@ -3,7 +3,7 @@ import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { Path, Svg } from 'react-native-svg'
 import { billedInputTokens, formatCacheHitPercent, formatTokensPerSecond, type ContextBreakdownProjection, type SessionStatsView, type TodoItemView, type UsageView } from '@dsh-mobile/core'
-import { colors, fontSize, spacing } from '../theme'
+import { chat, colors, fontSize, radius, shadow, spacing } from '../theme'
 import { useI18n } from '../i18n'
 
 export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Element | null {
@@ -101,84 +101,163 @@ function compactDuration(ms: number): string {
   return `${Math.floor(whole / 60)}m${whole % 60}s`
 }
 
-function StatChip({ label, emphasis }: { label: string; emphasis?: boolean }): React.JSX.Element {
+/** The web's gauge glyph, the session-statistics pill's leading mark. */
+function GaugeGlyph({ color }: { color: string }): React.JSX.Element {
   return (
-    <View style={[styles.statChip, emphasis && styles.statChipEmphasis]}>
-      <Text style={[styles.statChipText, emphasis && styles.statChipTextEmphasis]} numberOfLines={1}>{label}</Text>
-    </View>
-  )
-}
-
-function VerticalArrowGlyph({ direction }: { direction: 'up' | 'down' }): React.JSX.Element {
-  return (
-    <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={colors.accent} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-      {direction === 'up' ? <Path d="m6 15 6-6 6 6" /> : <Path d="m6 9 6 6 6-6" />}
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3.5 18a9 9 0 1 1 17 0" />
+      <Path d="M12 14.5 16 9.5" />
     </Svg>
   )
 }
 
+/** The web's database glyph, worn by every token-usage reading. */
+export function DatabaseGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
+      <Path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+      <Path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+    </Svg>
+  )
+}
+
+/** Exact token count, grouped the way the reader's locale groups numbers. */
+export function exactTokens(value: number, locale: string): string {
+  return Math.round(value).toLocaleString(locale)
+}
+
+/** One row of a stat panel's definition list. */
+export interface StatPanelRow {
+  label: string
+  value: string
+  /** Route strings and any other value that must break instead of truncate. */
+  wrap?: boolean
+}
+
 /**
- * Mobile edition of Web's stats line/context meter. Authoritative projection
- * values are preferred; long facts are segmented so they do not truncate on
- * narrow phones.
+ * The web's stat-dialog skin, shared by the composer dock's two panels and the
+ * per-turn usage pill: menu surface, panel radius, prominent elevation, a
+ * heading row carrying the section's glyph and headline value, a hairline rule,
+ * then a two-column definition list.
+ */
+export function StatPanel({ title, icon, value, rows, extra }: {
+  title: string
+  icon: React.ReactNode
+  /** The section's headline figure, right-aligned; omitted when it has none. */
+  value?: string | undefined
+  rows: StatPanelRow[]
+  /** A trailing block under the list (the context meter's segmented bar). */
+  extra?: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <View style={styles.panel}>
+      <View style={styles.panelHead}>
+        {icon}
+        <Text style={styles.panelTitle} numberOfLines={1}>{title}</Text>
+        {value !== undefined && <Text style={styles.panelValueHead}>{value}</Text>}
+      </View>
+      <View style={styles.panelRule} />
+      {rows.map(row => (
+        <View key={row.label} style={styles.panelRow}>
+          <Text style={styles.panelLabel} numberOfLines={1}>{row.label}</Text>
+          <Text style={[styles.panelValue, row.wrap === true && styles.panelValueWrap]}>{row.value}</Text>
+        </View>
+      ))}
+      {extra}
+    </View>
+  )
+}
+
+/**
+ * One stat pill: transparent at rest, tertiary 12/20 text, a 14px glyph and a
+ * hover-ish fill once its panel is open. A pill without a panel stays a plain
+ * reading rather than opening an empty dialog.
+ */
+function StatPill({ icon, label, open, onPress, accessibilityLabel }: {
+  icon: React.ReactNode
+  label: string
+  open: boolean
+  onPress?: (() => void) | undefined
+  accessibilityLabel: string
+}): React.JSX.Element {
+  const body = (
+    <>
+      {icon}
+      <Text style={styles.pillText} numberOfLines={1}>{label}</Text>
+    </>
+  )
+  if (onPress === undefined) return <View style={styles.pill}>{body}</View>
+  return (
+    <TouchableOpacity
+      style={[styles.pill, open && styles.pillOpen]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ expanded: open }}
+    >
+      {body}
+    </TouchableOpacity>
+  )
+}
+
+/**
+ * The web's composer statistics dock: two pills centred above the input card —
+ * a gauge carrying the session's counts and decode speed, a database carrying
+ * its billed total and cache-hit share — each opening the shared stat panel for
+ * the figures that do not fit a phone's width. A pill with no rows behind it
+ * stays a plain reading, exactly as the web leaves it.
  */
 export function SessionStatsBar({ view }: { view: SessionStatsView | null }): React.JSX.Element | null {
-  const { t } = useI18n()
-  const [expanded, setExpanded] = React.useState(false)
+  const { t, locale } = useI18n()
+  const [open, setOpen] = React.useState<'time' | 'usage' | null>(null)
   if (view === null) return null
   const { stats, usage, pressure, breakdown } = view
   const billedInput = billedInputTokens(usage)
   const hasUsage = billedInput > 0 || usage.outputTokens > 0
-  const chips: { key: string; label: string; emphasis?: boolean }[] = []
-  if (stats.steps > 0) {
-    chips.push({ key: 'counts', label: t('stats.counts', { turns: stats.turns, steps: stats.steps }), emphasis: true })
-    if (stats.llmMs > 0) chips.push({ key: 'llm', label: t('stats.llm', { duration: compactDuration(stats.llmMs) }) })
-    if (stats.toolMs > 0) chips.push({ key: 'tools', label: t('stats.toolCalls', { duration: compactDuration(stats.toolMs) }) })
-    if (stats.ttftSteps > 0) {
-      chips.push({ key: 'ttft', label: t('stats.ttft', { duration: compactDuration(stats.ttftMs / stats.ttftSteps) }) })
-    }
-    if (stats.decodeMs > 0) {
-      chips.push({ key: 'rate', label: t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) }) })
-    }
-  }
+  if (stats.steps === 0 && !hasUsage) return null
+
+  const counts = t('stats.counts', { turns: stats.turns, steps: stats.steps })
+  const speed = stats.decodeMs > 0
+    ? t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) })
+    : null
   // Web parity: a partial hit is never rounded up to a full one.
   const cacheHit = hasUsage ? formatCacheHitPercent(usage.cacheReadTokens, billedInput) : null
-  if (cacheHit !== null) chips.push({ key: 'cache', label: t('stats.cacheHit', { percent: cacheHit }) })
-  if (hasUsage) {
-    chips.push({ key: 'input', label: t('stats.inputTokens', { tokens: compactTokens(billedInput) }) })
-    chips.push({ key: 'output', label: t('stats.outputTokens', { tokens: compactTokens(usage.outputTokens) }) })
-  }
-  /**
-   * The web's usage pill total: every prompt-side billing bucket plus output
-   * (`billedInputTokens(usage) + usage.outputTokens`), shown compactly as
-   * `512K tok`. It is the session's whole billed volume, not the context
-   * window, so it rides next to the cache share in the always-visible line.
-   */
-  const totalTokens = hasUsage ? compactTokens(billedInput + usage.outputTokens) : null
-  if (totalTokens !== null) chips.push({ key: 'total', label: t('stats.totalTokens', { tokens: totalTokens }) })
+  const total = billedInput + usage.outputTokens
+  const totalCompact = hasUsage ? t('stats.totalTokens', { tokens: compactTokens(total) }) : null
+  const cacheText = cacheHit === null ? null : t('stats.cacheHit', { percent: cacheHit })
+  const exact = (value: number): string => t('message.turnUsage.count', { count: exactTokens(value, locale) })
 
+  /**
+   * The gauge's panel: the timings behind the speed reading. The web keeps the
+   * pill a plain reading when there is no timed figure, so an untimed session
+   * never opens an empty dialog here either.
+   */
+  const timeRows: StatPanelRow[] = []
+  if (stats.llmMs > 0) timeRows.push({ label: t('stats.dialog.llmTime'), value: compactDuration(stats.llmMs) })
+  if (stats.toolMs > 0) timeRows.push({ label: t('stats.dialog.toolTime'), value: compactDuration(stats.toolMs) })
+  if (stats.ttftSteps > 0) timeRows.push({ label: t('stats.dialog.ttft'), value: compactDuration(stats.ttftMs / stats.ttftSteps) })
+  if (speed !== null) timeRows.push({ label: t('stats.dialog.speed'), value: speed })
+
+  const usageRows: StatPanelRow[] = []
+  if (cacheText !== null) usageRows.push({ label: t('message.turnUsage.cacheHit'), value: `${cacheHit}%` })
+  if (hasUsage) {
+    usageRows.push({ label: t('message.turnUsage.input'), value: exact(usage.uncachedInputTokens) })
+    usageRows.push({ label: t('message.turnUsage.cacheRead'), value: exact(usage.cacheReadTokens) })
+    if (usage.cacheWriteTokens !== 0) {
+      usageRows.push({ label: t('message.turnUsage.cacheWrite'), value: exact(usage.cacheWriteTokens) })
+    }
+    usageRows.push({ label: t('message.turnUsage.output'), value: exact(usage.outputTokens) })
+  }
+
+  /**
+   * The context meter rides the usage panel rather than a third pill: how full
+   * the window is, then the host's three-way split of what fills it.
+   */
   const usedTokens = pressure?.projectedTokens ?? pressure?.pressureTokens
   const windowTokens = pressure?.contextWindow
   const hasContext = usedTokens !== undefined && windowTokens !== undefined && windowTokens > 0
   const contextPercent = hasContext ? Math.min(100, Math.round(usedTokens! / windowTokens! * 100)) : null
-  if (chips.length === 0 && !hasContext) return null
-
-  /**
-   * The always-visible one-liner: what the session has done and how fast, in the
-   * web's composer-stats composition (`1 轮 · 3 步 · 213 tok/s · 缓存命中 93%`).
-   * Counts lead because they are the durable figure; speed needs a decode
-   * measurement and the cache share needs billed input, so a session without
-   * either simply shows fewer parts rather than zeros.
-   */
-  const compactParts: string[] = []
-  if (stats.steps > 0) compactParts.push(t('stats.counts', { turns: stats.turns, steps: stats.steps }))
-  if (stats.decodeMs > 0) {
-    compactParts.push(t('stats.tokensPerSecond', { tps: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1_000)) }))
-  }
-  if (totalTokens !== null) compactParts.push(t('stats.totalTokens', { tokens: totalTokens }))
-  if (cacheHit !== null) compactParts.push(t('stats.cacheHit', { percent: cacheHit }))
-  const contextSize = contextPercent === null ? null : t('stats.contextBadge', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })
-
   const breakdownTotal = breakdown === null
     ? 0
     : breakdown.systemTokens + breakdown.toolsTokens + breakdown.messageTokens
@@ -190,48 +269,69 @@ export function SessionStatsBar({ view }: { view: SessionStatsView | null }): Re
           color: key === 'systemTokens' ? colors.accent : key === 'toolsTokens' ? colors.warning : colors.success,
           width: contextPercent === null ? 0 : contextPercent * breakdown[key] / breakdownTotal,
         })).filter(segment => segment.width > 0)
-
-  return (
-    <View style={styles.statsCard}>
-      <View style={styles.statsHeader}>
-        <Text style={styles.statsTitle}>{t('stats.title')}</Text>
-        <TouchableOpacity
-          style={styles.statsToggle}
-          accessibilityRole="button"
-          accessibilityLabel={expanded ? t('stats.collapse') : t('stats.expand')}
-          accessibilityState={{ expanded }}
-          hitSlop={10}
-          onPress={() => setExpanded(current => !current)}
-        >
-          <VerticalArrowGlyph direction={expanded ? 'down' : 'up'} />
-        </TouchableOpacity>
-        {contextSize === null ? <View style={styles.statsHeaderSpacer} /> : (
-          <Text style={styles.contextBadge} numberOfLines={1}>{contextSize}</Text>
+  if (contextPercent !== null) {
+    usageRows.push({
+      label: t('stats.dialog.context'),
+      value: t('stats.approx', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) }),
+    })
+  }
+  const contextExtra = contextPercent === null
+    ? undefined
+    : (
+      <View style={styles.contextSection}>
+        <View style={styles.contextTrack}>
+          {segments.map(segment => (
+            <View key={segment.key} style={[styles.contextSegment, { backgroundColor: segment.color, flex: segment.width }]} />
+          ))}
+        </View>
+        {breakdown !== null && breakdownTotal > 0 && (
+          <Text style={styles.contextText} numberOfLines={2}>
+            {t('stats.breakdown', {
+              system: compactTokens(breakdown.systemTokens),
+              tools: compactTokens(breakdown.toolsTokens),
+              messages: compactTokens(breakdown.messageTokens),
+            })}
+          </Text>
         )}
       </View>
-      {compactParts.length > 0 && (
-        <Text style={styles.statsCompact} numberOfLines={1}>{compactParts.join(' · ')}</Text>
+    )
+
+  return (
+    <View style={styles.statsDock}>
+      {open === 'time' && (
+        <StatPanel title={t('stats.dialog.title')} icon={<GaugeGlyph color={chat.labelTertiary} />} rows={timeRows} />
       )}
-      {expanded && chips.length > 0 && (
-        <View style={styles.statsChips}>
-          {chips.map(chip => <StatChip key={chip.key} label={chip.label} emphasis={chip.emphasis} />)}
-        </View>
+      {open === 'usage' && (
+        <StatPanel
+          title={t('stats.dialog.usageTitle')}
+          icon={<DatabaseGlyph color={chat.labelTertiary} />}
+          value={hasUsage ? exact(total) : undefined}
+          rows={usageRows}
+          extra={contextExtra}
+        />
       )}
-      {expanded && contextPercent !== null && (
-        <View style={styles.contextSection}>
-          <View style={styles.contextTrack}>
-            {segments.map(segment => (
-              <View key={segment.key} style={[styles.contextSegment, { backgroundColor: segment.color, flex: segment.width }]} />
-            ))}
-          </View>
-          <Text style={styles.contextText} numberOfLines={1}>
-            {t('stats.approx', { used: compactTokens(usedTokens!), total: compactTokens(windowTokens!) })}
-            {breakdown !== null && breakdownTotal > 0
-              ? t('stats.breakdown', { system: compactTokens(breakdown.systemTokens), tools: compactTokens(breakdown.toolsTokens), messages: compactTokens(breakdown.messageTokens) })
-              : ''}
-          </Text>
-        </View>
-      )}
+      <View style={styles.statsRow}>
+        {stats.steps > 0 && (
+          <StatPill
+            icon={<GaugeGlyph color={chat.labelTertiary} />}
+            label={[counts, speed].filter((part): part is string => part !== null).join(' · ')}
+            open={open === 'time'}
+            accessibilityLabel={t('stats.dialog.title')}
+            {...timeRows.length === 0
+              ? {}
+              : { onPress: () => setOpen(current => current === 'time' ? null : 'time') }}
+          />
+        )}
+        {hasUsage && (
+          <StatPill
+            icon={<DatabaseGlyph color={chat.labelTertiary} />}
+            label={[totalCompact, cacheText].filter((part): part is string => part !== null).join(' · ')}
+            open={open === 'usage'}
+            accessibilityLabel={t('stats.dialog.usageTitle')}
+            onPress={() => setOpen(current => current === 'usage' ? null : 'usage')}
+          />
+        )}
+      </View>
     </View>
   )
 }
@@ -248,9 +348,13 @@ export function PlanChip({ mode }: { mode: string | undefined }): React.JSX.Elem
 
 const styles = StyleSheet.create({
   strip: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bgElevated,
+    marginHorizontal: spacing(2),
+    marginBottom: spacing(2),
+    borderRadius: radius.lg,
+    backgroundColor: chat.menu,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL1,
+    boxShadow: shadow.panel,
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
   },
@@ -277,34 +381,51 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   planChipText: { color: colors.accent, fontSize: fontSize.tiny },
-  statsCard: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bgElevated,
-    paddingHorizontal: spacing(3),
-    paddingTop: spacing(2),
-    paddingBottom: spacing(2.5),
-  },
-  statsHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
-  statsTitle: { color: colors.textDim, fontSize: fontSize.tiny, fontWeight: '600', flex: 1 },
-  statsToggle: { padding: spacing(1) },
-  statsHeaderSpacer: { flex: 1 },
-  contextBadge: { color: colors.accent, fontSize: fontSize.tiny, fontWeight: '600', flex: 1, textAlign: 'right' },
-  /** The always-visible one-liner under the title row. */
-  statsCompact: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
-  statsChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1.5), marginTop: spacing(2) },
-  statChip: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 999,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing(2.5),
-    paddingVertical: spacing(1),
+  /** The web's dock: the pills centred with 12px between them, 4px of top pad. */
+  statsDock: { alignItems: 'center', gap: 12, paddingTop: spacing(1), paddingBottom: spacing(1) },
+  statsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, minWidth: 0, maxWidth: '100%' },
+  /** A stat pill: transparent at rest, one tier up once its panel is open. */
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     maxWidth: '100%',
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    borderRadius: 999,
   },
-  statChipEmphasis: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
-  statChipText: { color: colors.textDim, fontSize: fontSize.tiny },
-  statChipTextEmphasis: { color: colors.text, fontWeight: '600' },
+  pillOpen: { backgroundColor: chat.hover },
+  pillText: { color: chat.labelTertiary, fontSize: 12, lineHeight: 20, flexShrink: 1 },
+  /**
+   * The shared stat panel skin: menu surface, large radius and the prominent
+   * elevation, a heading row with the section glyph and its headline figure,
+   * then the two-column list.
+   */
+  panel: {
+    alignSelf: 'stretch',
+    backgroundColor: chat.menu,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL1,
+    boxShadow: shadow.prominent,
+    padding: spacing(4),
+  },
+  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  panelTitle: { color: chat.labelPrimary, fontSize: 12, lineHeight: 18, fontWeight: '500', flexShrink: 1 },
+  panelValueHead: { marginLeft: 'auto', color: chat.labelPrimary, fontSize: 12, lineHeight: 18, fontWeight: '500' },
+  panelRule: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: chat.borderL2, marginBottom: 10 },
+  panelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(4), paddingVertical: 3 },
+  panelLabel: { color: chat.labelTertiary, fontSize: 12, lineHeight: 18, flexShrink: 0 },
+  panelValue: {
+    flex: 1,
+    minWidth: 0,
+    color: chat.labelSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'right',
+    fontVariant: ['tabular-nums'],
+  },
+  panelValueWrap: { textAlign: 'right' },
   contextSection: { marginTop: spacing(2) },
   contextTrack: {
     flexDirection: 'row',

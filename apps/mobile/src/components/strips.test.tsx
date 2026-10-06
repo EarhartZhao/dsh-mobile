@@ -5,6 +5,7 @@ import type { SessionStatsView } from '@dsh-mobile/core'
 jest.mock('../i18n', () => ({
   I18nProvider: ({ children }: { children: React.ReactNode }) => children,
   useI18n: () => ({
+    locale: 'zh-CN',
     t: (key: string, values?: Record<string, string | number>) => values === undefined
       ? key
       : `${key}(${Object.entries(values).map(([name, value]) => `${name}=${String(value)}`).join(',')})`,
@@ -46,17 +47,57 @@ function render(value: SessionStatsView): renderer.ReactTestRenderer {
   return tree
 }
 
+/** Press the one control carrying this accessibility label. */
+function press(tree: renderer.ReactTestRenderer, label: string): void {
+  const node = tree.root.findAll(entry => typeof entry.props?.onPress === 'function'
+    && entry.props.accessibilityLabel === label)
+  expect(node.length).toBeGreaterThan(0)
+  act(() => { (node[0]!.props.onPress as () => void)() })
+}
+
 describe('SessionStatsBar', () => {
-  it('keeps a permanent one-liner: counts, decode speed, cache hit', () => {
-    // The web keeps the same composition next to the composer; the phone strip
-    // must show it without opening anything.
+  it('splits the reading into the web\u2019s timing pill and usage pill', () => {
+    // The web centres two pills under the composer: the gauge carries what the
+    // session has done and how fast, the database carries what it billed. Both
+    // stay visible without opening anything.
     const tree = render(view())
 
     // `557K tok` is the web usage pill's own total: billed input (50K + 497K)
     // plus output (9.5K), compacted exactly like the web's formatTokens.
-    expect(texts(tree)).toContain(
-      'stats.counts(turns=1,steps=3) · stats.tokensPerSecond(tps=213) · stats.totalTokens(tokens=557K) · stats.cacheHit(percent=91)',
-    )
+    expect(texts(tree)).toContain('stats.counts(turns=1,steps=3) · stats.tokensPerSecond(tps=213)')
+    expect(texts(tree)).toContain('stats.totalTokens(tokens=557K) · stats.cacheHit(percent=91)')
+  })
+
+  it('opens the timing panel on the gauge pill', () => {
+    // The figures a pill cannot hold live in the shared stat panel: the timings
+    // behind the speed reading, each with its own duration.
+    const tree = render(view({
+      stats: {
+        turns: 1, steps: 3, llmMs: 12_500, toolMs: 3_000, ttftMs: 1_600, ttftSteps: 2,
+        decodeMs: 2_000, decodeTokens: 426,
+      },
+    }))
+    press(tree, 'stats.dialog.title')
+
+    expect(texts(tree)).toEqual(expect.arrayContaining([
+      'stats.dialog.llmTime', '12.5s',
+      'stats.dialog.toolTime', '3s',
+      'stats.dialog.ttft', '0.8s',
+      'stats.dialog.speed', 'stats.tokensPerSecond(tps=213)',
+    ]))
+  })
+
+  it('opens the usage panel with the session\u2019s exact buckets', () => {
+    const tree = render(view({ stats: { ...view().stats, decodeMs: 0, decodeTokens: 0 } }))
+    press(tree, 'stats.dialog.usageTitle')
+
+    expect(texts(tree)).toEqual(expect.arrayContaining([
+      'stats.dialog.usageTitle', 'message.turnUsage.count(count=556,500)',
+      'message.turnUsage.cacheHit', '91%',
+      'message.turnUsage.input', 'message.turnUsage.count(count=50,000)',
+      'message.turnUsage.cacheRead', 'message.turnUsage.count(count=497,000)',
+      'message.turnUsage.output', 'message.turnUsage.count(count=9,500)',
+    ]))
   })
 
   it('drops the parts a session has no measurement for', () => {
