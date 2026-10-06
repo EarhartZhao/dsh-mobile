@@ -245,6 +245,31 @@ describe('deriveConversation', () => {
     expect((items[1] as { messageId?: string }).messageId).toBeUndefined()
   })
 
+  it('reads the step\'s token accounting off the assistant message', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { content: [{ type: 'text', text: 'hi' }] },
+      usage: { uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2 },
+    })
+    // A message the host billed nothing for carries no accounting at all, which
+    // is what keeps the turn's usage pill off rather than showing zeros.
+    feed(store, 2, 'assistant/message', { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'plain' }] } })
+    // A partial usage block is not accounting this client can report.
+    feed(store, 3, 'assistant/message', {
+      turn: 3, step: 1, message: { content: [{ type: 'text', text: 'partial' }] }, usage: { outputTokens: 5 },
+    })
+
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({
+      kind: 'assistant',
+      usage: { uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2 },
+    })
+    expect(items[1]).not.toHaveProperty('usage')
+    expect(items[2]).not.toHaveProperty('usage')
+  })
+
   it('renders inline user images and compaction markers', () => {
     const store = new SessionStore()
     feed(store, 1, 'user/message', {

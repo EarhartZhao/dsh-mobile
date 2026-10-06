@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupTurns, processOwnerItem, turnTail } from '../src/turns.ts'
+import { groupTurns, processOwnerItem, turnTail, turnTokenUsage } from '../src/turns.ts'
 import type { ConversationItem } from '../src/conversation.ts'
 
 function user(seq: number, text: string) {
@@ -263,5 +263,52 @@ describe('groupTurns', () => {
       preview: 'first line',
       text: 'first line\nbody of the thought',
     })
+  })
+})
+
+describe('turnTokenUsage', () => {
+  /** An assistant message carrying the step's own accounting. */
+  const billed = (seq: number, text: string, usage: {
+    uncachedInputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    reasoningTokens?: number
+  }) => ({ ...assistant(seq, text), usage })
+
+  it('sums the turn\'s steps into the total the usage pill prints', () => {
+    const turn = groupTurns(items(
+      user(1, 'q'),
+      billed(2, 'first', { uncachedInputTokens: 120, outputTokens: 30, cacheReadTokens: 800, cacheWriteTokens: 50 }),
+      tool(3, 'Bash'),
+      billed(4, 'second', { uncachedInputTokens: 0, outputTokens: 20, cacheReadTokens: 900, cacheWriteTokens: 0, reasoningTokens: 12 }),
+    ))[0]!
+
+    // The web's total is every prompt-side bucket plus the answer's output; the
+    // reasoning share is reported beside the output, not added to it again.
+    expect(turnTokenUsage(turn)).toEqual({
+      totalTokens: 120 + 800 + 50 + 30 + 900 + 20,
+      uncachedInputTokens: 120,
+      cacheReadTokens: 1_700,
+      cacheWriteTokens: 50,
+      outputTokens: 50,
+      reasoningTokens: 12,
+    })
+  })
+
+  it('reports nothing for a turn whose steps recorded no accounting', () => {
+    // No measurement is a different fact from a measured zero: the pill has
+    // nothing to say, so it is left off rather than shown as `用量 0 tok`.
+    const turn = groupTurns(items(user(1, 'q'), assistant(2, 'hello')))[0]!
+    expect(turnTokenUsage(turn)).toBeNull()
+  })
+
+  it('keeps the reasoning share off a turn that never reported one', () => {
+    const turn = groupTurns(items(
+      user(1, 'q'),
+      billed(2, 'hello', { uncachedInputTokens: 10, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+    ))[0]!
+
+    expect(turnTokenUsage(turn)).not.toHaveProperty('reasoningTokens')
   })
 })

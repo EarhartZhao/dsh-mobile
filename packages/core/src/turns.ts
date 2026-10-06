@@ -355,3 +355,58 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
 
   return turns
 }
+
+/**
+ * One turn's billed tokens, summed over the usage its assistant messages
+ * recorded.
+ *
+ * `totalTokens` is the web's own aggregate — every prompt-side bucket plus the
+ * answer — which is what its turn-usage pill prints (`用量 12.3K`) and what the
+ * cache-hit share divides against. Null means the turn recorded no accounting,
+ * which is a different fact from a turn that recorded zero and is why the pill
+ * is not shown at all in that case.
+ */
+export interface TurnTokenUsage {
+  totalTokens: number
+  uncachedInputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  outputTokens: number
+  reasoningTokens?: number
+}
+
+/**
+ * Sum a turn's step usages.
+ * @param turn - the turn whose assistant messages carry the accounting.
+ * @returns the summed buckets, or null when no step recorded any.
+ */
+export function turnTokenUsage(turn: Turn): TurnTokenUsage | null {
+  let uncachedInputTokens = 0
+  let cacheReadTokens = 0
+  let cacheWriteTokens = 0
+  let outputTokens = 0
+  let reasoningTokens = 0
+  let recordedReasoning = false
+  let sawUsage = false
+  for (const item of turn.items) {
+    if (item.kind !== 'assistant' || item.usage === undefined) continue
+    sawUsage = true
+    uncachedInputTokens += item.usage.uncachedInputTokens
+    cacheReadTokens += item.usage.cacheReadTokens
+    cacheWriteTokens += item.usage.cacheWriteTokens
+    outputTokens += item.usage.outputTokens
+    if (item.usage.reasoningTokens !== undefined) {
+      reasoningTokens += item.usage.reasoningTokens
+      recordedReasoning = true
+    }
+  }
+  if (!sawUsage) return null
+  return {
+    totalTokens: uncachedInputTokens + cacheReadTokens + cacheWriteTokens + outputTokens,
+    uncachedInputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    outputTokens,
+    ...(recordedReasoning ? { reasoningTokens } : {}),
+  }
+}

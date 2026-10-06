@@ -22,6 +22,12 @@ export type ConversationItem =
       reasoning: string
       interrupted: boolean
       producedFiles: string[]
+      /**
+       * The step's own token accounting, straight off `assistant/message`.
+       * Absent when the host recorded none — the turn's usage pill then has
+       * nothing to report and stays off rather than showing zeros.
+       */
+      usage?: StepTokenUsage
     }
   | { kind: 'compaction'; key: string; seq: number; time: number; summary: string; compactionId: string }
   | {
@@ -74,6 +80,20 @@ export interface DeliveredFile {
   description?: string
 }
 
+/**
+ * One step's billed prompt and output buckets.
+ *
+ * Field names mirror the host's `tokenUsage` projection so the log fold and the
+ * authoritative projection describe the same quantities with the same words.
+ */
+export interface StepTokenUsage {
+  uncachedInputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens?: number
+}
+
 export type ConversationImage =
   | { kind: 'data'; uri: string; name?: string | undefined }
   | { kind: 'attachment'; attachmentId: string; name?: string | undefined }
@@ -104,6 +124,29 @@ export interface ToolSubCall {
 
 function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+/**
+ * The prompt-side and output buckets of one `assistant/message`.
+ *
+ * A usage block without its two mandatory figures is not accounting this client
+ * can report, so it reads as "no measurement" rather than as zeros — the same
+ * rule the session stats fold applies.
+ */
+function stepUsage(data: Record<string, unknown>): StepTokenUsage | null {
+  const usage = data['usage']
+  if (!isObj(usage)) return null
+  const uncachedInputTokens = usage['uncachedInputTokens']
+  const outputTokens = usage['outputTokens']
+  if (typeof uncachedInputTokens !== 'number' || typeof outputTokens !== 'number') return null
+  const reasoningTokens = usage['reasoningTokens']
+  return {
+    uncachedInputTokens,
+    outputTokens,
+    cacheReadTokens: typeof usage['cacheReadTokens'] === 'number' ? usage['cacheReadTokens'] : 0,
+    cacheWriteTokens: typeof usage['cacheWriteTokens'] === 'number' ? usage['cacheWriteTokens'] : 0,
+    ...(typeof reasoningTokens === 'number' ? { reasoningTokens } : {}),
+  }
 }
 
 /** Content is `string | ContentBlock[]`; unknown block types are skipped, never fatal. */
@@ -283,6 +326,9 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           seenFiles.add(path)
           return true
         })
+        // The step's own billing, read here because this is the event that
+        // carries it; the turn's usage pill sums these across the turn.
+        const usage = stepUsage(data)
         items.push({
           kind: 'assistant',
           key: `a${seq}`,
@@ -293,6 +339,7 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
           reasoning: blocksToReasoning(content),
           interrupted: data['interrupted'] === true,
           producedFiles,
+          ...(usage === null ? {} : { usage }),
         })
         break
       }
