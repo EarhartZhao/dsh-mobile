@@ -10,7 +10,7 @@
  */
 import React from 'react'
 import { Clipboard, Platform, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { colors, fontSize, radius, spacing } from './theme'
+import { chat, fontSize, radius, spacing } from './theme'
 import { useI18n } from './i18n'
 
 /** Fenced code block: language chip, copy/share, horizontal scroll. */
@@ -87,41 +87,44 @@ export const markdownPreviewRules = {
 
 /** Typography shared by every Markdown surface. */
 export const markdownStyles = StyleSheet.create({
-  body: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
-  strong: { color: colors.text, fontWeight: '700' },
+  // The web's assistant flow body: 14/24 with a 16px block gap, which is the
+  // same ladder a previewed `.md` reads at.
+  body: { color: chat.labelPrimary, fontSize: 14, lineHeight: 24 },
+  paragraph: { marginTop: 0, marginBottom: 16 },
+  strong: { color: chat.labelPrimary, fontWeight: '700' },
   em: { fontStyle: 'italic' },
-  link: { color: colors.accent },
-  heading1: { color: colors.text, fontSize: 18, fontWeight: '700', marginTop: 8, marginBottom: 4 },
-  heading2: { color: colors.text, fontSize: 17, fontWeight: '700', marginTop: 8, marginBottom: 4 },
-  heading3: { color: colors.text, fontSize: 16, fontWeight: '600', marginTop: 6, marginBottom: 3 },
+  link: { color: chat.link },
+  heading1: { color: chat.labelPrimary, fontSize: 20, lineHeight: 28, fontWeight: '700', marginTop: 8, marginBottom: 8 },
+  heading2: { color: chat.labelPrimary, fontSize: 17, lineHeight: 24, fontWeight: '700', marginTop: 8, marginBottom: 6 },
+  heading3: { color: chat.labelPrimary, fontSize: 15, lineHeight: 22, fontWeight: '600', marginTop: 6, marginBottom: 4 },
   code_inline: {
-    color: colors.accent,
-    backgroundColor: colors.bg,
+    color: chat.labelPrimary,
+    backgroundColor: chat.inlineCode,
     fontSize: fontSize.small,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   fence: {
-    backgroundColor: colors.bg,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radius.card,
+    backgroundColor: chat.codeBlock,
+    borderColor: chat.borderL2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.md,
     padding: spacing(2),
     marginVertical: spacing(1.5),
   },
-  code: { color: colors.text, fontSize: fontSize.small, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  bullet_list_icon: { color: colors.textDim },
-  ordered_list_content: { color: colors.text, fontSize: fontSize.body },
-  blockquote: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: spacing(2), backgroundColor: colors.bg },
-  hr: { backgroundColor: colors.border },
+  code: { color: chat.labelPrimary, fontSize: fontSize.small, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  bullet_list_icon: { color: chat.labelTertiary },
+  ordered_list_content: { color: chat.labelPrimary, fontSize: 14, lineHeight: 24 },
+  blockquote: { borderLeftWidth: 3, borderLeftColor: chat.borderL3, paddingLeft: spacing(3), marginVertical: 8 },
+  hr: { backgroundColor: chat.borderL2 },
 })
 
 const codeStyles = StyleSheet.create({
   block: {
     alignSelf: 'stretch',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    backgroundColor: colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL2,
+    borderRadius: radius.md,
+    backgroundColor: chat.codeBlock,
     marginVertical: spacing(2),
     overflow: 'hidden',
   },
@@ -132,17 +135,17 @@ const codeStyles = StyleSheet.create({
     paddingHorizontal: spacing(2.5),
     paddingVertical: spacing(1.5),
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bgElevated,
+    borderBottomColor: chat.borderL2,
+    backgroundColor: chat.codeBlock,
   },
-  language: { color: colors.textDim, fontSize: fontSize.tiny },
+  language: { color: chat.labelTertiary, fontSize: fontSize.tiny },
   actions: { flexDirection: 'row', gap: spacing(3) },
-  action: { color: colors.accent, fontSize: fontSize.tiny },
+  action: { color: chat.link, fontSize: fontSize.tiny },
   code: {
     minWidth: '100%',
     paddingHorizontal: spacing(2.5),
     paddingVertical: spacing(2),
-    color: colors.text,
+    color: chat.labelPrimary,
     fontSize: fontSize.small,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },

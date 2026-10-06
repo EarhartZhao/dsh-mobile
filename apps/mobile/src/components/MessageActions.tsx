@@ -12,11 +12,13 @@
  * running.
  */
 import React from 'react'
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import type { TurnBranchAnchor } from '@dsh-mobile/core'
+import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import type { TurnBranchAnchor, TurnTokenUsage } from '@dsh-mobile/core'
 import type { MobileFeedbackItem, MobileFeedbackRating } from '@dsh-mobile/protocol'
+import { ModalBackdrop } from './ModalBackdrop'
+import { DatabaseGlyph, StatPanel, exactTokens, type StatPanelRow } from './strips'
 import { useI18n } from '../i18n'
-import { colors, fontSize, spacing } from '../theme'
+import { chat, colors, radius, spacing } from '../theme'
 
 /**
  * The web's message clock: `HH:mm` for today, a date plus the time once the
@@ -56,6 +58,8 @@ export interface MessageActionRowProps {
   canRate: boolean
   /** The turn boundary this message may fork at; absent hides the control. */
   branch?: TurnBranchAnchor | undefined
+  /** The turn's billed tokens; absent when it recorded none. */
+  usage?: TurnTokenUsage | undefined
   onCopy: () => void
   /** A rating click: the chosen rating, or null to retract the stored one. */
   onRate: (rating: MobileFeedbackRating | null) => void
@@ -64,11 +68,14 @@ export interface MessageActionRowProps {
 }
 
 export function MessageActionRow({
-  time, clock, rating, canRate, branch, onCopy, onRate, onBranch,
+  time, clock, rating, canRate, branch, usage, onCopy, onRate, onBranch,
 }: MessageActionRowProps): React.JSX.Element {
   const { t, locale } = useI18n()
+  const [usageOpen, setUsageOpen] = React.useState(false)
   const label = messageClock(time, locale)
-  const clockLabel = label === null ? null : <Text style={styles.clock}>{label}</Text>
+  const clockLabel = label === null ? null : (
+    <Text style={[styles.clock, clock === 'start' && styles.clockStart]}>{label}</Text>
+  )
   return (
     <View
       style={[styles.row, clock === 'start' ? styles.rowStart : styles.rowEnd]}
@@ -114,23 +121,111 @@ export function MessageActionRow({
           </Text>
         </TouchableOpacity>
       )}
+      {usage !== undefined && (
+        <TouchableOpacity
+          style={styles.usagePill}
+          hitSlop={6}
+          onPress={() => setUsageOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={t('message.turnUsage.title')}
+        >
+          <DatabaseGlyph color={chat.labelTertiary} />
+          <Text style={styles.usageText}>
+            {t('message.turnUsage.consumed', { total: usageLabel(usage) })}
+          </Text>
+        </TouchableOpacity>
+      )}
       {clock === 'end' && clockLabel}
+      {usage !== undefined && (
+        <TurnUsageDialog usage={usage} visible={usageOpen} onClose={() => setUsageOpen(false)} />
+      )}
     </View>
   )
 }
 
+/** The web's compact count: `12.3K`, `1.4M`, or a plain integer below 1K. */
+export function usageLabel(usage: TurnTokenUsage): string {
+  const round = (value: number): string =>
+    value < 100 ? (Math.round(value * 10) / 10).toString() : Math.round(value).toString()
+  if (usage.totalTokens < 1_000) return String(Math.round(usage.totalTokens))
+  if (usage.totalTokens < 1_000_000) return `${round(usage.totalTokens / 1_000)}K`
+  return `${round(usage.totalTokens / 1_000_000)}M`
+}
+
+/**
+ * The web's per-turn usage dialog: the turn's own buckets, exact to the token,
+ * with the cache share and the reasoning share the summary figures hide. It
+ * wears the shared stat-panel skin the composer dock's pills open.
+ */
+function TurnUsageDialog({ usage, visible, onClose }: {
+  usage: TurnTokenUsage
+  visible: boolean
+  onClose: () => void
+}): React.JSX.Element {
+  const { t, locale } = useI18n()
+  const billedInput = usage.totalTokens - usage.outputTokens
+  const cacheHit = billedInput > 0 ? Math.min(100, Math.round(usage.cacheReadTokens / billedInput * 1000) / 10) : null
+  const count = (value: number): string => t('message.turnUsage.count', { count: exactTokens(value, locale) })
+  const rows: StatPanelRow[] = []
+  if (cacheHit !== null) rows.push({ label: t('message.turnUsage.cacheHit'), value: `${cacheHit}%` })
+  rows.push({ label: t('message.turnUsage.input'), value: count(usage.uncachedInputTokens) })
+  rows.push({ label: t('message.turnUsage.cacheRead'), value: count(usage.cacheReadTokens) })
+  if (usage.cacheWriteTokens !== 0) rows.push({ label: t('message.turnUsage.cacheWrite'), value: count(usage.cacheWriteTokens) })
+  rows.push({
+    label: t('message.turnUsage.output'),
+    value: `${count(usage.outputTokens)}${usage.reasoningTokens === undefined
+      ? ''
+      : t('message.turnUsage.reasoning', { tokens: count(usage.reasoningTokens) })}`,
+  })
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <ModalBackdrop onClose={onClose}>
+        <View style={styles.usagePanel}>
+          <StatPanel
+            title={t('message.turnUsage.title')}
+            icon={<DatabaseGlyph color={chat.labelTertiary} />}
+            value={count(usage.totalTokens)}
+            rows={rows}
+          />
+        </View>
+      </ModalBackdrop>
+    </Modal>
+  )
+}
+
 const styles = StyleSheet.create({
+  /**
+   * The web's message action row: one 28px line with 8px between its controls.
+   * The prompt's clock keeps a 12px gap before the actions; the answer's row
+   * keeps the web's own 16px drop and 6px optical overhang under the narration.
+   */
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing(3),
-    marginTop: spacing(1.5),
+    gap: 8,
+    height: 28,
   },
   rowStart: { justifyContent: 'flex-start' },
-  rowEnd: { justifyContent: 'flex-end' },
-  action: { color: colors.textDim, fontSize: fontSize.tiny },
+  rowEnd: { justifyContent: 'flex-start', marginTop: 16, marginLeft: -6 },
+  action: { color: chat.labelTertiary, fontSize: 13 },
+  /**
+   * The turn-usage trigger: the web's 28px pill — a 15px data glyph, 4px to its
+   * label, 8px of pill padding — seated with the other actions.
+   */
+  usagePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: radius.sm,
+  },
+  usageText: { color: chat.labelTertiary, fontSize: 12, lineHeight: 24 },
+  /** The dialog keeps the web's 12px viewport margin around the panel. */
+  usagePanel: { alignSelf: 'stretch', marginHorizontal: spacing(3) },
   active: { color: colors.accent, fontWeight: '700' },
   /** A branch control on a turn that has not closed yet: visible, inert. */
   unavailable: { opacity: 0.45 },
-  clock: { color: colors.textDim, fontSize: fontSize.tiny },
+  clock: { color: chat.labelTertiary, fontSize: 13, lineHeight: 24 },
+  clockStart: { paddingRight: 12 },
 })

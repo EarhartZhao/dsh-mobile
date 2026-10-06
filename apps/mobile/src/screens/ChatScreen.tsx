@@ -28,7 +28,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -53,7 +53,8 @@ import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, 
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
-import { colors, fontSize, radius, spacing } from '../theme'
+import { chat, chatText, colors, fontSize, radius, shadow, spacing } from '../theme'
+import whale from '../assets/running-whale.png'
 import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, toolDisplayName } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
@@ -443,6 +444,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   /** Coalesced follow scroll: the newest height, and its pending frame. */
   const pendingTailHeight = useRef<number | null>(null)
   const tailFollowFrame = useRef<number | null>(null)
+  /**
+   * The transcript's measured height, kept for the floating scroll-to-bottom
+   * control. Unlike the follow scroll this is recorded even while the reader is
+   * away from the tail, because coming back needs the same measured bottom the
+   * follow scroll uses — `scrollToEnd` estimates an unmeasured row.
+   */
+  const listContentHeight = useRef(0)
 
   /**
    * Record where the reader is. The gesture handlers compare and assign through
@@ -533,6 +541,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * burst collapses into one scroll per frame with the newest height.
    */
   const onListContentSizeChange = useCallback((_width: number, height: number): void => {
+    listContentHeight.current = height
     // A transcript the reader has scrolled away from must never be dragged back
     // down by a row that merely remeasured.
     if (!mountedRef.current || listInteractionActive.current || !followTailRef.current) return
@@ -554,6 +563,23 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       listRef.current?.scrollToOffset({ offset: Math.max(0, contentHeight - viewportHeight), animated: false })
     })
   }, [])
+
+  /**
+   * The web's floating "back to bottom" control: re-arm the follow scroll and
+   * pin the tail. The offset is the same measured bottom the follow scroll
+   * aims at, so a tap lands the reader exactly where the next streamed chunk
+   * would have kept them.
+   */
+  const returnToBottom = useCallback((): void => {
+    syncFollowTail(true)
+    const viewportHeight = listViewportHeight.current
+    const contentHeight = listContentHeight.current
+    if (viewportHeight <= 0 || contentHeight <= 0) {
+      listRef.current?.scrollToEnd({ animated: true })
+      return
+    }
+    listRef.current?.scrollToOffset({ offset: Math.max(0, contentHeight - viewportHeight), animated: true })
+  }, [syncFollowTail])
 
   const refresh = useCallback(() => {
     const session = manager.store.sessions.get(sessionId)
@@ -1027,6 +1053,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     return mention !== null && draft.includes(mention)
   })
 
+  /**
+   * The send circle's enabled state, shared by its style and its `disabled`
+   * prop: a draft, a picked image, an uploaded file or a queued-prompt edit all
+   * give the composer something to submit — the same rule the web applies when
+   * it dims the button at 0.4.
+   */
+  const canSubmit = draft.trim() !== ''
+    || pendingImages.length > 0
+    || pendingFiles.some(file => file.status === 'ready')
+    || editingItem !== null
+
   const canRateMessages = (manager.compatibility?.features ?? []).includes('message-feedback')
 
   /** Re-reads the durable ratings of this Session (list is authoritative). */
@@ -1439,6 +1476,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * the moment the turn settles.
    */
   const liveTurn = turns.at(-1)?.live === true ? turns.at(-1) : undefined
+  /** What sits directly above the running line, for its separating rule. */
+  const lastRow = listRows.at(-1)
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -1512,116 +1551,163 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           </TouchableOpacity>
         </View>
       )}
-      <FlatList
-        ref={listRef}
-        data={listRows}
-        keyExtractor={row => row.key}
-        contentContainerStyle={styles.listContent}
-        // Only armed while the reader is holding their place in older history:
-        // the anchor is what keeps a prepended page from moving what they are
-        // reading, and it is the follow scroll that keeps the newest row in
-        // view while the model streams. See `followTailRef`.
-        maintainVisibleContentPosition={followTail ? undefined : { minIndexForVisible: 0 }}
-        // A refused read is the bar's to explain; claiming "no messages yet"
-        // underneath it would contradict what just went wrong.
-        ListEmptyComponent={historyStatus === 'error' ? undefined : (
-          <View style={styles.transcriptEmpty}>
-            {historyStatus === 'loading' && <ActivityIndicator color={colors.accent} />}
-            <Text style={styles.transcriptEmptyText}>
-              {historyStatus === 'loading' ? t('chat.loadingHistory') : t('chat.empty')}
-            </Text>
-          </View>
-        )}
-        ListFooterComponent={liveTurn === undefined
-          ? undefined
-          : <RunningIndicator startedAt={liveTurn.startedAt} />}
-        ListHeaderComponent={hasOlderHistory ? (
-          backfill === 'running' ? (
-            <View style={styles.historyLoader}>
-              <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={styles.historyLoaderText}>{t('chat.backfilling', { count: backfilled })}</Text>
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.pauseBackfill')}
-                onPress={pauseBackfill}
-              >
-                <Text style={styles.historyLoaderText}>{t('chat.pauseBackfill')}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.historyLoader}
-              onPress={() => void backfillHistory()}
-            >
-              <Text style={styles.historyLoaderText}>
-                {backfill === 'failed' ? t('chat.retryOlder') : t('chat.loadOlder')}
+      {/* The transcript frame carries the web's floating control, so a growing
+          input card below never covers it and the reader can always get back
+          to the newest message. */}
+      <View style={styles.listWrap}>
+        <FlatList
+          ref={listRef}
+          data={listRows}
+          keyExtractor={row => row.key}
+          contentContainerStyle={styles.listContent}
+          // Only armed while the reader is holding their place in older history:
+          // the anchor is what keeps a prepended page from moving what they are
+          // reading, and it is the follow scroll that keeps the newest row in
+          // view while the model streams. See `followTailRef`.
+          maintainVisibleContentPosition={followTail ? undefined : { minIndexForVisible: 0 }}
+          // A refused read is the bar's to explain; claiming "no messages yet"
+          // underneath it would contradict what just went wrong.
+          ListEmptyComponent={historyStatus === 'error' ? undefined : (
+            <View style={styles.transcriptEmpty}>
+              {historyStatus === 'loading' && <ActivityIndicator color={colors.accent} />}
+              <Text style={styles.transcriptEmptyText}>
+                {historyStatus === 'loading' ? t('chat.loadingHistory') : t('chat.empty')}
               </Text>
-            </TouchableOpacity>
-          )
-        ) : undefined}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        onScroll={onListScroll}
-        onLayout={onListLayout}
-        onScrollBeginDrag={onListScrollBeginDrag}
-        onScrollEndDrag={onListScrollEndDrag}
-        onMomentumScrollBegin={onListMomentumScrollBegin}
-        onMomentumScrollEnd={onListMomentumScrollEnd}
-        scrollEventThrottle={16}
-        onContentSizeChange={onListContentSizeChange}
-        onScrollToIndexFailed={({ index, averageItemLength }) => {
-          listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })
-        }}
-        renderItem={({ item }) => {
-          if (item.kind === 'turn') {
+            </View>
+          )}
+          ListFooterComponent={liveTurn === undefined
+            ? undefined
+            : (
+              // The web keeps the rule out when the row above is the prompt that
+              // opened the turn: the status then reads as part of that prompt's
+              // own block rather than as a separator from the transcript.
+              <RunningIndicator
+                startedAt={liveTurn.startedAt}
+                divider={lastRow !== undefined && lastRow.kind === 'item'
+                  && lastRow.item.kind !== 'user' && lastRow.item.kind !== 'stream'}
+              />
+            )}
+          ListHeaderComponent={hasOlderHistory ? (
+            backfill === 'running' ? (
+              <View style={styles.historyLoader}>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text style={styles.historyLoaderText}>{t('chat.backfilling', { count: backfilled })}</Text>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.pauseBackfill')}
+                  onPress={pauseBackfill}
+                >
+                  <Text style={styles.historyLoaderText}>{t('chat.pauseBackfill')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.historyLoader}
+                onPress={() => void backfillHistory()}
+              >
+                <Text style={styles.historyLoaderText}>
+                  {backfill === 'failed' ? t('chat.retryOlder') : t('chat.loadOlder')}
+                </Text>
+              </TouchableOpacity>
+            )
+          ) : undefined}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          onScroll={onListScroll}
+          onLayout={onListLayout}
+          onScrollBeginDrag={onListScrollBeginDrag}
+          onScrollEndDrag={onListScrollEndDrag}
+          onMomentumScrollBegin={onListMomentumScrollBegin}
+          onMomentumScrollEnd={onListMomentumScrollEnd}
+          scrollEventThrottle={16}
+          onContentSizeChange={onListContentSizeChange}
+          onScrollToIndexFailed={({ index, averageItemLength }) => {
+            listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })
+          }}
+          renderItem={({ item, index }) => {
+            // The web's flow rhythm: process rows sit 6px apart, a response is
+            // separated from its neighbour by 12px, and a turn header keeps 16px
+            // clearance from the input above it and the answer below.
+            const rowGap = item.kind === 'turn'
+              ? 16
+              : item.item.kind === 'user' || item.item.kind === 'assistant' || item.item.kind === 'stream'
+                ? 12
+                : 6
+            const rowStyle = { marginTop: index === 0 ? 0 : rowGap }
+            if (item.kind === 'turn') {
+              return (
+                <View style={rowStyle}>
+                  <TurnProcessBlock
+                    turn={item.turn}
+                    manager={manager}
+                    sessionId={sessionId}
+                    onLongPress={setMessageAction}
+                  />
+                </View>
+              )
+            }
+            const entry = item.item
+            const messageId = entry.kind === 'assistant' ? entry.messageId : undefined
+            /**
+             * The turn's billed tokens ride the answer's own action row, the way
+             * the web seats its usage pill in the completion row. Only the row
+             * that owns the turn's answer carries the process, so only it can
+             * sum the turn's usage.
+             */
+            const turnUsage = entry.kind === 'assistant' && item.process !== undefined
+              ? turnTokenUsage(item.process)
+              : null
+            const actions = entry.kind === 'user' || entry.kind === 'assistant'
+              ? (
+                <MessageActionRow
+                  time={typeof entry.time === 'number' ? entry.time : 0}
+                  clock={entry.kind === 'user' ? 'start' : 'end'}
+                  {...(messageId === undefined ? {} : { rating: feedback[messageId] })}
+                  canRate={canRateMessages && messageId !== undefined}
+                  {...(item.branch === undefined ? {} : { branch: item.branch })}
+                  {...(turnUsage === null ? {} : { usage: turnUsage })}
+                  onCopy={() => {
+                    void Clipboard.setString(messageText(entry))
+                    showNotice(t('notice.copied'))
+                  }}
+                  onRate={next => void rateMessage(entry, next)}
+                  onBranch={() => {
+                    if (item.branch?.seq === undefined) {
+                      showNotice(t('actions.branchUnavailable'))
+                      return
+                    }
+                    void forkAtSeq(item.branch.seq)
+                  }}
+                />
+              )
+              : undefined
             return (
-              <TurnProcessBlock
-                turn={item.turn}
-                manager={manager}
-                sessionId={sessionId}
-                onLongPress={setMessageAction}
-              />
+              <View style={rowStyle}>
+                <Bubble
+                  item={entry}
+                  manager={manager}
+                  sessionId={sessionId}
+                  onLongPress={() => setMessageAction(entry)}
+                  onPreview={setPreviewPath}
+                  onOpenLink={openTranscriptLink}
+                  {...(item.process === undefined ? {} : { process: item.process })}
+                  {...(actions === undefined ? {} : { actions })}
+                />
+              </View>
             )
-          }
-          const entry = item.item
-          const messageId = entry.kind === 'assistant' ? entry.messageId : undefined
-          const actions = entry.kind === 'user' || entry.kind === 'assistant'
-            ? (
-              <MessageActionRow
-                time={typeof entry.time === 'number' ? entry.time : 0}
-                clock={entry.kind === 'user' ? 'start' : 'end'}
-                {...(messageId === undefined ? {} : { rating: feedback[messageId] })}
-                canRate={canRateMessages && messageId !== undefined}
-                {...(item.branch === undefined ? {} : { branch: item.branch })}
-                onCopy={() => {
-                  void Clipboard.setString(messageText(entry))
-                  showNotice(t('notice.copied'))
-                }}
-                onRate={next => void rateMessage(entry, next)}
-                onBranch={() => {
-                  if (item.branch?.seq === undefined) {
-                    showNotice(t('actions.branchUnavailable'))
-                    return
-                  }
-                  void forkAtSeq(item.branch.seq)
-                }}
-              />
-            )
-            : undefined
-          return (
-            <Bubble
-              item={entry}
-              manager={manager}
-              sessionId={sessionId}
-              onLongPress={() => setMessageAction(entry)}
-              onPreview={setPreviewPath}
-              onOpenLink={openTranscriptLink}
-              {...(item.process === undefined ? {} : { process: item.process })}
-              {...(actions === undefined ? {} : { actions })}
-            />
-          )
-        }}
-      />
+          }}
+        />
+        {!followTail && (
+          <TouchableOpacity
+            style={styles.toBottom}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.toBottom')}
+            onPress={returnToBottom}
+          >
+            <ChevronDownGlyph color={chat.labelPrimary} />
+          </TouchableOpacity>
+        )}
+      </View>
       {planMode !== undefined && <PlanChip mode={planMode} />}
       <GoalBar
         goal={goal}
@@ -1662,46 +1748,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       <CandidateMenu items={candidates} onPick={pickCandidate} />
       <SessionStatsBar view={statsView} />
       <View style={styles.composer}>
-        {pendingImages.length > 0 && editingItem === null && (
-          <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
-            {pendingImages.map((image, index) => (
-              <TouchableOpacity
-                key={`${image.name ?? 'image'}:${index}`}
-                style={styles.pendingImageCard}
-                onPress={() => setLightbox({ source: `data:${image.mediaType};base64,${image.data}`, name: image.name ?? undefined })}
-              >
-                <Image source={{ uri: `data:${image.mediaType};base64,${image.data}` }} style={styles.pendingImage} />
-                <TouchableOpacity
-                  style={styles.pendingImageRemove}
-                  hitSlop={8}
-                  onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
-                >
-                  <Text style={styles.pendingImageRemoveText}>✕</Text>
-                </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-        {pendingFiles.length > 0 && editingItem === null && (
-          <ScrollView horizontal style={styles.pendingFilesRow} contentContainerStyle={styles.pendingFilesContent}>
-            {pendingFiles.map(file => (
-              <View key={file.id} style={styles.pendingFileCard}>
-                <View style={styles.pendingFileHeader}>
-                  <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
-                  <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
-                    <Text style={styles.pendingImageRemoveText}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
-                {file.status === 'uploading' && (
-                  <View style={styles.pendingFileProgress}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.pendingFileStatus}>{t('common.loading')}</Text></View>
-                )}
-                {file.status === 'ready' && <Text style={[styles.pendingFileStatus, { color: colors.accent }]}>{t('common.current')}</Text>}
-                {file.status === 'error' && <Text style={[styles.pendingFileStatus, { color: colors.danger }]} numberOfLines={1}>{file.error ?? t('plus.fileUploadFailed', { message: '' })}</Text>}
-              </View>
-            ))}
-          </ScrollView>
-        )}
         {lightbox !== null && (
           <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
         )}
@@ -1710,7 +1756,54 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits, t)}</Text>
           </View>
         )}
-        <View style={styles.composerRow}>
+        {/* The web's composer card: one panel-radius surface holding the draft
+            and its control row, with the attachment and reference chips as the
+            card's own accessory — not separate strips above it. */}
+        <View style={styles.composerCard}>
+          {editingItem === null && (pendingImages.length > 0 || pendingFiles.length > 0) && (
+            <View style={styles.composerAccessory}>
+              {pendingImages.length > 0 && (
+                <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
+                  {pendingImages.map((image, index) => (
+                    <TouchableOpacity
+                      key={`${image.name ?? 'image'}:${index}`}
+                      style={styles.pendingImageCard}
+                      onPress={() => setLightbox({ source: `data:${image.mediaType};base64,${image.data}`, name: image.name ?? undefined })}
+                    >
+                      <Image source={{ uri: `data:${image.mediaType};base64,${image.data}` }} style={styles.pendingImage} />
+                      <TouchableOpacity
+                        style={styles.pendingImageRemove}
+                        hitSlop={8}
+                        onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
+                      >
+                        <Text style={styles.pendingImageRemoveText}>✕</Text>
+                      </TouchableOpacity>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+              {pendingFiles.length > 0 && (
+                <ScrollView horizontal style={styles.pendingFilesRow} contentContainerStyle={styles.pendingFilesContent}>
+                  {pendingFiles.map(file => (
+                    <View key={file.id} style={styles.pendingFileCard}>
+                      <View style={styles.pendingFileHeader}>
+                        <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
+                        <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
+                          <Text style={styles.pendingImageRemoveText}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
+                      {file.status === 'uploading' && (
+                        <View style={styles.pendingFileProgress}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.pendingFileStatus}>{t('common.loading')}</Text></View>
+                      )}
+                      {file.status === 'ready' && <Text style={[styles.pendingFileStatus, { color: colors.accent }]}>{t('common.current')}</Text>}
+                      {file.status === 'error' && <Text style={[styles.pendingFileStatus, { color: colors.danger }]} numberOfLines={1}>{file.error ?? t('plus.fileUploadFailed', { message: '' })}</Text>}
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
           {visibleRefs.length > 0 && (
             <View style={styles.refRow}>
               {visibleRefs.map(reference => (
@@ -1739,28 +1832,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
               ))}
             </View>
           )}
-          {editingItem === null && (
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
-              accessibilityRole="button"
-              accessibilityLabel={t('chat.add')}
-            >
-              <PlusGlyph color={colors.accent} />
-            </TouchableOpacity>
-          )}
-          {editingItem !== null && (
-            <TouchableOpacity style={styles.editCancel} onPress={() => { setEditingItem(null); setDraft('') }}>
-              <Text style={styles.editCancelText}>✕</Text>
-            </TouchableOpacity>
-          )}
           <TextInput
             ref={composerRef}
             style={styles.input}
             value={draft}
             onChangeText={onDraftChange}
             placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={chat.labelCaption}
             multiline
             // Multiline submit is a TextInput behavior, not a key handler: on
             // Android a hardware Enter reaches neither onKeyPress nor
@@ -1771,19 +1849,49 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             submitBehavior={enterToSend ? 'submit' : 'newline'}
             onSubmitEditing={() => { if (enterToSend) void send() }}
           />
-          {running ? (
-            <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.danger }]} onPress={() => void cancel()}>
-              <Text style={styles.sendText}>{t('chat.stop')}</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.sendButton, draft.trim() === '' && pendingImages.length === 0 && pendingFiles.every(file => file.status !== 'ready') && editingItem === null && styles.disabled]}
-              disabled={draft.trim() === '' && pendingImages.length === 0 && pendingFiles.every(file => file.status !== 'ready') && editingItem === null}
-              onPress={() => void send()}
-            >
-              <Text style={styles.sendText}>{editingItem !== null ? t('chat.save') : t('chat.send')}</Text>
-            </TouchableOpacity>
-          )}
+          {/* The web's control row: the attach circle pins left, the send
+              circle right, and the two never move the draft's own geometry. */}
+          <View style={styles.composerRow}>
+            {editingItem === null && (
+              <TouchableOpacity
+                style={styles.addButton}
+                hitSlop={8}
+                onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.add')}
+              >
+                <PlusGlyph color={chat.labelPrimary} />
+              </TouchableOpacity>
+            )}
+            {editingItem !== null && (
+              <TouchableOpacity style={styles.editCancel} hitSlop={8} onPress={() => { setEditingItem(null); setDraft('') }}>
+                <Text style={styles.editCancelText}>✕</Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.composerSpacer} />
+            {running ? (
+              <TouchableOpacity
+                style={styles.sendCircle}
+                hitSlop={6}
+                onPress={() => void cancel()}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.stop')}
+              >
+                <StopGlyph color="#fff" />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.sendCircle, !canSubmit && styles.sendCircleDisabled]}
+                disabled={!canSubmit}
+                hitSlop={6}
+                onPress={() => void send()}
+                accessibilityRole="button"
+                accessibilityLabel={editingItem !== null ? t('chat.save') : t('chat.send')}
+              >
+                <SendGlyph color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
@@ -2015,6 +2123,37 @@ function BackGlyph({ color }: { color: string }): React.JSX.Element {
   )
 }
 
+/**
+ * The composer's primary glyph: the web's send arrow, drawn at 18px inside the
+ * 34px circle. It is the same control in both states — only the mark changes
+ * (arrow to submit, square to stop) — which is what the web's IconButton does.
+ */
+function SendGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 19V5" />
+      <Path d="m5 12 7-7 7 7" />
+    </Svg>
+  )
+}
+
+function StopGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Path d="M9.5 9.5h5v5h-5z" fill={color} stroke={color} strokeWidth={2} strokeLinejoin="round" />
+    </Svg>
+  )
+}
+
+/** The floating control's mark, matching the web's outline chevron-down. */
+function ChevronDownGlyph({ color }: { color: string }): React.JSX.Element {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="m6 9 6 6 6-6" />
+    </Svg>
+  )
+}
+
 function SearchGlyph({ color }: { color: string }): React.JSX.Element {
   return (
     <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -2111,13 +2250,19 @@ function jobStatusLabel(status: JobView['status'], t: (key: TranslationKey, valu
  * per-step "思考过程" headers of assorted widths.
  */
 /**
- * The transcript's own bottom indicator, the web's "深度求索中" clock: a live
- * elapsed time under the newest turn. It owns its timer so a one-second tick
- * re-renders this row instead of the whole transcript, and it counts from the
- * recorded turn start rather than from mount, so switching screens mid-turn
- * does not restart it.
+ * The transcript's own bottom indicator, the web's "深度求索中" line: a live
+ * elapsed time under the newest turn, the whale that stands in for progress,
+ * and — when the row above carries output rather than a prompt — the web's
+ * hairline rule separating the settled transcript from the live one. It owns
+ * its timer so a one-second tick re-renders this row instead of the whole
+ * transcript, and it counts from the recorded turn start rather than from
+ * mount, so switching screens mid-turn does not restart it.
  */
-function RunningIndicator({ startedAt }: { startedAt: number }): React.JSX.Element {
+function RunningIndicator({ startedAt, divider = false }: {
+  startedAt: number
+  /** The web hides the rule when the row above is the prompt that opened the turn. */
+  divider?: boolean
+}): React.JSX.Element {
   const { t } = useI18n()
   const [, tick] = useState(0)
   const known = startedAt > 0
@@ -2127,13 +2272,16 @@ function RunningIndicator({ startedAt }: { startedAt: number }): React.JSX.Eleme
   }, [])
   const elapsed = known ? Math.max(0, Date.now() - startedAt) : 0
   return (
-    <View style={styles.runningIndicator} accessibilityLiveRegion="polite">
-      <View style={styles.runningDot} />
-      <Text style={styles.runningText}>
-        {known
-          ? t('chat.runningFor', { duration: runDurationLabel(elapsed, t) })
-          : t('chat.running')}
-      </Text>
+    <View style={styles.running} accessibilityLiveRegion="polite">
+      {divider && <View style={styles.runningDivider} />}
+      <View style={styles.runningContent}>
+        <Image source={whale} style={styles.runningWhale} />
+        <Text style={styles.runningText}>
+          {known
+            ? t('chat.runningFor', { duration: runDurationLabel(elapsed, t) })
+            : t('chat.running')}
+        </Text>
+      </View>
     </View>
   )
 }
@@ -2205,39 +2353,46 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
         accessibilityLabel={turn.toolCallCount > 0 ? t('chat.toolCallSummary', { count: turn.toolCallCount }) : label}
       >
         <Text style={[styles.turnProcessLabel, turn.live && styles.turnProcessLive]} numberOfLines={1}>{title}</Text>
-        <Text style={[styles.turnProcessChevron, !open && styles.turnProcessChevronClosed]}>▼</Text>
+        <Text style={[styles.turnProcessChevron, open && styles.turnProcessChevronOpen]}>▼</Text>
       </TouchableOpacity>
       {open && turn.process.map(step => step.kind === 'thinking'
         ? (
           <TouchableOpacity
             key={step.key}
-            style={styles.processStep}
+            style={styles.reasoningRow}
             activeOpacity={1}
             onPress={() => toggleStep(step.key)}
             onLongPress={() => setCopied(step.key)}
           >
             {openSteps.has(step.key) ? (
               <>
-                <Text style={styles.processStepLabel}>{t('chat.thoughtStep')}</Text>
-                <Text selectable style={styles.processStepText}>{step.text}</Text>
+                <View style={styles.reasoningHead}>
+                  <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
+                </View>
+                <Text selectable style={styles.reasoningBody}>{step.text}</Text>
               </>
             ) : (
-              <Text style={styles.processStepLine} numberOfLines={1}>
-                <Text style={styles.processStepLabel}>{t('chat.thoughtStep')} · </Text>
-                {step.preview === '' ? step.text.replace(/\s+/g, ' ').trim() : step.preview}
-              </Text>
+              <View style={styles.reasoningHead}>
+                <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
+                <View style={styles.reasoningDot} />
+                <Text style={styles.reasoningSummary} numberOfLines={1}>
+                  {step.preview === '' ? step.text.replace(/\s+/g, ' ').trim() : step.preview}
+                </Text>
+              </View>
             )}
           </TouchableOpacity>
         )
         : step.kind === 'preparing'
           ? (
-            <View key={step.key} style={styles.processStep}>
-              <Text style={styles.processStepLine} numberOfLines={1}>
-                <Text style={styles.processStepLabel}>
-                  {stepActivityLabel(step.activity, 'preparing', t)}
-                </Text>
-                {step.activity === 'tools' ? ` · ${step.name}` : ''}
+            <View key={step.key} style={styles.processRow}>
+              <View style={styles.processRowGlyph} />
+              <Text style={styles.processRowTitle} numberOfLines={1}>
+                {stepActivityLabel(step.activity, 'preparing', t)}
               </Text>
+              {step.activity === 'tools' && <View style={styles.processRowDot} />}
+              {step.activity === 'tools' && (
+                <Text style={styles.processRowSummary} numberOfLines={1}>{step.name}</Text>
+              )}
             </View>
           )
         : (
@@ -2448,13 +2603,22 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
   switch (item.kind) {
     case 'user':
       return (
-        <TouchableOpacity activeOpacity={1} style={[styles.bubble, styles.bubbleUser]} onLongPress={onLongPress}>
-          {item.images.map(image => (
-            <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.messageImage} fallbackStyle={styles.imageFallback} />
-          ))}
-          <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
+        // The web's `.userRow`: attachments and the prompt bubble stack against
+        // the right edge, then the message's own action row under the bubble —
+        // never inside it, which is what made the clock read as message text.
+        <View style={styles.userRow}>
+          {item.images.length > 0 && (
+            <View style={styles.userAttachments}>
+              {item.images.map(image => (
+                <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.userAttachment} fallbackStyle={styles.imageFallback} />
+              ))}
+            </View>
+          )}
+          <TouchableOpacity activeOpacity={1} style={styles.userBubble} onLongPress={onLongPress}>
+            <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
+          </TouchableOpacity>
           {actions}
-        </TouchableOpacity>
+        </View>
       )
     case 'compaction':
       return (
@@ -2469,9 +2633,13 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
     case 'assistant':
     case 'stream':
       return (
+        // The web's assistant flow item has no card: full-width narration on the
+        // transcript surface, with the process disclosure and the action row as
+        // siblings. The fill was what made every answer a boxed bubble and left
+        // the answer text a different width from the tool rows above it.
         <TouchableOpacity
           activeOpacity={1}
-          style={[styles.bubble, styles.bubbleAssistant]}
+          style={styles.assistantRow}
           onLongPress={onLongPress}
         >
           {process !== undefined && (
@@ -2580,7 +2748,28 @@ function ActionBar({ manager, sessionId, onAnswerQuestion, onCancelQuestion, onA
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: { flex: 1, backgroundColor: chat.bgBase },
+  /** The transcript's frame: the list, plus the floating control over it. */
+  listWrap: { flex: 1 },
+  /**
+   * The web's `.toBottom`: a 34px circle on the floating fill, 24px in from the
+   * composer's own side clearance and 16px above the list's bottom edge, wearing
+   * the panel elevation rather than a rule.
+   */
+  toBottom: {
+    position: 'absolute',
+    right: 24,
+    bottom: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: chat.floating,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL3,
+    boxShadow: shadow.panel,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2596,7 +2785,13 @@ const styles = StyleSheet.create({
   headerMenu: { width: 36, alignItems: 'center', justifyContent: 'center' },
   headerMenuText: { color: colors.accent, fontSize: 26, lineHeight: 28 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
-  listContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(1.5), gap: spacing(1.5) },
+  /**
+   * The web's transcript geometry on a narrow viewport: 24px side pads (the
+   * composer's 8px clearance plus 16), 16px above the first row, and no uniform
+   * gap — each row carries its own, so a turn header can keep 16px while two
+   * steps of the same turn sit 6px apart.
+   */
+  listContent: { paddingHorizontal: 24, paddingTop: spacing(4), paddingBottom: spacing(1) },
   historyLoader: {
     alignSelf: 'center',
     flexDirection: 'row',
@@ -2659,57 +2854,83 @@ const styles = StyleSheet.create({
   modelFailure: { paddingHorizontal: spacing(4), paddingVertical: spacing(1.5), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   modelFailureTitle: { color: colors.warning, fontSize: fontSize.small, fontWeight: '600' },
   modelFailureMessage: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
-  bubble: { maxWidth: '92%', borderRadius: radius.bubble, paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
-  bubbleUser: { alignSelf: 'flex-end', backgroundColor: colors.bgBubbleUser, paddingVertical: spacing(0.5) },
-  // Stretch, not hug: every assistant answer then shares one width, and it
-  // lines up with the process card above it. Hugging made each reply a
-  // different width depending on how much text it happened to contain.
-  bubbleAssistant: { alignSelf: 'stretch', maxWidth: '100%', backgroundColor: colors.bgBubbleAssistant },
-  bubbleText: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
-  // Full width on purpose: per-step cards sized to their own text produced a
-  // ragged column of different-width blocks.
-  turnProcess: {
-    alignSelf: 'stretch',
-    marginBottom: spacing(1.5),
-    borderRadius: radius.card,
-    backgroundColor: colors.bgElevated,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    overflow: 'hidden',
+  /** The web's `.userRow`: prompt block and its action row against the right edge. */
+  userRow: { alignSelf: 'stretch', alignItems: 'flex-end', gap: 6 },
+  /**
+   * The web's prompt bubble: `specific-bubble` fill, `radius-xl`, 10/16 padding
+   * and 14/22 type, capped at the figma 525px share of the column (0.702) or
+   * 82% of a narrow viewport, whichever is smaller.
+   */
+  userBubble: {
+    maxWidth: '82%',
+    backgroundColor: chat.bubble,
+    borderRadius: radius.xl,
+    paddingHorizontal: spacing(4),
+    paddingVertical: 10,
   },
-  /** Standalone form only (a live turn with no answer yet); embedded use has
-   *  no chrome so the disclosure and the answer read as one card. */
-  turnProcessBare: { alignSelf: 'stretch' },
+  userAttachments: { alignSelf: 'flex-end', alignItems: 'flex-end', gap: spacing(2), maxWidth: '82%' },
+  userAttachment: { width: 240, maxWidth: '100%', borderRadius: radius.lg },
+  /**
+   * The web's assistant flow item has no fill and no padding: full-width
+   * narration on the transcript surface, so the answer shares one column with
+   * the process disclosure above it.
+   */
+  assistantRow: { alignSelf: 'stretch' },
+  /**
+   * The web's turn disclosure is chrome-free: a 33px header carrying a 0.5px
+   * rule under it, then the turn's own rows. It stays 16px clear of the answer
+   * below, so the disclosure and the narration read as one column.
+   */
+  turnProcess: { alignSelf: 'stretch', marginBottom: spacing(4) },
+  /** Embedded in the answer's own row: same geometry, the rule is the only chrome. */
+  turnProcessBare: { alignSelf: 'stretch', marginBottom: spacing(4) },
   turnProcessHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 48,
-    paddingHorizontal: spacing(3),
+    minHeight: 33,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: chat.borderL2,
     gap: spacing(2),
   },
-  turnProcessLabel: { flex: 1, color: colors.textDim, fontSize: fontSize.section },
-  /** A live header pulses toward the text colour so it reads as "in progress". */
-  turnProcessLive: { color: colors.text },
-  turnProcessChevron: { color: colors.textDim, fontSize: fontSize.small },
-  /** Collapsed points LEFT, matching the web's turn disclosure: its chevron
-   *  sits with the apex on the left and opens to the right. Rotating ▼ by +90°
-   *  lands there; -90° gave a right-pointing arrow and was wrong. */
-  turnProcessChevronClosed: { transform: [{ rotate: '90deg' }] },
-  processStep: { paddingHorizontal: spacing(3), paddingVertical: spacing(1), gap: spacing(1) },
-  processStepLine: { color: colors.textDim, fontSize: fontSize.small },
-  processStepLabel: { color: colors.textDim, fontSize: fontSize.small, fontWeight: '600' },
-  processStepText: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 20 },
-  runningIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing(1.5),
-    paddingHorizontal: spacing(3),
-    paddingVertical: spacing(1.5),
-    marginHorizontal: spacing(1),
+  turnProcessLabel: { flex: 1, color: chat.labelTertiary, fontSize: 14, lineHeight: 24 },
+  /** Live, the header steps up one tier so it reads as "in progress". */
+  turnProcessLive: { color: chat.labelSecondary },
+  turnProcessChevron: { color: chat.labelTertiary, fontSize: 14, lineHeight: 16 },
+  /** The web's chevron sits closed pointing down and flips up when open. */
+  turnProcessChevronOpen: { transform: [{ rotate: '180deg' }] },
+  /** One reasoning row: a 24px line at rest, its text indented 22px when open. */
+  reasoningRow: { alignSelf: 'stretch' },
+  reasoningHead: { flexDirection: 'row', alignItems: 'center', minHeight: 24 },
+  reasoningTitle: { color: chat.labelTertiary, ...chatText.secondary },
+  /** The web's 2px separator dot between a row's title and its summary. */
+  reasoningDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
+  reasoningSummary: { flex: 1, color: chat.labelTertiary, ...chatText.secondary },
+  reasoningBody: {
+    color: chat.labelTertiary,
+    ...chatText.secondary,
+    paddingLeft: 22,
+    paddingVertical: 4,
   },
-  runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.running },
-  runningText: { color: colors.textDim, fontSize: fontSize.small },
+  /** A process row with no tool card of its own (the preparing call). */
+  processRow: { flexDirection: 'row', alignItems: 'center', minHeight: 24 },
+  processRowGlyph: { width: 16, marginRight: 6 },
+  processRowTitle: { color: chat.labelTertiary, ...chatText.secondary },
+  processRowDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
+  processRowSummary: { flex: 1, color: chat.labelTertiary, ...chatText.secondary },
+  /** The web's live status line: deep-diving blue, 12/22, with its rule above. */
+  running: { alignItems: 'flex-start', marginTop: 12 },
+  runningDivider: {
+    alignSelf: 'stretch',
+    height: StyleSheet.hairlineWidth,
+    marginTop: 8,
+    marginBottom: 10,
+    backgroundColor: chat.borderL2,
+  },
+  runningContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  runningWhale: { width: 14, height: 14, tintColor: chat.deepDiving },
+  runningText: { color: chat.deepDiving, fontSize: 12, lineHeight: 22 },
   unknownCard: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -2809,16 +3030,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
   },
-  imageLimitsBar: {
-    alignSelf: 'stretch',
-    paddingHorizontal: spacing(3),
-    paddingTop: spacing(2),
-  },
+  imageLimitsBar: { alignSelf: 'stretch', paddingHorizontal: spacing(3), paddingBottom: spacing(1.5) },
   imageLimitsText: { color: colors.textDim, fontSize: fontSize.tiny },
-  pendingImagesRow: { alignSelf: 'stretch', flexGrow: 0, paddingVertical: spacing(1) },
-  pendingImagesContent: { gap: spacing(2), paddingHorizontal: spacing(1), paddingRight: spacing(3) },
-  pendingFilesRow: { alignSelf: 'stretch', flexGrow: 0, paddingVertical: spacing(1) },
-  pendingFilesContent: { gap: spacing(2), paddingHorizontal: spacing(1), paddingRight: spacing(3) },
+  pendingImagesRow: { alignSelf: 'stretch', flexGrow: 0 },
+  pendingImagesContent: { gap: spacing(2) },
+  pendingFilesRow: { alignSelf: 'stretch', flexGrow: 0 },
+  pendingFilesContent: { gap: spacing(2) },
   pendingFileCard: {
     width: 190,
     borderWidth: 1,
@@ -2847,20 +3064,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pendingImageRemoveText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  iconButton: {
-    minWidth: 40,
-    paddingHorizontal: spacing(1.5),
-    width: 40,
-    minHeight: 40,
-    alignSelf: 'stretch',
-    borderRadius: radius.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bgElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  messageImage: { alignSelf: 'stretch', width: '100%', borderRadius: radius.card, marginBottom: spacing(2) },
   imageFallback: { color: colors.textDim, fontSize: fontSize.small, marginBottom: spacing(2) },
   cursor: { color: colors.accent },
   interrupted: { color: colors.warning, fontSize: fontSize.small },
@@ -2876,10 +3079,15 @@ const styles = StyleSheet.create({
   toolName: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
   toolStatus: { fontSize: fontSize.tiny },
   toolBody: { color: colors.textDim, fontSize: fontSize.tiny, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginTop: spacing(2) },
+  /** Approvals and questions: the same dock card, marked by the warning rule. */
   actionBar: {
-    borderTopWidth: 1,
-    borderTopColor: colors.warning,
-    backgroundColor: colors.bgElevated,
+    marginHorizontal: spacing(2),
+    marginBottom: spacing(2),
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
+    backgroundColor: chat.inputCard,
+    boxShadow: shadow.soft,
     padding: spacing(3),
     gap: spacing(2),
   },
@@ -2898,25 +3106,69 @@ const styles = StyleSheet.create({
   },
   chipActive: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
   chipText: { color: colors.text, fontSize: fontSize.small },
+  /** The web's composer shell: 8px side clearance and a 4px foot, no rule. */
   composer: {
     paddingHorizontal: spacing(2),
-    paddingTop: spacing(0.5),
-    paddingBottom: spacing(0.5),
-    gap: spacing(0.5),
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    paddingBottom: spacing(1),
   },
+  /**
+   * The web's input card: `radius-panel` (28), the input surface fill, the l2
+   * hairline plus the soft elevation glow, and 8px of top pad before the draft.
+   * Menus and stat panels wear the panel radius too, so the composer, its @
+   * menu and its stats read as one family of surfaces.
+   */
+  composerCard: {
+    borderRadius: radius.panel,
+    backgroundColor: chat.inputCard,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL2,
+    boxShadow: shadow.soft,
+    paddingTop: 8,
+  },
+  /** The card's accessory band: picked images, files and reference chips. */
+  composerAccessory: { paddingTop: 10, paddingHorizontal: 12, gap: spacing(2) },
+  /**
+   * The web's control row: attach circle left, send circle right, 12px between
+   * controls, and 2px of its own top pad so the row sits slightly low against
+   * the draft while the send circle keeps its own seat.
+   */
   composerRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: spacing(1),
+    alignItems: 'center',
+    gap: 12,
     minWidth: 0,
+    paddingTop: 2,
+    paddingHorizontal: 8,
+    paddingBottom: 6,
   },
+  composerSpacer: { flex: 1, minWidth: 0 },
+  /** The 28px attach circle on the selector fill. */
+  addButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: chat.selector,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  /** The 34px primary circle: `button-info-fill`, white glyph, 0.4 when empty. */
+  sendCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: chat.infoFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  sendCircleDisabled: { opacity: 0.4 },
   refRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing(1),
-    paddingBottom: spacing(0.5),
+    paddingTop: 10,
+    paddingHorizontal: 12,
   },
   refChip: {
     flexDirection: 'row',
@@ -2934,47 +3186,50 @@ const styles = StyleSheet.create({
   refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
   refRemove: { color: colors.textDim, fontSize: fontSize.tiny },
   feedbackBadge: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
+  /**
+   * The draft surface: 14/24 type with the web's 4px top pad and 14/8 side pads
+   * (the 4px the scrollport takes back on the right), one 24px line as its floor
+   * and the composer's 14-line cap as its ceiling.
+   */
   input: {
     flex: 1,
     minWidth: 0,
     flexShrink: 1,
-    maxHeight: 120,
-    minHeight: 40,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.bubble,
-    color: colors.text,
-    paddingHorizontal: spacing(2),
-    paddingVertical: spacing(0.5),
-    fontSize: fontSize.body,
-    backgroundColor: colors.bgElevated,
+    maxHeight: 336,
+    minHeight: 36,
+    paddingTop: 4,
+    paddingLeft: 14,
+    paddingRight: 8,
+    color: chat.labelPrimary,
+    fontSize: 14,
+    lineHeight: 24,
+    backgroundColor: 'transparent',
   },
-  sendButton: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.bubble,
-    paddingHorizontal: spacing(2),
-    minHeight: 40,
-    paddingVertical: 0,
-    minWidth: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  disabled: { opacity: 0.5 },
-  sendText: { color: '#fff', fontSize: fontSize.body, fontWeight: '600' },
-  editCancel: { alignSelf: 'center', padding: spacing(0.5), flexShrink: 0 },
-  editCancelText: { color: colors.textDim, fontSize: fontSize.body },
+  editCancel: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  editCancelText: { color: chat.labelTertiary, fontSize: 15 },
+  /**
+   * The composer's own dock cards — the queue, running jobs and notices — wear
+   * the same rounded surface as the input card they float above, the way the
+   * web stacks them: one surface tier, 8px of side clearance, no full-width
+   * rules cutting the transcript in two.
+   */
   notice: {
-    marginHorizontal: spacing(3),
+    marginHorizontal: spacing(2),
     marginBottom: spacing(2),
-    backgroundColor: colors.bgBubbleUser,
-    borderRadius: radius.card,
-    padding: spacing(2.5),
+    backgroundColor: chat.hover,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(2),
   },
-  noticeText: { color: colors.text, fontSize: fontSize.small },
+  noticeText: { color: chat.labelSecondary, fontSize: 12, lineHeight: 18 },
   dock: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bgElevated,
+    marginHorizontal: spacing(2),
+    marginBottom: spacing(2),
+    borderRadius: radius.lg,
+    backgroundColor: chat.menu,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL1,
+    boxShadow: shadow.panel,
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
     gap: spacing(1.5),
@@ -2992,9 +3247,13 @@ const styles = StyleSheet.create({
   dockPreview: { flex: 1, color: colors.text, fontSize: fontSize.small },
   dockAction: { color: colors.accent, fontSize: fontSize.small, paddingHorizontal: spacing(1) },
   jobs: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bgElevated,
+    marginHorizontal: spacing(2),
+    marginBottom: spacing(2),
+    borderRadius: radius.lg,
+    backgroundColor: chat.menu,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL1,
+    boxShadow: shadow.panel,
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
   },

@@ -10,7 +10,7 @@
 import React, { useState } from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
-import { colors, fontSize, radius, spacing } from '../theme'
+import { chat, colors, fontSize, radius, spacing } from '../theme'
 import { AttachmentImage } from './AttachmentImage'
 import { toolDisplayName } from '../ui-labels'
 import { cardRenderer, isRecord, Mono, MonoActionRow, type Translate } from './tool-cards'
@@ -129,22 +129,38 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
       : null
   return (
     <View style={bare ? styles.cardBare : styles.card}>
-      <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={styles.header}>
-        <View style={styles.titleArea}>
-          {/* One line while collapsed ("Bash · what it is doing"), matching the
-              web's process rows; the detail below still opens in place. */}
-          <Text style={styles.title} numberOfLines={open ? 2 : 1}>
-            {title}
-            {summary === '' ? '' : ` · ${summary}`}
-          </Text>
-          {open && meta.length > 0 && (
-            <Text style={styles.meta} numberOfLines={1}>{meta.join(' · ')}</Text>
-          )}
-        </View>
-        <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
+      <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={bare ? styles.row : styles.header}>
+        {bare ? (
+          // The web's ToolRow: one 24px line — a 16px leading glyph, the call's
+          // title, the 2px separator, then the detail that truncates. The status
+          // rides the glyph's colour, which is where the web puts it too.
+          <>
+            <View style={styles.rowLeading}>
+              <View style={[styles.rowDot, { backgroundColor: statusColor }]} />
+            </View>
+            <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
+            {summary !== '' && <View style={styles.rowSep} />}
+            {summary !== '' && <Text style={styles.rowSummary} numberOfLines={1}>{summary}</Text>}
+          </>
+        ) : (
+          <>
+            <View style={styles.titleArea}>
+              {/* One line while collapsed ("Bash · what it is doing"), matching the
+                  web's process rows; the detail below still opens in place. */}
+              <Text style={styles.title} numberOfLines={open ? 2 : 1}>
+                {title}
+                {summary === '' ? '' : ` · ${summary}`}
+              </Text>
+              {open && meta.length > 0 && (
+                <Text style={styles.meta} numberOfLines={1}>{meta.join(' · ')}</Text>
+              )}
+            </View>
+            <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
+          </>
+        )}
       </TouchableOpacity>
       {open && (
-        <View style={styles.body}>
+        <View style={bare ? styles.bodyBare : styles.body}>
           {structured ?? rawBody}
           {item.resultImages.map(image => (
             <AttachmentImage key={image.kind === 'data' ? image.uri : image.attachmentId} image={image} manager={manager} sessionId={sessionId} style={styles.toolImage} fallbackStyle={styles.imageFallback} />
@@ -177,7 +193,23 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   /** Plain row form: no card around a row that already sits in one. */
-  cardBare: { marginHorizontal: spacing(1), marginVertical: 0, overflow: 'hidden' },
+  cardBare: { marginVertical: 0 },
+  /** The web's ToolRow: a 24px line, 6px after the leading glyph, 8px around the dot. */
+  row: { flexDirection: 'row', alignItems: 'center', minHeight: 24 },
+  rowLeading: { width: 16, alignItems: 'center', justifyContent: 'center', marginRight: 6 },
+  rowDot: { width: 6, height: 6, borderRadius: 3 },
+  rowTitle: { color: chat.labelTertiary, fontSize: 13, lineHeight: 24, flexShrink: 0 },
+  rowSep: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
+  rowSummary: { flex: 1, color: chat.labelTertiary, fontSize: 13, lineHeight: 24 },
+  /** The expanded body of a bare row: the web's indented IN/OUT card. */
+  bodyBare: {
+    marginTop: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: chat.borderL2,
+    borderRadius: radius.lg,
+    padding: spacing(3),
+    gap: spacing(2),
+  },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5), paddingHorizontal: spacing(2), paddingVertical: spacing(1.5) },
   titleArea: { flex: 1 },
   title: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },

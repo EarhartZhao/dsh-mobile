@@ -124,4 +124,41 @@ describe('MessageActionRow', () => {
     expect(label('start')[0]).toBe('18:57')
     expect(label('end').at(-1)).toBe('18:57')
   })
+
+  it('shows the turn-usage pill only for a turn that recorded tokens', () => {
+    // No accounting is a different fact from a measured zero: the pill is left
+    // off entirely rather than printed as `用量 0 tok`.
+    expect(hasLabel(render(), 'message.turnUsage.title')).toBe(false)
+
+    const tree = render({
+      usage: {
+        totalTokens: 12_300, uncachedInputTokens: 100, cacheReadTokens: 12_000,
+        cacheWriteTokens: 0, outputTokens: 200,
+      },
+    })
+    expect(hasLabel(tree, 'message.turnUsage.title')).toBe(true)
+    expect(texts(tree)).toContain('message.turnUsage.consumed(total=12.3K)')
+  })
+
+  it('opens the turn-usage panel on the pill', () => {
+    const tree = render({
+      usage: {
+        totalTokens: 12_300, uncachedInputTokens: 100, cacheReadTokens: 12_000,
+        cacheWriteTokens: 0, outputTokens: 200, reasoningTokens: 40,
+      },
+    })
+    act(() => { press(tree, 'message.turnUsage.title')() })
+
+    expect(texts(tree)).toEqual(expect.arrayContaining([
+      'message.turnUsage.title',
+      'message.turnUsage.count(count=12,300)',
+      'message.turnUsage.cacheHit', '99.2%',
+      'message.turnUsage.input', 'message.turnUsage.count(count=100)',
+      'message.turnUsage.cacheRead', 'message.turnUsage.count(count=12,000)',
+      // The reasoning share rides the output row, which is where the web puts it.
+      'message.turnUsage.count(count=200)message.turnUsage.reasoning(tokens=message.turnUsage.count(count=40))',
+    ]))
+    // A bucket the turn never wrote drops its row instead of reporting zero.
+    expect(texts(tree)).not.toContain('message.turnUsage.cacheWrite')
+  })
 })
