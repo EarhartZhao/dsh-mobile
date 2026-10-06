@@ -1,6 +1,6 @@
 /** Durable subagent catalog with read-only history and continuable controls. */
-import React, { useCallback, useEffect, useState } from 'react'
-import { FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { deriveConversation, type ConnectionManager, type ConversationItem, type SessionState } from '@dsh-mobile/core'
 import type { HistoryEntry, SubagentCatalog, SubagentListEntry } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
@@ -96,17 +96,37 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   const [error, setError] = useState('')
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
+  /**
+   * Reading a subagent is reading it whole, so the first page pulls the rest on
+   * its own. `eventsRef` mirrors the loaded records because the walk reads them
+   * between awaits, where state would still be stale.
+   */
+  const eventsRef = useRef<HistoryEntry[]>([])
+  const hasMoreRef = useRef(false)
+  const backfillRun = useRef(0)
+  const backfillStop = useRef(false)
+  const [backfill, setBackfill] = useState<'idle' | 'running' | 'paused' | 'failed'>('idle')
+  const [backfilled, setBackfilled] = useState(0)
   /** Turn boundaries, preparing calls, and unknown-event rows are chrome here. */
   const items = (selected === null ? [] : deriveConversation(stateFromEvents(selected.id, events)))
     .filter(item => item.kind !== 'turn-start' && item.kind !== 'turn-end'
       && item.kind !== 'preparing' && item.kind !== 'unknown')
 
-  const loadHistory = useCallback(async (entry: SubagentListEntry, beforeSeq?: number): Promise<void> => {
+  /**
+   * One page of this subagent's transcript, prepended to what is loaded.
+   * @param entry - the subagent being read.
+   * @param beforeSeq - read the records older than this seq; omit for the tail.
+   * @returns whether older records are still waiting; `null` when the read
+   *   failed, which ends a walk.
+   */
+  const loadPage = useCallback(async (entry: SubagentListEntry, beforeSeq?: number): Promise<boolean | null> => {
     if (entry.kind === 'diagnostic') {
+      eventsRef.current = []
       setEvents([])
+      hasMoreRef.current = false
       setHasMore(false)
       setError(t('subagent.readFailed'))
-      return
+      return null
     }
     setLoading(true)
     setError('')
@@ -120,21 +140,79 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
       } as never)
       if (result?.result.ok !== true) {
         setError(result?.result.ok === false ? t('subagent.historyFailed', { message: result.result.error.message }) : t('subagent.historyConnection'))
-        return
+        return null
       }
       const page = result.result.value.events
-      setEvents(current => beforeSeq === undefined ? page : [...page, ...current])
-      setHasMore(result.result.value.hasMore)
+      const merged = beforeSeq === undefined ? page : [...page, ...eventsRef.current]
+      eventsRef.current = merged
+      setEvents(merged)
+      hasMoreRef.current = result.result.value.hasMore === true
+      setHasMore(hasMoreRef.current)
+      if (beforeSeq !== undefined) setBackfilled(count => count + page.length)
+      return hasMoreRef.current
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      return null
     } finally {
       setLoading(false)
     }
   }, [manager, parentSessionId, t])
 
+  /** Back to the empty state, for a different subagent or a fresh read. */
+  const resetHistory = useCallback((): void => {
+    backfillRun.current += 1
+    backfillStop.current = false
+    hasMoreRef.current = false
+    eventsRef.current = []
+    setEvents([])
+    setHasMore(false)
+    setBackfill('idle')
+    setBackfilled(0)
+  }, [])
+
+  /**
+   * Pull the rest of this subagent's log, one page at a time, so opening it
+   * shows the whole conversation instead of a window that needs a tap per page.
+   */
+  const backfillHistory = useCallback(async (entry: SubagentListEntry): Promise<void> => {
+    const generation = ++backfillRun.current
+    backfillStop.current = false
+    setBackfill('running')
+    for (;;) {
+      if (generation !== backfillRun.current) return
+      if (backfillStop.current) {
+        setBackfill('paused')
+        return
+      }
+      const beforeSeq = eventsRef.current[0]?.event.seq
+      if (!hasMoreRef.current || typeof beforeSeq !== 'number') {
+        setBackfill('idle')
+        return
+      }
+      const more = await loadPage(entry, beforeSeq)
+      if (generation !== backfillRun.current) return
+      if (more === null) {
+        setBackfill('failed')
+        return
+      }
+      if (!more) {
+        setBackfill('idle')
+        return
+      }
+    }
+  }, [loadPage])
+
+  /** Read this subagent from the tail again, then pull everything older. */
+  const reloadHistory = useCallback(async (entry: SubagentListEntry): Promise<void> => {
+    resetHistory()
+    const more = await loadPage(entry)
+    if (more === true) await backfillHistory(entry)
+  }, [backfillHistory, loadPage, resetHistory])
+
   useEffect(() => {
-    if (selected !== null) void loadHistory(selected)
-  }, [selected, loadHistory])
+    if (selected === null) return
+    void reloadHistory(selected)
+  }, [selected, reloadHistory])
 
   const refreshCatalog = useCallback(async (): Promise<void> => {
     const result = await manager.client?.subagents.list({ parentSessionId } as never).catch(() => null)
@@ -169,7 +247,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
         return
       }
       setPrompt('')
-      await Promise.all([refreshCatalog(), loadHistory(entry)])
+      await Promise.all([refreshCatalog(), reloadHistory(entry)])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -192,7 +270,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
         setError(result?.result.ok === false ? t('subagent.interruptFailed', { message: result.result.error.message }) : t('subagent.interruptConnection'))
         return
       }
-      await Promise.all([refreshCatalog(), loadHistory(entry)])
+      await Promise.all([refreshCatalog(), reloadHistory(entry)])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -213,7 +291,7 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
     return (
       <View style={styles.detailCard}>
         <View style={styles.detailHeader}>
-          <TouchableOpacity onPress={() => { setSelected(null); setEvents([]); setPrompt('') }}>
+          <TouchableOpacity onPress={() => { setSelected(null); resetHistory(); setPrompt('') }}>
             <Text style={styles.link}>{t('subagent.backToList')}</Text>
           </TouchableOpacity>
           <Text style={styles.detailTitle} numberOfLines={1}>{entryTitle(selected, t)}</Text>
@@ -238,16 +316,29 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
           renderItem={({ item }) => <TranscriptRow item={item} />}
         />
         {hasMore && (
-          <TouchableOpacity
-            style={styles.linkRow}
-            disabled={loading}
-            onPress={() => {
-              const firstSeq = events[0]?.event.seq
-              if (typeof firstSeq === 'number') void loadHistory(selected, firstSeq)
-            }}
-          >
-            <Text style={styles.link}>{loading ? t('common.loading') : t('subagent.loadOlder')}</Text>
-          </TouchableOpacity>
+          backfill === 'running' ? (
+            <View style={styles.backfillRow}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.meta}>{t('subagent.backfilling', { count: backfilled })}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={t('subagent.pauseBackfill')}
+                onPress={() => { backfillStop.current = true }}
+              >
+                <Text style={styles.link}>{t('subagent.pauseBackfill')}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.linkRow}
+              disabled={loading}
+              onPress={() => void backfillHistory(selected)}
+            >
+              <Text style={styles.link}>
+                {loading ? t('common.loading') : backfill === 'failed' ? t('subagent.retryOlder') : t('subagent.loadOlder')}
+              </Text>
+            </TouchableOpacity>
+          )
         )}
         {selected.kind === 'child' && selected.mode === 'continuable' && (
           <View style={styles.promptRow}>
@@ -336,6 +427,13 @@ const styles = StyleSheet.create({
   entryMeta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 2 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   linkRow: { alignItems: 'center', paddingVertical: spacing(2) },
+  backfillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing(2),
+    paddingVertical: spacing(2),
+  },
   link: { color: colors.accent, fontSize: fontSize.small },
   history: { flex: 1, minHeight: 140 },
   historyContent: { gap: spacing(2), paddingBottom: spacing(2) },

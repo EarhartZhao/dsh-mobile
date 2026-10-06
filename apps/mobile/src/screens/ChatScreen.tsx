@@ -27,7 +27,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -81,6 +81,49 @@ interface PendingFile {
 }
 
 const MAX_MOBILE_FILE_BYTES = 512 * 1024
+
+/**
+ * History windows tried in order: the tail read when the transcript opens, and
+ * each walk further back from it.
+ *
+ * 120 is the window a healthy gateway answers with. The smaller ones are for a
+ * gateway older than plugin 0.2.36, which cannot trim a page to what one NATS
+ * publish carries (the Hub's ceiling is 1 MiB): there a big Session fails the
+ * whole read, and a shallower window is the difference between an empty screen
+ * and a readable transcript.
+ */
+const HISTORY_PAGE_SIZES = [120, 40]
+
+/**
+ * One history read, walking {@link HISTORY_PAGE_SIZES} down until it lands.
+ *
+ * A gateway older than plugin 0.2.36 cannot trim a page to what one NATS
+ * publish carries, so a Session with heavy records fails the whole read instead
+ * of answering short; a shallower window is what still opens it. The last
+ * failure is the caller's to report.
+ */
+async function readHistoryPage<T>(read: (maxMessages: number) => Promise<T>): Promise<T> {
+  let lastError: unknown
+  for (const maxMessages of HISTORY_PAGE_SIZES) {
+    try {
+      return await read(maxMessages)
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
+}
+
+/**
+ * The oldest seq this Session's local log holds — the cursor every older read
+ * walks back from. Records are seq-ascending, so the first one carrying a seq is
+ * the oldest.
+ */
+function oldestSeq(session: SessionState | undefined): number | undefined {
+  return session?.events
+    .map(entry => typeof entry.event.seq === 'number' ? entry.event.seq : undefined)
+    .find((seq): seq is number => seq !== undefined)
+}
 
 interface Props {
   manager: ConnectionManager
@@ -148,7 +191,27 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
   const [hasOlderHistory, setHasOlderHistory] = useState(false)
-  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false)
+  /**
+   * Backfill of everything older than the tail page. Reading a chat means the
+   * whole chat, so the walk runs on its own; it stops on a pause, a failure, or
+   * the end of the log. `backfilled` counts the records it pulled, which is what
+   * the progress line reports.
+   */
+  const [backfill, setBackfill] = useState<'idle' | 'running' | 'paused' | 'failed'>('idle')
+  const [backfilled, setBackfilled] = useState(0)
+  /** The walk reads these between awaits, where state would still be stale. */
+  const hasMoreRef = useRef(false)
+  const backfillRun = useRef(0)
+  const backfillStop = useRef(false)
+  /**
+   * The tail read that fills the transcript. A Session with heavy records takes
+   * a while to come back, and a gateway whose page is bigger than one NATS
+   * publish cannot answer it at all — both used to look like an empty chat.
+   */
+  const [historyStatus, setHistoryStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [historyError, setHistoryError] = useState('')
+  /** Guards a landing tail read: only the newest one may touch the screen. */
+  const historyRequest = useRef(0)
   const [draft, setDraft] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
@@ -697,45 +760,128 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     })
   }, [showNotice, t])
 
-  const loadOlderHistory = useCallback(async (): Promise<void> => {
-    const client = manager.client
-    const session = manager.store.sessions.get(sessionId)
-    const beforeSeq = session?.events
-      .map(entry => typeof entry.event.seq === 'number' ? entry.event.seq : undefined)
-      .find((seq): seq is number => seq !== undefined)
-    if (client === null || beforeSeq === undefined || loadingOlderHistory || !hasOlderHistory) return
-    setLoadingOlderHistory(true)
+  // Held as a value rather than read off the manager inside the callback, so a
+  // reconnect re-runs the read: an empty transcript must not outlive the
+  // connection it failed on.
+  const connection = manager.client
+
+  /**
+   * The tail read that fills this Session's transcript.
+   *
+   * A failed read used to be swallowed whole: the screen stayed blank and the
+   * Session looked empty, which is exactly what a long one with heavy records
+   * does when its page is too big for the gateway to publish in one frame.
+   */
+  const loadHistoryTail = useCallback(async (): Promise<void> => {
+    // No connection yet: the caller keeps the loading state, and the read is
+    // retried when one arrives (the connection is a dependency below).
+    if (connection === null) return
+    const request = ++historyRequest.current
+    setHistoryStatus('loading')
+    setHistoryError('')
     try {
-      const result = await client.sessions.history({ sessionId, beforeSeq, maxMessages: 120 } as never)
-      if (!result.result.ok) throw new Error(result.result.error.message)
-      manager.store.applyHistory(sessionId, result.result.value.events)
-      setHasOlderHistory(result.result.value.hasMore)
+      const page = await readHistoryPage(async maxMessages => {
+        const result = await connection.sessions.history({ sessionId, maxMessages } as never)
+        if (!result.result.ok) throw new Error(result.result.error.message)
+        return result.result.value
+      })
+      if (request !== historyRequest.current || !mountedRef.current) return
+      manager.store.applyHistory(
+        sessionId,
+        page.events,
+        page.projections ?? undefined,
+      )
+      hasMoreRef.current = page.hasMore
+      setHasOlderHistory(page.hasMore)
+      setHistoryStatus('ready')
+    } catch (error) {
+      if (request !== historyRequest.current || !mountedRef.current) return
+      setHistoryStatus('error')
+      setHistoryError(error instanceof Error ? error.message : String(error))
+    }
+  }, [connection, manager, sessionId])
+
+  /**
+   * One page further back, applied to the store.
+   * @returns whether another page is still waiting; `null` when the read failed
+   *   or the log stopped moving, which ends a walk.
+   */
+  const loadOlderPage = useCallback(async (): Promise<boolean | null> => {
+    const client = manager.client
+    const beforeSeq = oldestSeq(manager.store.sessions.get(sessionId))
+    if (client === null || beforeSeq === undefined || !hasMoreRef.current) return null
+    try {
+      const page = await readHistoryPage(async maxMessages => {
+        const result = await client.sessions.history({ sessionId, beforeSeq, maxMessages } as never)
+        if (!result.result.ok) throw new Error(result.result.error.message)
+        return result.result.value
+      })
+      if (!mountedRef.current) return null
+      manager.store.applyHistory(sessionId, page.events)
+      setBackfilled(count => count + page.events.length)
+      hasMoreRef.current = page.hasMore
+      setHasOlderHistory(page.hasMore)
+      if (!page.hasMore) return false
+      // A gateway that answered with the same window would have the walk ask
+      // for it forever, so a page that moved nothing ends it instead.
+      const oldest = oldestSeq(manager.store.sessions.get(sessionId))
+      return oldest === undefined || oldest >= beforeSeq ? null : true
     } catch (error) {
       showNotice(t('chat.historyFailed', { message: error instanceof Error ? error.message : String(error) }))
-    } finally {
-      if (mountedRef.current) setLoadingOlderHistory(false)
+      return null
     }
-  }, [hasOlderHistory, loadingOlderHistory, manager, sessionId, showNotice, t])
+  }, [manager, sessionId, showNotice, t])
+
+  /**
+   * Pull the rest of the log, one page at a time.
+   *
+   * A page too big for the Hub to publish used to fail the read outright, and
+   * even when it worked, walking back through a long Session meant tapping
+   * "load earlier" once per page. The gateway now answers short pages, and this
+   * keeps asking until there is nothing older to ask for.
+   */
+  const backfillHistory = useCallback(async (): Promise<void> => {
+    const generation = ++backfillRun.current
+    backfillStop.current = false
+    setBackfill('running')
+    for (;;) {
+      if (generation !== backfillRun.current || !mountedRef.current) return
+      if (backfillStop.current) {
+        setBackfill('paused')
+        return
+      }
+      const more = await loadOlderPage()
+      if (generation !== backfillRun.current || !mountedRef.current) return
+      if (more === null) {
+        setBackfill('failed')
+        return
+      }
+      if (!more) {
+        setBackfill('idle')
+        return
+      }
+    }
+  }, [loadOlderPage])
+
+  const pauseBackfill = useCallback((): void => {
+    backfillStop.current = true
+  }, [])
 
   useEffect(() => {
     // Baseline: tail page (with projections watermark), then live frames take over.
     let alive = true
+    // A screen that changes Session (or reconnects) starts the walk over: the
+    // store keeps what it already has, so it resumes from the current oldest.
+    backfillRun.current += 1
+    backfillStop.current = false
+    setBackfill('idle')
+    setBackfilled(0)
+    hasMoreRef.current = false
     setHasOlderHistory(false)
-    setLoadingOlderHistory(false)
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
-    const client = manager.client
-    if (client !== null) {
-      void client.sessions.history({ sessionId, maxMessages: 120 } as never).then(result => {
-        if (alive && result.result.ok) {
-          manager.store.applyHistory(
-            sessionId,
-            result.result.value.events,
-            result.result.value.projections ?? undefined,
-          )
-          setHasOlderHistory(result.result.value.hasMore)
-        }
-      }).catch(() => undefined)
-    }
+    void loadHistoryTail().then(() => {
+      if (alive && hasMoreRef.current) void backfillHistory()
+    })
     let pending = false
     const off = manager.store.on('changed', ({ sessionId: changed }) => {
       if (changed !== undefined && changed !== sessionId) return
@@ -754,7 +900,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       off()
       if (refreshTimer !== null) clearTimeout(refreshTimer)
     }
-  }, [manager, sessionId, refresh])
+  }, [backfillHistory, loadHistoryTail, manager, sessionId, refresh])
   useEffect(() => () => {
     mountedRef.current = false
     if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
@@ -1316,25 +1462,63 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           })}
         </ScrollView>
       )}
+      {historyStatus === 'error' && (
+        <View style={styles.historyErrorBar}>
+          <Text style={styles.historyErrorText} numberOfLines={3}>
+            {t('chat.historyFailed', { message: historyError })}
+          </Text>
+          <TouchableOpacity
+            style={styles.historyRetry}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.retry')}
+            onPress={() => void loadHistoryTail()}
+          >
+            <Text style={styles.historyRetryText}>{t('common.retry')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <FlatList
         ref={listRef}
         data={listRows}
         keyExtractor={row => row.key}
         contentContainerStyle={styles.listContent}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        // A refused read is the bar's to explain; claiming "no messages yet"
+        // underneath it would contradict what just went wrong.
+        ListEmptyComponent={historyStatus === 'error' ? undefined : (
+          <View style={styles.transcriptEmpty}>
+            {historyStatus === 'loading' && <ActivityIndicator color={colors.accent} />}
+            <Text style={styles.transcriptEmptyText}>
+              {historyStatus === 'loading' ? t('chat.loadingHistory') : t('chat.empty')}
+            </Text>
+          </View>
+        )}
         ListFooterComponent={liveTurn === undefined
           ? undefined
           : <RunningIndicator startedAt={liveTurn.startedAt} />}
         ListHeaderComponent={hasOlderHistory ? (
-          <TouchableOpacity
-            style={styles.historyLoader}
-            disabled={loadingOlderHistory}
-            onPress={() => void loadOlderHistory()}
-          >
-            <Text style={styles.historyLoaderText}>
-              {loadingOlderHistory ? t('chat.loadingOlder') : t('chat.loadOlder')}
-            </Text>
-          </TouchableOpacity>
+          backfill === 'running' ? (
+            <View style={styles.historyLoader}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.historyLoaderText}>{t('chat.backfilling', { count: backfilled })}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.pauseBackfill')}
+                onPress={pauseBackfill}
+              >
+                <Text style={styles.historyLoaderText}>{t('chat.pauseBackfill')}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.historyLoader}
+              onPress={() => void backfillHistory()}
+            >
+              <Text style={styles.historyLoaderText}>
+                {backfill === 'failed' ? t('chat.retryOlder') : t('chat.loadOlder')}
+              </Text>
+            </TouchableOpacity>
+          )
         ) : undefined}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -2373,8 +2557,30 @@ const styles = StyleSheet.create({
   headerMenuText: { color: colors.accent, fontSize: 26, lineHeight: 28 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   listContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(1.5), gap: spacing(1.5) },
-  historyLoader: { alignSelf: 'center', paddingHorizontal: spacing(3), paddingVertical: spacing(1) },
+  historyLoader: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(2),
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(1),
+  },
   historyLoaderText: { color: colors.accent, fontSize: fontSize.small },
+  transcriptEmpty: { alignItems: 'center', gap: spacing(2), paddingTop: spacing(10) },
+  transcriptEmptyText: { color: colors.textDim, fontSize: fontSize.small },
+  historyErrorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(2),
+    paddingHorizontal: spacing(3),
+    paddingVertical: spacing(1.5),
+    backgroundColor: colors.bgElevated,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  historyErrorText: { flex: 1, color: colors.danger, fontSize: fontSize.tiny },
+  historyRetry: { paddingHorizontal: spacing(2), paddingVertical: spacing(1) },
+  historyRetryText: { color: colors.accent, fontSize: fontSize.small },
   goalPausedHint: { color: colors.warning, fontSize: fontSize.tiny, paddingHorizontal: spacing(2), paddingBottom: spacing(0.5) },
   metaHeader: {
     flexDirection: 'row',
@@ -2762,4 +2968,3 @@ const styles = StyleSheet.create({
   jobLabel: { color: colors.text, fontSize: fontSize.small },
   jobMeta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 1 },
 })
-
