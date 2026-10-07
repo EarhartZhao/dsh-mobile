@@ -27,7 +27,9 @@ function stateFromEvents(sessionId: string, events: HistoryEntry[]): SessionStat
     // has no Host run state to hand down: the log is all it has.
     runningKnown: false,
     todos: [],
+    todosSeq: -1,
     usage: null,
+    usageSeq: -1,
   }
 }
 

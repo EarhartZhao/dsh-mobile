@@ -48,6 +48,44 @@ describe('SessionStore', () => {
     expect(session.events.map(e => (e.event as { seq: number }).seq)).toEqual([3])
   })
 
+  it('keeps the newest plan when older pages of history land after it', () => {
+    const store = new SessionStore()
+    const todo = (seq: number, status: string): never => ({
+      type: 'todo/write', seq, time: seq,
+      data: {
+        todos: [
+          { content: '抓取重庆统计公报与官方解读', status: 'completed' },
+          { content: '汇总行业明细数据', status: 'completed' },
+          { content: '撰写完整行业分析报告并交付', status },
+        ],
+      },
+    }) as never
+
+    // The tail page lands first — the end of a turn that finished everything…
+    store.applyHistory('s-1', [{ event: todo(603, 'completed') } as never])
+    expect(store.sessions.get('s-1')?.todos.map(item => item.status))
+      .toEqual(['completed', 'completed', 'completed'])
+
+    // …and then the walk reads the rest of the log, newest page first. An older
+    // write must not turn a finished plan back into a half-done one: that is
+    // exactly how a Host showing 3/3 left the phone showing 2/3.
+    store.applyHistory('s-1', [{ event: todo(397, 'in_progress') } as never])
+    store.applyHistory('s-1', [{ event: todo(318, 'pending') } as never])
+    expect(store.sessions.get('s-1')?.todos.map(item => item.status))
+      .toEqual(['completed', 'completed', 'completed'])
+  })
+
+  it('keeps the newest usage when older pages of history land after it', () => {
+    const store = new SessionStore()
+    const message = (seq: number, outputTokens: number): never => ({
+      type: 'assistant/message', seq, time: seq,
+      data: { usage: { inputTokens: seq, outputTokens, cacheReadTokens: 0 } },
+    }) as never
+    store.applyHistory('s-1', [{ event: message(611, 42_000) } as never])
+    store.applyHistory('s-1', [{ event: message(120, 900) } as never])
+    expect(store.sessions.get('s-1')?.usage?.outputTokens).toBe(42_000)
+  })
+
   it('reports a tail the Host logged while our live stream was down', () => {
     const store = new SessionStore()
     store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 393 }))

@@ -68,7 +68,16 @@ export interface SessionState {
    */
   runningKnown: boolean
   todos: TodoItemView[]
+  /**
+   * Seq of the `todo/write` whose list {@link todos} holds. History arrives one
+   * page at a time from the newest end, so an older page lands after the newer
+   * one: without this, the oldest list written during a turn would be the one
+   * left on screen — a plan the Host had already finished reading as unfinished.
+   */
+  todosSeq: number
   usage: UsageView | null
+  /** Seq of the `assistant/message` whose usage {@link usage} holds. */
+  usageSeq: number
 }
 
 type StoreEvents = {
@@ -101,7 +110,9 @@ function emptySession(sessionId: string): SessionState {
     running: false,
     runningKnown: false,
     todos: [],
+    todosSeq: -1,
     usage: null,
+    usageSeq: -1,
   }
 }
 
@@ -232,9 +243,15 @@ export class SessionStore extends Emitter<StoreEvents> {
   /** Side-channel extraction (todos / usage) shared by history and live paths. */
   private absorbDerived(session: SessionState, event: unknown): void {
     if (!isRecord(event)) return
+    // Both of these are "the newest one wins" facts, and `applyHistory` merges
+    // pages from the newest end backwards: comparing seqs is what keeps a page
+    // read later (i.e. older) from overwriting what the newer page already said.
+    const seq = typeof event['seq'] === 'number' ? event['seq'] : undefined
     if (event['type'] === 'todo/write' && isRecord(event['data'])) {
       const todos = event['data']['todos']
       if (Array.isArray(todos)) {
+        if (seq !== undefined && seq < session.todosSeq) return
+        if (seq !== undefined) session.todosSeq = seq
         session.todos = todos
           .filter(t => isRecord(t) && typeof t['content'] === 'string')
           .map(t => ({
@@ -246,7 +263,10 @@ export class SessionStore extends Emitter<StoreEvents> {
     }
     if (event['type'] === 'assistant/message') {
       const usage = usageOf(event['data'])
-      if (usage !== null) session.usage = usage
+      if (usage !== null && (seq === undefined || seq >= session.usageSeq)) {
+        if (seq !== undefined) session.usageSeq = seq
+        session.usage = usage
+      }
     }
   }
 
