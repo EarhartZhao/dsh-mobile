@@ -321,3 +321,65 @@ describe('ChatScreen tail following', () => {
     expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
   })
 })
+
+/**
+ * The web's floating "back to bottom" control: the way back once the reader
+ * has left the tail.
+ */
+describe('ChatScreen scroll-to-bottom control', () => {
+  const listLayout = (height: number): unknown => ({
+    nativeEvent: { layout: { x: 0, y: 0, width: 390, height } },
+  })
+  const scrollTo = (y: number, contentHeight: number, viewportHeight: number): unknown => ({
+    nativeEvent: {
+      contentOffset: { x: 0, y },
+      contentSize: { width: 390, height: contentHeight },
+      layoutMeasurement: { width: 390, height: viewportHeight },
+    },
+  })
+  /** The control, as the screen renders it — label and press handler together. */
+  function backToBottom(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance | undefined {
+    return tree.root.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.props.accessibilityLabel === 'chat.toBottom').at(-1)
+  }
+
+  it('appears away from the tail and returns the reader to the measured bottom', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    const list = tree.root.findByType(FlatList)
+    const instance = list.instance as unknown as {
+      scrollToEnd: (params: unknown) => void
+      scrollToOffset: (params: unknown) => void
+    }
+    const toEnd = jest.spyOn(instance, 'scrollToEnd').mockImplementation(() => undefined)
+    const toOffset = jest.spyOn(instance, 'scrollToOffset').mockImplementation(() => undefined)
+
+    // At the tail there is nowhere to go back to.
+    expect(backToBottom(tree)).toBeUndefined()
+
+    act(() => { list.props.onLayout(listLayout(800)) })
+    act(() => { list.props.onContentSizeChange(390, 2_000) })
+    act(() => { list.props.onScrollBeginDrag() })
+    act(() => { list.props.onScroll(scrollTo(200, 2_000, 800)) })
+    act(() => { list.props.onScrollEndDrag() })
+    // The unlock is deliberately delayed past the drag's own momentum.
+    await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 200)) })
+
+    const control = backToBottom(tree)
+    expect(control).toBeDefined()
+
+    act(() => { control!.props.onPress() })
+
+    // It aims at the measured bottom — not `scrollToEnd`, whose unmeasured-row
+    // estimate is what left the list short in the first place — and then retires
+    // because the reader is following the tail again.
+    expect(toOffset).toHaveBeenLastCalledWith({ offset: 1_200, animated: true })
+    expect(toEnd).not.toHaveBeenCalled()
+    expect(backToBottom(tree)).toBeUndefined()
+    expect(list.props.maintainVisibleContentPosition).toBeUndefined()
+  })
+})
