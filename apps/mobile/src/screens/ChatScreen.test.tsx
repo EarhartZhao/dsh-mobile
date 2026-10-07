@@ -432,8 +432,13 @@ describe('ChatScreen running turn', () => {
 
     feed(manager, 9, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
     await settle()
-    // Once it closes, the prompt and both answers carry their own row.
-    expect(tree.root.findAllByType(MessageActionRow)).toHaveLength(3)
+    // Once it closes, the web leaves one reply standing per turn: the prompt
+    // keeps its clock row and the closing answer gets the turn's icon row. The
+    // narration that led into the tool call is not an answer — it folds into the
+    // disclosure above with the work it announced, so it carries no row.
+    expect(tree.root.findAllByType(MessageActionRow)).toHaveLength(2)
+    expect(screenText(tree)).not.toContain('我来查一下天津近五年的经济数据。')
+    expect(screenText(tree)).toContain('结果如下。')
   })
 
   it('keeps a live turn\'s trace open between its steps', async () => {

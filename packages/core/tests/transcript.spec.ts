@@ -77,7 +77,7 @@ describe('buildTranscript', () => {
       .toEqual(['u1', 'process', 'a2', 'process', 'a4'])
   })
 
-  it('folds a settled turn into one disclosure inside its answer', () => {
+  it('folds a settled turn into one disclosure inside its closing answer', () => {
     const transcript = buildTranscript([
       user(1, 'q'),
       assistant(2, 'progress', '先看目录'),
@@ -86,12 +86,18 @@ describe('buildTranscript', () => {
       turnEnd(5, 1, 'completed'),
     ])
 
+    // Everything before the turn's closing reply folds into the disclosure: the
+    // web keeps one answer standing per finished turn, never the narration that
+    // led up to it.
     expect(transcript.rows.map(row => row.kind === 'turn' ? 'process' : row.item.key))
-      .toEqual(['u1', 'a2', 'a4'])
-    // The disclosure rides the answer that opened the turn's visible content,
-    // which is where the web seats the folded control.
+      .toEqual(['u1', 'a4'])
+    // The disclosure rides the closing answer, which is where the web seats the
+    // folded control — and the only reply left for it to ride.
     expect(transcript.rows[1]).toMatchObject({ process: expect.anything() })
     expect(transcript.rows[0]).not.toHaveProperty('process')
+    // The folded narration still resolves to a row, so nothing can address an
+    // item that has no destination.
+    expect(transcript.rowIndexOfItemKey.get('a2')).toBe(0)
   })
 
   it('gives a turn with no answer its own disclosure row and points tools at it', () => {

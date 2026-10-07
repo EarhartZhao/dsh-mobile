@@ -201,7 +201,7 @@ describe('groupTurns', () => {
     })
   })
 
-  it('folds a settled turn\'s runs back into the one disclosure above its answer', () => {
+  it('folds a settled turn\'s runs and earlier replies back into the one disclosure above its answer', () => {
     const turns = groupTurns(items(
       user(1, 'q'),
       assistant(2, 'progress', 'think'),
@@ -212,7 +212,10 @@ describe('groupTurns', () => {
 
     const turn = turns[0]!
     expect(turn.live).toBe(false)
-    expect(rowShape(turn)).toEqual(['q', 'process', 'progress', 'final'])
+    // The web leaves one reply standing per finished turn: "progress" is the
+    // narration that led into the tool call, so it folds with it, and only the
+    // closing "final" keeps its own row.
+    expect(rowShape(turn)).toEqual(['q', 'process', 'final'])
     const block = turn.rows.find(row => row.kind === 'process')
     // A settled disclosure holds the whole trace, not one run of it.
     expect(block).toMatchObject({

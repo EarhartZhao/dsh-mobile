@@ -77,6 +77,25 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-07 第二十轮）：**一轮只留一个回答：中途旁白折进工序，不再各自成为消息。**
+> - 症结：`settledRows` 把一轮里**所有**可见项都挂在 disclosure 之后，于是模型「一边干活一边念叨」的话
+>   （截图里那句 "curl works even though `web_fetch` is blocked…"）在轮次结束后仍各自占一张卡、带自己的
+>   复制/评分/用量/时间行。web 不是这么读的：轮次结束时它把**最后一个回答之前的一切**（旁白、思考、工具调用）
+>   折进工序，只留一条回答站着——`ui-chat/src/client/chat/ChatNodeSeat.tsx` 的 `processHidden =
+>   foldable && processMember && !processOpen`，`ChatGroupSeat.tsx` 的 `outerHidden`，以及
+>   `ui-chat/tests/chat-view.client.spec.tsx` 里两条用例：`folds Think and Tool rows before the final answer`
+>   （早先那条回答进组、只剩 final answer）与 `keeps a live Turn expanded and folds it once at turn/end`
+>   （运行中 `hidden === null`，`turn/end` 后变成 `until-found`）。dsh 里根本看不到那段旁白，正是因为它在
+>   disclosure 里。
+> - 现在：运行中照旧逐段读（旁白留在它说出的位置，这次不动）；轮次一结束，`settledRows` 丢掉除**收尾回答**以外的
+>   `assistant`/`stream` 行，工序 disclosure 改挂在收尾回答上（`processOwnerItem` 从「第一条回答」改成
+>   「最后一条回答」，否则折叠后 disclosure 会没有行可挂）。被折掉的项仍能通过 `rowIndexOfItemKey` 落到该轮首行，
+>   搜索/跳转不会指向不存在的行。
+> - 已知与 web 的差异（有意保留）：若一轮最后一条消息本身还带工具调用，web 认为该轮「没有干净答案」，连那段文字
+>   一起折掉、只留一行图标；App 保留最后这条回答的文字（丢内容换一个空图标行不划算）。
+> - 验证：`packages/core` test（17 套 133 例，改动 settled 折叠与跳转两条期望）/ `apps/mobile` typecheck / test
+>   （27 套 195 例，「运行中的一轮」用例改为：`turn/end` 后动作行 2 个、旁白不再出现、收尾回答仍在）/ lint 0 error。
+
 > 进度（2026-10-07 第十九轮）：**运行中的轮次按 web 的读法逐段渲染，并修掉思考时的三处布局问题。**
 > - 答案位置：`groupTurns` 原先把整轮的工序 block 统一插在答案之前（`rows = [prompt, process, 所有可见项]`），
 >   于是「我来查一下天津近五年的经济数据。」这类**中途旁白**被压到了它后面那些工具调用的下方。web 的读法是

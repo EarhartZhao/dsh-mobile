@@ -142,6 +142,27 @@ export interface TurnTail {
 }
 
 /**
+ * The reply a finished turn keeps standing: its closing message, the newest
+ * thing the model said and the row the web hangs the turn's icon row on.
+ *
+ * A running turn reads every reply it produced, in place — that is how the
+ * web's flow works while the model narrates its way through the steps. Once the
+ * turn closes, the web folds everything up to the final answer into the process
+ * disclosure and leaves exactly one reply behind (`foldCompletedTurns`, and the
+ * `folds Think and Tool rows before the final answer` case in
+ * `ui-chat/tests/chat-view.client.spec.tsx`: the earlier reply joins the group
+ * members and the disclosure keeps only the final answer standing). Reading
+ * every narration as its own answer left a column of "Let me fetch those
+ * pages." half-sentences between the question and the answer it belongs to,
+ * which is what dsh never shows.
+ */
+function closingReply(turn: Turn): ConversationItem | undefined {
+  return turn.visible
+    .filter(entry => entry.kind === 'assistant' || entry.kind === 'stream')
+    .at(-1)
+}
+
+/**
  * The message that closes a turn, with the boundary its branch control forks
  * at. The web hangs that control on the turn tail and sends the real
  * `turn/end` seq ("the branch action owns boundary resolution"), never the
@@ -152,9 +173,7 @@ export interface TurnTail {
  * answer of its own (a turn that only called tools, or only reasoned).
  */
 export function turnTail(turn: Turn): TurnTail | undefined {
-  const item = turn.visible
-    .filter(entry => entry.kind === 'assistant' || entry.kind === 'stream')
-    .at(-1)
+  const item = closingReply(turn)
   if (item === undefined) return undefined
   if (turn.endSeq !== undefined) return { item, branch: { seq: turn.endSeq } }
   return turn.live ? { item, branch: { unavailable: true } } : { item }
@@ -165,10 +184,14 @@ export function turnTail(turn: Turn): TurnTail | undefined {
  * has nothing to disclose. A turn with no reasoning and no tool calls — a plain
  * question and answer — must not render a disclosure at all: an empty one opens
  * into nothing, so tapping it looks like a control that does not work.
+ *
+ * The disclosure rides the closing reply, never an earlier one: on a settled
+ * turn {@link settledRows} drops the earlier replies, so a disclosure seated on
+ * the first of them would leave the transcript with no row to hold it.
  */
 export function processOwnerItem(turn: Turn): ConversationItem | undefined {
   if (turn.process.length === 0) return undefined
-  return turn.visible.find(item => item.kind === 'assistant' || item.kind === 'stream')
+  return closingReply(turn)
 }
 
 function isRunning(item: ConversationItem): boolean {
@@ -302,17 +325,30 @@ function summarizeSteps(steps: TurnProcessStep[]): ProcessActivitySummary {
 }
 
 /**
- * A settled turn's rows: the prompt, one disclosure holding every step, then
- * everything that followed it, in order.
+ * A settled turn's rows: the prompt, one disclosure holding every step, then the
+ * one reply the turn closes on.
  *
  * The web stops reading a finished turn's process in place — its runs fold into
- * one control above the answer — so the phone folds the same way: the
- * disclosure a reader opens holds the whole trace rather than one run of it.
+ * one control above the answer, and every earlier reply folds into it with the
+ * tools and reasoning it narrated — so the phone folds the same way: the
+ * disclosure a reader opens holds the whole trace rather than one run of it,
+ * and the narration it holds is not repeated as an answer of its own.
+ *
+ * The closing reply stays even when the web would fold it too (a turn that ends
+ * on a tool call has no clean answer, and the web then leaves its icon row
+ * standing alone). Dropping the newest thing the model said to match that would
+ * trade a readable turn for a bare row of icons, so it keeps its text.
+ *
  * @param turn - the settled turn, with its rows still in chronological order.
  * @returns the turn's rows in the folded shape.
  */
 function settledRows(turn: Turn): TurnRow[] {
-  const items = turn.rows.filter((row): row is Extract<TurnRow, { kind: 'item' }> => row.kind === 'item')
+  const closing = closingReply(turn)
+  const items = turn.rows
+    .filter((row): row is Extract<TurnRow, { kind: 'item' }> => row.kind === 'item')
+    // Everything the turn narrated before its closing reply is process, not
+    // answer, and the disclosure above already remembers it.
+    .filter(row => (row.item.kind !== 'assistant' && row.item.kind !== 'stream') || row.item === closing)
   if (turn.process.length === 0) return items
   const first = items.findIndex(row => row.item.kind !== 'user')
   const at = first === -1 ? items.length : first
