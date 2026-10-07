@@ -28,7 +28,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -207,6 +207,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const hasMoreRef = useRef(false)
   const backfillRun = useRef(0)
   const backfillStop = useRef(false)
+  /**
+   * The Host watermark whose tail read this screen already triggered, keyed by
+   * Session: a page that cannot move the tail would otherwise be asked for
+   * again on every store change.
+   */
+  const healedSeq = useRef({ sessionId: '', seq: -1 })
+  /** Bumped to re-run the baseline read: what leaving and re-entering does. */
+  const [tailEpoch, setTailEpoch] = useState(0)
   /**
    * The tail read that fills the transcript. A Session with heavy records takes
    * a while to come back, and a gateway whose page is bigger than one NATS
@@ -954,6 +962,26 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     backfillStop.current = true
   }, [])
 
+  /**
+   * Notice a Transcript whose live stream dropped the end of a turn.
+   *
+   * A Session's live stream carries its chunks, its durable records and its
+   * `turn/end`. When that stream dies mid-turn the transcript never learns how
+   * the turn ended, and the records it missed exist only in the Host's log —
+   * which the bridge's re-opened stream reports as a watermark above every
+   * record the App holds. Landing the baseline read again is what leaving and
+   * re-entering the screen does, minus the leaving: the answer and the end of
+   * the turn arrive while the reader is still looking at it.
+   */
+  const healMissingTail = useCallback((): void => {
+    const session = manager.store.sessions.get(sessionId)
+    if (session === undefined || !isLogBehindHost(session)) return
+    const healed = healedSeq.current
+    if (healed.sessionId === sessionId && healed.seq >= session.lastSeq) return
+    healedSeq.current = { sessionId, seq: session.lastSeq }
+    setTailEpoch(epoch => epoch + 1)
+  }, [manager, sessionId])
+
   useEffect(() => {
     // Baseline: tail page (with projections watermark), then live frames take over.
     let alive = true
@@ -972,6 +1000,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     let pending = false
     const off = manager.store.on('changed', ({ sessionId: changed }) => {
       if (changed !== undefined && changed !== sessionId) return
+      healMissingTail()
       if (pending) return
       pending = true
       refreshTimer = setTimeout(() => {
@@ -987,7 +1016,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       off()
       if (refreshTimer !== null) clearTimeout(refreshTimer)
     }
-  }, [backfillHistory, loadHistoryTail, manager, sessionId, refresh])
+  }, [backfillHistory, healMissingTail, loadHistoryTail, manager, sessionId, refresh, tailEpoch])
   useEffect(() => () => {
     mountedRef.current = false
     if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)

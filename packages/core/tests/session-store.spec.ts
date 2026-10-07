@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MuxFrame } from '@dsh-mobile/protocol'
 import { RpcId } from '@dsh-mobile/protocol'
-import { SessionStore } from '../src/session-store.ts'
+import { isLogBehindHost, SessionStore } from '../src/session-store.ts'
 
 const sid = 's-1' as never
 
@@ -46,6 +46,37 @@ describe('SessionStore', () => {
     store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 3, type: 'assistant/chunk' } as never }))
     const session = store.sessions.get('s-1')!
     expect(session.events.map(e => (e.event as { seq: number }).seq)).toEqual([3])
+  })
+
+  it('reports a tail the Host logged while our live stream was down', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 393 }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 394, type: 'assistant/chunk' } as never }))
+    expect(isLogBehindHost(store.sessions.get('s-1')!)).toBe(false)
+
+    // The stream died at 394; the Host's log ran on to 614 without us, and the
+    // bridge's re-opened follow is what reports the newer watermark.
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 614 }))
+    expect(isLogBehindHost(store.sessions.get('s-1')!)).toBe(true)
+
+    // A tail read lands the newest records, and the two agree again.
+    store.applyHistory('s-1', [{ event: { seq: 614, type: 'turn/end' } } as never])
+    expect(isLogBehindHost(store.sessions.get('s-1')!)).toBe(false)
+  })
+
+  it('a Session holding nothing but live chunks is not behind anything', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 12 }))
+    store.applyMuxFrame(...mux({
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', seq: 0,
+        data: { transient: true, attemptId: 'a1', index: 0, turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'hi' } },
+      } as never,
+    }))
+    // Opening a Session races the watermark against its first page: a chunk with
+    // no record behind it must not read as a log that is behind.
+    expect(isLogBehindHost(store.sessions.get('s-1')!)).toBe(false)
   })
 
   it('projections follow higher-seq-wins', () => {

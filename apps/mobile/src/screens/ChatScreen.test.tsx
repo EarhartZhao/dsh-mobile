@@ -230,6 +230,39 @@ describe('ChatScreen transcript backfill', () => {
     expect(screenText(tree)).toContain('消息 4')
   })
 
+  it('reads the tail again when the Host log runs past the loaded records', async () => {
+    const { manager, history } = setup()
+    history
+      .mockResolvedValueOnce(okHistory(page([2], false)))
+      .mockResolvedValueOnce(okHistory(page([4, 5], false)))
+    const tree = render(manager)
+    await settle()
+    expect(screenText(tree)).toContain('消息 2')
+
+    // The Session's live stream died at seq 2 and the Host's log ran on to 5:
+    // the closing message and the `turn/end` are in the log, never in a frame
+    // the App saw. The bridge's re-opened follow reports where the log stands.
+    act(() => {
+      manager.store.applyMuxFrame(RpcId('f1'), {
+        type: 'session/subscribed', sessionId: 's1' as never, lastSeq: 5,
+      })
+    })
+    await settle()
+
+    expect(history.mock.calls.map(call => call[0].beforeSeq)).toEqual([undefined, undefined])
+    expect(screenText(tree)).toContain('消息 5')
+
+    // The same watermark is not read twice: a page that cannot move the tail
+    // would otherwise be asked for again on every store change.
+    act(() => {
+      manager.store.applyMuxFrame(RpcId('f2'), {
+        type: 'session/subscribed', sessionId: 's1' as never, lastSeq: 5,
+      })
+    })
+    await settle()
+    expect(history.mock.calls).toHaveLength(2)
+  })
+
   it('stops the walk on pause instead of pulling the next page', async () => {
     const { manager, history } = setup()
     let release: (value: unknown) => void = () => undefined

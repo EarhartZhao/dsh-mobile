@@ -134,12 +134,21 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 >      于是「深度求索中」永不消失。
 >   b. **`oldestSeq` 把实时 chunk 的占位 `seq: 0` 当成了日志位置**。backfill 于是请求「seq 0 之前的记录」，
 >      宿主回空页，App 判定历史到底、停止往回走，被裁掉的那一段再也没补上。
-> - 现在：`SessionState` 增 `runningKnown`（只有收到 `host/session-status` 才算「听过宿主表态」，默认的 not-running
->   不算），`deriveConversation` / `buildTranscript` 收一个 `running` 提示——宿主说 false 时不再渲染实时 buffer、
->   也不让任何一轮 live；`oldestSeq` 跳过 `transient` 事件，backfill 从真正的最老记录往回走。
-> - 验证：`packages/core` test（18 套 139 例，新增「宿主说空闲就不再把轮次当 live」「空闲时丢弃实时 buffer」，
->   store 用例补 `runningKnown`）/ `apps/mobile` typecheck / test（27 套 200 例，新增「宿主报空闲后不再显示
->   深度求索中」「backfill 从最老真实记录而不是 chunk 占位往回走」）/ lint 0 error（222 warnings 基线不变）。
+> - 现在：App 侧 `SessionState` 增 `runningKnown`（只有收到 `host/session-status` 才算「听过宿主表态」，默认的
+>   not-running 不算），`deriveConversation` / `buildTranscript` 收一个 `running` 提示——宿主说 false 时不再渲染
+>   实时 buffer、也不让任何一轮 live；`oldestSeq` 跳过 `transient` 事件，backfill 从真正的最老记录往回走；新增
+>   `isLogBehindHost` 与 `healMissingTail`——宿主水位（`session/subscribed.lastSeq`）高于手上最新的 durable
+>   记录，就说明丢的是**尾段**，ChatScreen 当场把基线重读一遍（原本只有退出重进才会做），页尾还有 `hasMore`
+>   就继续往回走，同一个水位只触发一次。插件侧 `startSessionWatcher` 不再「流一断就等下次打开会话」：与
+>   mux/host 两条 pump 一样按指数退避重开（拿到 snapshot 的尝试重置退避），重开后照例补发
+>   `session/subscribed` 与 activeAttempt 基线，App 按 attemptId+index 去重后接着渲染——正是这次重开把宿主
+>   水位送回 App，触发了上面那次补尾。
+> - 验证：`packages/core` test（18 套 141 例，新增「宿主说空闲就不再把轮次当 live」「空闲时丢弃实时 buffer」
+>   「宿主日志跑过手上的记录能被认出来」「只有 chunk 没有记录时不算落后」，store 用例补 `runningKnown`）/
+>   `apps/mobile` typecheck / test（27 套 201 例，新增「宿主报空闲后不再显示深度求索中」「backfill 从最老真实
+>   记录而不是 chunk 占位往回走」「宿主日志跑过手上的记录就重读尾页，且同一水位只读一次」，去掉 heal 那一行该
+>   用例失败）/ lint 0 error（222 warnings 基线不变）/ 插件 `pnpm run typecheck`、`typecheck:client`、
+>   `pnpm test`（17 套 273 例，新增「Host 结束 follow 后自动重开」，去掉重试循环该用例超时失败）。
 
 > 进度（2026-10-07 第十九轮）：**运行中的轮次按 web 的读法逐段渲染，并修掉思考时的三处布局问题。**
 > - 答案位置：`groupTurns` 原先把整轮的工序 block 统一插在答案之前（`rows = [prompt, process, 所有可见项]`），

@@ -197,7 +197,7 @@ export class SessionStore extends Emitter<StoreEvents> {
     this.emit('changed', { sessionId: undefined })
   }
 
-  /** History page merge (tail page first). Returns the merged log length. */
+/** History page merge (tail page first). Returns the merged log length. */
   applyHistory(sessionId: string, entries: HistoryEntry[], projections?: SessionProjectionsBlock): number {
     const session = this.session(sessionId)
     for (const entry of entries) {
@@ -429,4 +429,31 @@ type HasSeq = { seq?: number } | { event: { seq?: number } }
 function eventSeq(entry: HasSeq): number | undefined {
   if ('event' in entry) return typeof entry.event.seq === 'number' ? entry.event.seq : undefined
   return typeof entry.seq === 'number' ? entry.seq : undefined
+}
+
+/**
+ * Whether the Host's log runs ahead of the durable records the App holds.
+ *
+ * `lastSeq` carries the Host's own watermark whenever it reports one
+ * (`session/subscribed`, which the bridge republishes every time a Session's
+ * live stream opens), and loaded records raise it to their own seq. No durable
+ * record may therefore sit below a watermark that a record raised — so a
+ * watermark strictly above every loaded record means records at the *newest*
+ * end never arrived, which is what a live stream that dropped mid-turn leaves
+ * behind: the closing `assistant/message` and the turn's `turn/end`.
+ *
+ * `seq` 0 is skipped because a live chunk borrows it as a placeholder, so a
+ * store holding nothing but chunks is not evidence of a loaded log.
+ * @param session - one Session's state, live frames applied.
+ * @returns whether a tail read is what this Session is missing.
+ */
+export function isLogBehindHost(session: SessionState): boolean {
+  if (session.lastSeq < 0) return false
+  let newest: number | undefined
+  for (const entry of session.events) {
+    const seq = eventSeq(entry)
+    if (seq === undefined || seq === 0) continue
+    if (newest === undefined || seq > newest) newest = seq
+  }
+  return newest !== undefined && newest < session.lastSeq
 }
