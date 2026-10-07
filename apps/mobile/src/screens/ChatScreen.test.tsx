@@ -75,6 +75,9 @@ function setup() {
     store: new SessionStore(),
     compatibility: { pluginVersion: '0.2.36', mobileApi: 2, features: [] },
     refreshBaseline: jest.fn(async () => undefined),
+    // The screen re-reads its tail on every establish pass; no reconnect
+    // happens inside one test case, so the subscription only needs to exist.
+    on: jest.fn(() => () => undefined),
     client: { sessions: { history, models: jest.fn(async () => refusal('stub')) } },
   } as unknown as ConnectionManager
   return { manager, history }

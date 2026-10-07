@@ -983,6 +983,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }, [manager, sessionId])
 
   useEffect(() => {
+    // Every establish pass — a reconnect, or the bridge restarting under a
+    // connection that never dropped — retires the live streams this Session
+    // had, and the bridge forgets which Session this reader is on. Landing the
+    // baseline read again is what re-arms both: the read re-registers the
+    // live follow, and anything that arrived in the gap comes with the page.
+    return manager.on('established', () => { setTailEpoch(epoch => epoch + 1) })
+  }, [manager])
+
+  useEffect(() => {
     // Baseline: tail page (with projections watermark), then live frames take over.
     let alive = true
     // A screen that changes Session (or reconnects) starts the walk over: the

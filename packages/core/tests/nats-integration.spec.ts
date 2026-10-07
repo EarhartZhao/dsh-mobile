@@ -330,14 +330,18 @@ describeNats('NatsApiClient over real NATS', () => {
 
 describeNats('ConnectionManager', () => {
   it('runs the full establish pass: describe → baseline → hello replay → online', async () => {
+    const established: { generation: number }[] = []
     const manager = new ConnectionManager({
       connect: appConn,
       headers: natsHeaders,
       instanceId: INSTANCE,
       getToken: () => VALID_TOKEN,
     })
+    manager.on('established', payload => established.push(payload))
     await manager.start()
     expect(manager.state).toBe('online')
+    // Screens heal from this signal: one pass, one notification.
+    expect(established).toHaveLength(1)
     expect(manager.hostInfo).toMatchObject({ version: '0.1.1' })
     expect(manager.health).toMatchObject({ status: 'ok', pluginVersion: '0.2.2', instanceId: INSTANCE })
     expect(manager.healthLatencyMs).toEqual(expect.any(Number))

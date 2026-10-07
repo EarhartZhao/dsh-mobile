@@ -90,6 +90,12 @@ type ManagerEvents = {
   compatibility: { result: import('./compatibility.ts').CompatibilityResult }
   /** The plugin's self-description, refreshed on every successful establish. */
   info: { info: import('@dsh-mobile/protocol').MobilePluginInfo | null }
+  /**
+   * A full establish pass finished: subscriptions are live, the baseline and
+   * hello are in, so anything derived from the previous bridge generation is
+   * stale by definition.
+   */
+  established: { generation: number }
   error: { message: string, kind: ConnectionFailureKind }
   health: { snapshot: MobileHealthSnapshot | null, latencyMs: number | null, error: string | null }
 }
@@ -364,6 +370,7 @@ export class ConnectionManager extends Emitter<ManagerEvents> {
     })
     this.lastOnlineAt = new Date().toISOString()
     this.setState('online')
+    this.emit('established', { generation })
     // A list-changing frame can land while the baseline above is in flight (it
     // was fetched before that frame); re-pull once now that we can.
     if (this.baselineDirty) {
