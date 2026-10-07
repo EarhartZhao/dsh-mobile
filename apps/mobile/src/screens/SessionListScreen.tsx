@@ -14,6 +14,7 @@ import { sessionSections } from '../session-sections'
 import { sessionDisplayTitle, sessionRowTitle } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
+import { Icon } from '../icons'
 
 /** One rendered line: a collapsible section header, or a session row. */
 type ListEntry =
@@ -380,7 +381,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
               accessibilityRole="button"
               accessibilityLabel={t('app.settings')}
             >
-              <Text style={styles.settingsIcon}>⚙</Text>
+              <Icon name="SettingsOutline" size={20} color={colors.accent} />
             </TouchableOpacity>
           )}
         </View>
@@ -492,7 +493,9 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
                     accessibilityRole="button"
                     accessibilityLabel={item.title}
                   >
-                    <Text style={[styles.sectionChevron, collapsed && styles.sectionChevronCollapsed]}>▼</Text>
+                    <View style={[styles.sectionChevron, collapsed && styles.sectionChevronCollapsed]}>
+                      <Icon name="ChevronDownOutline" size={14} color={colors.textDim} />
+                    </View>
                     <Text style={styles.sectionTitle} numberOfLines={1}>{item.title}</Text>
                     <Text style={styles.sectionCount}>{item.count}</Text>
                   </TouchableOpacity>
@@ -573,7 +576,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
                   <Text style={styles.headerButtonText}>{t('common.share')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setFolderCreateOpen(true)}>
-                  <Text style={styles.headerButtonText}>＋</Text>
+                  <Icon name="PlusOutlineMedium" size={16} color={colors.accent} />
                 </TouchableOpacity>
               </View>
             )}
@@ -718,7 +721,6 @@ const styles = StyleSheet.create({
   headerButtonDisabled: { opacity: 0.5 },
   headerButtonText: { color: colors.accent, fontSize: fontSize.small },
   settingsButton: { minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
-  settingsIcon: { color: colors.accent, fontSize: 24, lineHeight: 28 },
   /**
    * The chip row is a horizontal ScrollView, so Yoga has no content height to
    * lay it out with: with the default `flexShrink: 1` the column parent squeezed
@@ -799,11 +801,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
     backgroundColor: colors.bg,
   },
-  /** The disclosure doubles as the section icon. Full-size triangles (not the
-   *  small ▾/▸ variants) so it reads as an affordance at the 14px label size. */
-  sectionChevron: { color: colors.textDim, fontSize: 14, width: 16, textAlign: 'center' },
-  /** Rotating one glyph keeps both states the same size: ▼ and ▶ are different
-   *  characters and their glyphs do not match in the same font. */
+  /** The disclosure doubles as the section icon: the web's chevron-down. */
+  sectionChevron: { width: 16, alignItems: 'center', justifyContent: 'center' },
+  /** Rotating one glyph keeps both states the same size. */
   sectionChevronCollapsed: { transform: [{ rotate: '-90deg' }] },
   sectionTitle: { flex: 1, color: colors.text, fontSize: fontSize.section, fontWeight: '600' },
   sectionCount: { color: colors.textDim, fontSize: fontSize.small },

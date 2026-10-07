@@ -133,9 +133,9 @@ describe('SessionListScreen grouping', () => {
 
   it('draws the same disclosure glyph whether open or closed', () => {
     const tree = render()
-    // Two different triangle characters render at different sizes in the same
-    // font, so the arrow visibly changed size on collapse. One glyph the
-    // component rotates keeps the two states identical.
+    // The two states share one chevron-down glyph; collapsing only rotates its
+    // container, so the mark never changes size the way the two triangle
+    // characters it replaced did.
     // Scoped to this section's own header: another section's untouched arrow
     // would otherwise make the comparison pass without testing anything.
     const header = (): renderer.ReactTestInstance => tree.root.findAll(node =>
@@ -144,14 +144,14 @@ describe('SessionListScreen grouping', () => {
       node.props.accessibilityLabel === 'dsh',
     ).at(-1)!
     const glyph = (): unknown => header().findAll(node =>
-      typeof node.props.children === 'string' && '▼▶▾▸'.includes(node.props.children),
-    ).at(-1)?.props.children
+      typeof node.props?.name === 'string',
+    ).at(-1)?.props.name
 
     const expanded = glyph()
     act(() => { header().props.onPress() })
     const collapsed = glyph()
 
-    expect(['▼', '▶', '▾', '▸']).toContain(expanded)
+    expect(expanded).toBe('ChevronDownOutline')
     expect(collapsed).toBe(expanded)
   })
 })

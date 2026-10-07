@@ -8,6 +8,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import { useI18n, type TranslationKey } from '../i18n'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { Icon } from '../icons'
 
 interface Props {
   inventory: MobileInventorySnapshot | null | undefined
@@ -31,7 +32,7 @@ export function PluginInventoryScreen({
     <View style={styles.root}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack} accessibilityRole="button" accessibilityLabel={t('common.back')}>
-          <Text style={styles.backIcon}>‹</Text>
+          <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('plugins.title')}</Text>
         <TouchableOpacity
@@ -103,7 +104,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backButton: { width: 42, height: 42, alignItems: 'flex-start', justifyContent: 'center' },
-  backIcon: { color: colors.accent, fontSize: 34, lineHeight: 36, fontWeight: '300' },
   headerTitle: { flex: 1, color: colors.text, fontSize: 20, fontWeight: '700', textAlign: 'center' },
   headerAction: { width: 72, alignItems: 'flex-end' },
   headerActionText: { color: colors.accent, fontSize: fontSize.small },

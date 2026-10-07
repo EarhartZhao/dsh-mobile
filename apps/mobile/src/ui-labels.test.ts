@@ -1,4 +1,4 @@
-import { runDurationLabel, stepActivityLabel, toolDisplayName } from './ui-labels'
+import { runDurationLabel, stepActivityLabel, toolDisplayName, toolRowVariant } from './ui-labels'
 import type { TranslationKey } from './i18n'
 
 /**
@@ -41,5 +41,22 @@ describe('runDurationLabel', () => {
 describe('toolDisplayName', () => {
   it('falls back to the wire name for a tool with no localized label', () => {
     expect(toolDisplayName('some_plugin_tool', t)).toBe('some_plugin_tool')
+  })
+})
+
+describe('toolRowVariant', () => {
+  it('classifies a tool the way the web\u2019s own table does', () => {
+    // The exact-name table ported from the web's `classifyTool`: a read-family
+    // call wears the browse glyph, a shell call the api glyph, and anything
+    // unrecognized the sparkle fallback.
+    expect(toolRowVariant('read')).toBe('read')
+    expect(toolRowVariant('read_image')).toBe('read')
+    expect(toolRowVariant('web_fetch')).toBe('read')
+    expect(toolRowVariant('grep')).toBe('search')
+    expect(toolRowVariant('bash')).toBe('bash')
+    expect(toolRowVariant('pwsh')).toBe('bash')
+    expect(toolRowVariant('edit')).toBe('edit')
+    expect(toolRowVariant('run_code')).toBe('code')
+    expect(toolRowVariant('some_plugin_tool')).toBe('others')
   })
 })

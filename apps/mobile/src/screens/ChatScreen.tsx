@@ -34,10 +34,10 @@ import type {
 } from '@dsh-mobile/protocol'
 import { presetSelectionEnabled } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
-import { Circle, Path, Svg } from 'react-native-svg'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { AttachmentImage } from '../components/AttachmentImage'
 import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
+import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { linkTarget } from '../link-targets'
 import { markdownRules, markdownStyles } from '../markdown'
@@ -1488,15 +1488,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           accessibilityRole="button"
           accessibilityLabel={t('chat.back')}
         >
-          <BackGlyph color={colors.accent} />
-          <Text style={styles.backLabel}>{t('chat.back').replace(/^[‹<]\s*/, '')}</Text>
+          <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
+          <Text style={styles.backLabel}>{t('chat.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
         <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
-          <SearchGlyph color={colors.accent} />
+          <Icon name="SearchOutline" size={20} color={colors.accent} />
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerMenu} onPress={() => setMenuOpen(true)} accessibilityLabel={t('chat.more')}>
-          <Text style={styles.headerMenuText}>⋯</Text>
+          <Icon name="EllipsisOutline" size={20} color={colors.accent} />
         </TouchableOpacity>
       </View>
       {(() => {
@@ -1707,7 +1707,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             accessibilityLabel={t('chat.toBottom')}
             onPress={returnToBottom}
           >
-            <ChevronDownGlyph color={chat.labelPrimary} />
+            <Icon name="ChevronDownOutline" size={16} color={chat.labelPrimary} />
           </TouchableOpacity>
         )}
       </View>
@@ -1779,7 +1779,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                         hitSlop={8}
                         onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
                       >
-                        <Text style={styles.pendingImageRemoveText}>✕</Text>
+                        <Icon name="CloseOutline" size={11} color="#fff" />
                       </TouchableOpacity>
                     </TouchableOpacity>
                   ))}
@@ -1792,7 +1792,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                       <View style={styles.pendingFileHeader}>
                         <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
                         <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
-                          <Text style={styles.pendingImageRemoveText}>✕</Text>
+                          <Icon name="CloseOutline" size={11} color="#fff" />
                         </TouchableOpacity>
                       </View>
                       <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
@@ -1829,7 +1829,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                     onPress={() => removeReference(reference)}
                     hitSlop={8}
                   >
-                    <Text style={styles.refRemove}>✕</Text>
+                    <Icon name="CloseOutline" size={14} color={colors.textDim} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -1863,12 +1863,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 accessibilityRole="button"
                 accessibilityLabel={t('chat.add')}
               >
-                <PlusGlyph color={chat.labelPrimary} />
+                <Icon name="PlusOutlineMedium" size={14} color={chat.labelPrimary} />
               </TouchableOpacity>
             )}
             {editingItem !== null && (
               <TouchableOpacity style={styles.editCancel} hitSlop={8} onPress={() => { setEditingItem(null); setDraft('') }}>
-                <Text style={styles.editCancelText}>✕</Text>
+                <Icon name="CloseOutline" size={15} color={chat.labelTertiary} />
               </TouchableOpacity>
             )}
             <View style={styles.composerSpacer} />
@@ -1880,7 +1880,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 accessibilityRole="button"
                 accessibilityLabel={t('chat.stop')}
               >
-                <StopGlyph color="#fff" />
+                <Icon name="StopSolid" size={16} color="#fff" />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -1891,7 +1891,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 accessibilityRole="button"
                 accessibilityLabel={editingItem !== null ? t('chat.save') : t('chat.send')}
               >
-                <SendGlyph color="#fff" />
+                <Icon name="SendSolid" size={16} color="#fff" />
               </TouchableOpacity>
             )}
           </View>
@@ -2110,62 +2110,6 @@ function imageLimitsSummary(limits: ImageLimitsView, t: (key: TranslationKey, va
   return t('chat.imageLimits', { size: formatBytes(limits.maxImageBytes), count: limits.maxImagesPerMessage, types: mediaTypes })
 }
 
-function PlusGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M12 5v14M5 12h14" />
-    </Svg>
-  )
-}
-
-function BackGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="m15 5-7 7 7 7" />
-    </Svg>
-  )
-}
-
-/**
- * The composer's primary glyph: the web's send arrow, drawn at 18px inside the
- * 34px circle. It is the same control in both states — only the mark changes
- * (arrow to submit, square to stop) — which is what the web's IconButton does.
- */
-function SendGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M12 19V5" />
-      <Path d="m5 12 7-7 7 7" />
-    </Svg>
-  )
-}
-
-function StopGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-      <Path d="M9.5 9.5h5v5h-5z" fill={color} stroke={color} strokeWidth={2} strokeLinejoin="round" />
-    </Svg>
-  )
-}
-
-/** The floating control's mark, matching the web's outline chevron-down. */
-function ChevronDownGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="m6 9 6 6 6-6" />
-    </Svg>
-  )
-}
-
-function SearchGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Circle cx={11} cy={11} r={7} />
-      <Path d="m20 20-3.5-3.5" />
-    </Svg>
-  )
-}
-
 function QueueDock({ queue, editingId, onEdit, onRemove, onSteer }: {
   queue: QueuedInboxItem[]
   editingId: string | null
@@ -2209,7 +2153,9 @@ function JobsStrip({ jobs, open, onToggle }: {
     <View style={styles.jobs}>
       <TouchableOpacity style={styles.jobsHeader} onPress={onToggle}>
         <Text style={styles.jobsTitle}>{t('chat.jobsTitle', { count: jobs.length })}{live > 0 ? t('chat.jobsLive', { live }) : ''}</Text>
-        <Text style={styles.jobsChevron}>{open ? '▾' : '▸'}</Text>
+        {open
+          ? <Icon name="ChevronDownOutline" size={14} color={colors.textDim} />
+          : <Icon name="ChevronRightOutline" size={14} color={colors.textDim} />}
       </TouchableOpacity>
       {open && jobs.map(job => (
         <View key={job.id} style={styles.jobRow}>
@@ -2356,7 +2302,9 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
         accessibilityLabel={turn.toolCallCount > 0 ? t('chat.toolCallSummary', { count: turn.toolCallCount }) : label}
       >
         <Text style={[styles.turnProcessLabel, turn.live && styles.turnProcessLive]} numberOfLines={1}>{title}</Text>
-        <Text style={[styles.turnProcessChevron, open && styles.turnProcessChevronOpen]}>▼</Text>
+        <View style={open ? styles.turnProcessChevronOpen : undefined}>
+          <Icon name="ChevronDownOutline" size={14} color={chat.labelTertiary} />
+        </View>
       </TouchableOpacity>
       {open && turn.process.map(step => step.kind === 'thinking'
         ? (
@@ -2370,12 +2318,18 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
             {openSteps.has(step.key) ? (
               <>
                 <View style={styles.reasoningHead}>
+                  <View style={styles.reasoningGlyph}>
+                    <Icon name="ThinkOutline" size={14} color={chat.labelTertiary} />
+                  </View>
                   <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
                 </View>
                 <Text selectable style={styles.reasoningBody}>{step.text}</Text>
               </>
             ) : (
               <View style={styles.reasoningHead}>
+                <View style={styles.reasoningGlyph}>
+                  <Icon name="ThinkOutline" size={14} color={chat.labelTertiary} />
+                </View>
                 <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
                 <View style={styles.reasoningDot} />
                 <Text style={styles.reasoningSummary} numberOfLines={1}>
@@ -2568,7 +2522,9 @@ function UnknownEventCard({ item }: { item: Extract<ConversationItem, { kind: 'u
         <Text style={styles.unknownTitle} numberOfLines={1}>
           {t('chat.unknownEvent', { type: item.eventType })}
         </Text>
-        <Text style={styles.unknownChevron}>{open ? '▾' : '▸'}</Text>
+        {open
+          ? <Icon name="ChevronDownOutline" size={14} color={colors.textDim} />
+          : <Icon name="ChevronRightOutline" size={14} color={colors.textDim} />}
       </TouchableOpacity>
       {open && <Text style={styles.unknownHint}>{t('chat.unknownEventHint')}</Text>}
       <ScrollView style={styles.unknownBody} nestedScrollEnabled>
@@ -2786,7 +2742,6 @@ const styles = StyleSheet.create({
   backLabel: { color: colors.accent, fontSize: fontSize.body },
   headerAction: { width: 36, alignItems: 'center', justifyContent: 'center' },
   headerMenu: { width: 36, alignItems: 'center', justifyContent: 'center' },
-  headerMenuText: { color: colors.accent, fontSize: 26, lineHeight: 28 },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   /**
    * The web's transcript geometry on a narrow viewport: 24px side pads (the
@@ -2900,12 +2855,12 @@ const styles = StyleSheet.create({
   turnProcessLabel: { flex: 1, color: chat.labelTertiary, fontSize: 14, lineHeight: 24 },
   /** Live, the header steps up one tier so it reads as "in progress". */
   turnProcessLive: { color: chat.labelSecondary },
-  turnProcessChevron: { color: chat.labelTertiary, fontSize: 14, lineHeight: 16 },
   /** The web's chevron sits closed pointing down and flips up when open. */
   turnProcessChevronOpen: { transform: [{ rotate: '180deg' }] },
   /** One reasoning row: a 24px line at rest, its text indented 22px when open. */
   reasoningRow: { alignSelf: 'stretch' },
   reasoningHead: { flexDirection: 'row', alignItems: 'center', minHeight: 24 },
+  reasoningGlyph: { width: 16, alignItems: 'center', marginRight: 6 },
   reasoningTitle: { color: chat.labelTertiary, ...chatText.secondary },
   /** The web's 2px separator dot between a row's title and its summary. */
   reasoningDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
@@ -2948,7 +2903,6 @@ const styles = StyleSheet.create({
   },
   unknownHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   unknownTitle: { flex: 1, color: colors.textDim, fontSize: fontSize.small, fontWeight: '600' },
-  unknownChevron: { color: colors.textDim, fontSize: fontSize.small },
   unknownHint: { color: colors.textDim, fontSize: fontSize.tiny },
   unknownBody: { maxHeight: 200, borderWidth: 1, borderColor: colors.border, borderRadius: radius.card },
   unknownJson: { color: colors.text, fontSize: 11, fontFamily: 'monospace', padding: spacing(2) },
@@ -3066,7 +3020,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pendingImageRemoveText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   imageFallback: { color: colors.textDim, fontSize: fontSize.small, marginBottom: spacing(2) },
   cursor: { color: colors.accent },
   interrupted: { color: colors.warning, fontSize: fontSize.small },
@@ -3187,7 +3140,6 @@ const styles = StyleSheet.create({
   refName: { color: colors.text, fontSize: fontSize.tiny, flexShrink: 1 },
   refBody: { flexDirection: 'row', alignItems: 'center', gap: spacing(1), flexShrink: 1 },
   refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
-  refRemove: { color: colors.textDim, fontSize: fontSize.tiny },
   feedbackBadge: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   /**
    * The draft surface: 14/24 type with the web's 4px top pad and 14/8 side pads
@@ -3209,7 +3161,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   editCancel: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  editCancelText: { color: chat.labelTertiary, fontSize: 15 },
   /**
    * The composer's own dock cards — the queue, running jobs and notices — wear
    * the same rounded surface as the input card they float above, the way the
@@ -3262,7 +3213,6 @@ const styles = StyleSheet.create({
   },
   jobsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   jobsTitle: { color: colors.textDim, fontSize: fontSize.tiny },
-  jobsChevron: { color: colors.textDim, fontSize: fontSize.small },
   jobRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), marginTop: spacing(2) },
   jobDot: { width: 8, height: 8, borderRadius: 4 },
   subRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },

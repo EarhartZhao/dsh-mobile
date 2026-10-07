@@ -38,6 +38,41 @@ export function toolDisplayName(name: string, t: LabelTranslate): string {
   return key === undefined ? name : t(key)
 }
 
+/** The web's tool-row variant: the family that decides a row's leading glyph. */
+export type ToolRowVariant = 'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'others'
+
+/**
+ * Known tool name → row variant, ported verbatim from the web's `classifyTool`
+ * (`tool-call-model.ts`): exact names, no case folding, no argument inference.
+ */
+const toolVariants: Record<string, ToolRowVariant> = {
+  bash: 'bash',
+  pwsh: 'bash',
+  read: 'read',
+  read_image: 'read',
+  web_fetch: 'read',
+  web_search: 'search',
+  grep: 'search',
+  glob: 'search',
+  write: 'write',
+  edit: 'edit',
+  run_code: 'code',
+  cordis_package_inspect: 'read',
+  cordis_runtime_inspect: 'read',
+  cordis_run: 'others',
+  cordis_stop: 'others',
+  cordis_undefine: 'others',
+}
+
+/**
+ * Classify a wire tool name into its row variant.
+ * @param name - the recorded tool name.
+ * @returns the matching variant, `others` when unknown.
+ */
+export function toolRowVariant(name: string): ToolRowVariant {
+  return toolVariants[name] ?? 'others'
+}
+
 const jobKindLabels: Record<string, TranslationKey> = {
   command: 'jobKind.command',
   process: 'jobKind.process',

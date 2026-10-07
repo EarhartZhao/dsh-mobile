@@ -15,6 +15,8 @@ jest.mock('react-native-svg', () => ({
   __esModule: true,
   Svg: ({ children }: { children: React.ReactNode }) => children,
   Path: () => null,
+  Circle: () => null,
+  Rect: () => null,
 }))
 
 import { SessionStatsBar } from './strips'

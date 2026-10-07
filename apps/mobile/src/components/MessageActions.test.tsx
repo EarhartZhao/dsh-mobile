@@ -81,15 +81,19 @@ describe('MessageActionRow', () => {
   it('always offers copy and the clock, and reports the rating it holds', () => {
     const tree = render()
 
-    expect(texts(tree)).toEqual(expect.arrayContaining(['actions.copy', '18:57']))
-    expect(texts(tree)).not.toContain('actions.branch')
+    // Copy is an icon now, so it is found by its label rather than its text;
+    // the clock still reads as text and the branch control stays hidden.
+    expect(hasLabel(tree, 'actions.copy')).toBe(true)
+    expect(texts(tree)).toEqual(expect.arrayContaining(['18:57']))
+    expect(hasLabel(tree, 'actions.branch')).toBe(false)
     expect(press(tree, 'actions.feedbackUp')).toBeDefined()
   })
 
   it('hides the rating pair when the Host serves no message feedback', () => {
     const tree = render({ canRate: false })
 
-    expect(texts(tree)).not.toContain('actions.feedbackUp')
+    expect(hasLabel(tree, 'actions.feedbackUp')).toBe(false)
+    expect(hasLabel(tree, 'actions.feedbackDown')).toBe(false)
   })
 
   it('asks for the rating a click selects, and for a retraction when it is held', () => {

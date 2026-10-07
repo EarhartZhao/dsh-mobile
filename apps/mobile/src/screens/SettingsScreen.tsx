@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import type { AppUpdateStatus } from '../app-update'
@@ -7,6 +7,7 @@ import { useI18n, type Language, type TranslationKey } from '../i18n'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { inventoryCounts } from '../plugin-inventory'
+import { Icon } from '../icons'
 import { colors, fontSize, radius, spacing } from '../theme'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
@@ -115,7 +116,7 @@ export function SettingsScreen({
     <View style={styles.root}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack} accessibilityRole="button" accessibilityLabel={t('common.back')}>
-          <Text style={styles.backIcon}>‹</Text>
+          <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('app.settings')}</Text>
         <View style={styles.headerSpacer} />
@@ -146,7 +147,9 @@ export function SettingsScreen({
               <Text style={styles.settingLabel}>{t('settings.checkUpdate')}</Text>
               <Text style={styles.settingHint}>{updateStatusLabel(updateStatus, t)}</Text>
             </View>
-            <Text style={styles.chevron}>{updateStatus.kind === 'checking' ? '…' : '›'}</Text>
+            {updateStatus.kind === 'checking'
+              ? <ActivityIndicator size="small" color={colors.textDim} style={styles.chevron} />
+              : <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.settingRow, styles.rowDivider]}
@@ -162,14 +165,14 @@ export function SettingsScreen({
                   : t('connections.summary', { count: connectionCount, name: connectionTitle })}
               </Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />
           </TouchableOpacity>
           <TouchableOpacity style={[styles.settingRow, styles.rowDivider]} onPress={() => setThemePickerOpen(true)}>
             <View style={styles.rowCopy}>
               <Text style={styles.settingLabel}>{t('app.theme')}：{themeLabel(themeMode, t)}</Text>
               <Text style={styles.settingHint}>{t('app.theme.chooseHint')}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />
           </TouchableOpacity>
         </View>
 
@@ -182,7 +185,7 @@ export function SettingsScreen({
               </Text>
               <Text style={styles.settingHint}>{t('app.enterToSendHint')}</Text>
             </View>
-            <Text style={styles.chevron}>{enterToSend ? '✓' : ''}</Text>
+            {enterToSend && <Icon name="CheckOutline" size={16} color={colors.textDim} style={styles.chevron} />}
           </TouchableOpacity>
         </View>
 
@@ -193,7 +196,7 @@ export function SettingsScreen({
               <Text style={styles.settingLabel}>{t('app.language')}：{languageLabel(language, t)}</Text>
               <Text style={styles.settingHint}>{t('app.language')}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />
           </TouchableOpacity>
         </View>
 
@@ -212,7 +215,7 @@ export function SettingsScreen({
                       : t('plugins.summary', { total: counts.total, enabled: counts.enabled })}
               </Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />
           </TouchableOpacity>
         </View>
 
@@ -262,7 +265,7 @@ export function SettingsScreen({
               <Text style={[styles.settingLabel, styles.dangerText]}>{t('session.unpair')}</Text>
               <Text style={styles.settingHint}>{t('settings.unpairHint')}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="ChevronRightOutline" size={16} color={colors.textDim} style={styles.chevron} />
           </TouchableOpacity>
         </View>
         <Text style={styles.footerText}>dsh-mobile · {appVersion}</Text>
@@ -286,7 +289,9 @@ export function SettingsScreen({
             {(['light', 'dark', 'system'] as ThemeMode[]).map(mode => (
               <TouchableOpacity key={mode} style={styles.optionRow} onPress={() => { setTheme(mode); setThemePickerOpen(false) }}>
                 <Text style={styles.optionText}>{themeLabel(mode, t)}</Text>
-                <Text style={[styles.check, themeMode !== mode && styles.hidden]}>✓</Text>
+                <View style={[styles.check, themeMode !== mode && styles.hidden]}>
+                  <Icon name="CheckOutline" size={16} color={colors.accent} />
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -299,7 +304,9 @@ export function SettingsScreen({
             {(['system', 'zh', 'en'] as Language[]).map(mode => (
               <TouchableOpacity key={mode} style={styles.optionRow} onPress={() => { setLanguage(mode); setLanguagePickerOpen(false) }}>
                 <Text style={styles.optionText}>{languageLabel(mode, t)}</Text>
-                <Text style={[styles.check, language !== mode && styles.hidden]}>✓</Text>
+                <View style={[styles.check, language !== mode && styles.hidden]}>
+                  <Icon name="CheckOutline" size={16} color={colors.accent} />
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -320,7 +327,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backButton: { width: 42, height: 42, alignItems: 'flex-start', justifyContent: 'center' },
-  backIcon: { color: colors.accent, fontSize: 34, lineHeight: 36, fontWeight: '300' },
   headerTitle: { flex: 1, color: colors.text, fontSize: 20, fontWeight: '700', textAlign: 'center' },
   headerSpacer: { width: 42 },
   content: { padding: spacing(4), paddingBottom: spacing(8), gap: spacing(1) },
@@ -349,12 +355,12 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     paddingVertical: spacing(0.5),
   },
-  chevron: { color: colors.textDim, fontSize: 24, marginLeft: spacing(2) },
+  chevron: { marginLeft: spacing(2) },
   pickerCard: { backgroundColor: colors.bgElevated, borderRadius: radius.card, marginHorizontal: spacing(7), paddingVertical: spacing(2), overflow: 'hidden' },
   pickerTitle: { color: colors.text, fontSize: 18, fontWeight: '700', paddingHorizontal: spacing(5), paddingVertical: spacing(3) },
   optionRow: { minHeight: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(5), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   optionText: { color: colors.text, fontSize: fontSize.body },
-  check: { color: colors.accent, fontSize: 18, fontWeight: '700' },
+  check: { marginLeft: spacing(2) },
   hidden: { opacity: 0 },
   metaText: { color: colors.textDim, fontSize: fontSize.small, lineHeight: 19 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(2.5), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

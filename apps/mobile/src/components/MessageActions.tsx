@@ -4,12 +4,12 @@
  * The browser puts a copy control on every message, a like/dislike pair inside
  * an answer's row, a branch control on a turn tail, and a date-aware clock on
  * the side that belongs to the author (before the actions on a prompt, after
- * them on an answer). The phone has no 24×24 icon set, so the same controls are
- * short labels with the same visibility rules — and the same rule that matters
- * most here: nothing is invented client-side. Copy rides the clipboard, the
- * rating pair calls the Host's message-feedback RPC, and a branch either sends
- * the turn's real `turn/end` boundary or is shown inert while that turn is still
- * running.
+ * them on an answer). The phone draws the very same glyphs — copy, the filled
+ * like/dislike pair, and the branch mark — with the same visibility rules, and
+ * the same rule that matters most here: nothing is invented client-side. Copy
+ * rides the clipboard, the rating pair calls the Host's message-feedback RPC,
+ * and a branch either sends the turn's real `turn/end` boundary or is shown
+ * inert while that turn is still running.
  */
 import React from 'react'
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
@@ -18,7 +18,8 @@ import type { MobileFeedbackItem, MobileFeedbackRating } from '@dsh-mobile/proto
 import { ModalBackdrop } from './ModalBackdrop'
 import { DatabaseGlyph, StatPanel, exactTokens, type StatPanelRow } from './strips'
 import { useI18n } from '../i18n'
-import { chat, colors, radius, spacing } from '../theme'
+import { Icon } from '../icons'
+import { chat, radius, spacing } from '../theme'
 
 /**
  * The web's message clock: `HH:mm` for today, a date plus the time once the
@@ -83,42 +84,48 @@ export function MessageActionRow({
       accessibilityLabel={t('actions.message')}
     >
       {clock === 'start' && clockLabel}
-      <TouchableOpacity onPress={onCopy} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('actions.copy')}>
-        <Text style={styles.action}>{t('actions.copy')}</Text>
+      <TouchableOpacity style={styles.iconButton} onPress={onCopy} accessibilityRole="button" accessibilityLabel={t('actions.copy')}>
+        <Icon name="CopyOutline" size={15} color={chat.labelTertiary} />
       </TouchableOpacity>
       {canRate && (
         <>
           <TouchableOpacity
+            style={styles.iconButton}
             onPress={() => onRate(rating?.rating === 'positive' ? null : 'positive')}
-            hitSlop={8}
             accessibilityRole="button"
             accessibilityState={{ selected: rating?.rating === 'positive' }}
             accessibilityLabel={t('actions.feedbackUp')}
           >
-            <Text style={[styles.action, rating?.rating === 'positive' && styles.active]}>👍</Text>
+            <Icon
+              name={rating?.rating === 'positive' ? 'LikeFill' : 'LikeOutline'}
+              size={15}
+              color={chat.labelTertiary}
+            />
           </TouchableOpacity>
           <TouchableOpacity
+            style={styles.iconButton}
             onPress={() => onRate(rating?.rating === 'negative' ? null : 'negative')}
-            hitSlop={8}
             accessibilityRole="button"
             accessibilityState={{ selected: rating?.rating === 'negative' }}
             accessibilityLabel={t('actions.feedbackDown')}
           >
-            <Text style={[styles.action, rating?.rating === 'negative' && styles.active]}>👎</Text>
+            <Icon
+              name={rating?.rating === 'negative' ? 'DislikeFill' : 'DislikeOutline'}
+              size={15}
+              color={chat.labelTertiary}
+            />
           </TouchableOpacity>
         </>
       )}
       {branch !== undefined && (
         <TouchableOpacity
+          style={[styles.iconButton, branch.unavailable === true && styles.unavailable]}
           onPress={onBranch}
-          hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel={branch.unavailable === true ? t('actions.branchUnavailable') : t('actions.branch')}
           accessibilityState={{ disabled: branch.unavailable === true }}
         >
-          <Text style={[styles.action, branch.unavailable === true && styles.unavailable]}>
-            {t('actions.branch')}
-          </Text>
+          <Icon name="BranchOutline" size={15} color={chat.labelTertiary} />
         </TouchableOpacity>
       )}
       {usage !== undefined && (
@@ -129,7 +136,7 @@ export function MessageActionRow({
           accessibilityRole="button"
           accessibilityLabel={t('message.turnUsage.title')}
         >
-          <DatabaseGlyph color={chat.labelTertiary} />
+          <DatabaseGlyph size={15} color={chat.labelTertiary} />
           <Text style={styles.usageText}>
             {t('message.turnUsage.consumed', { total: usageLabel(usage) })}
           </Text>
@@ -207,7 +214,19 @@ const styles = StyleSheet.create({
   },
   rowStart: { justifyContent: 'flex-start' },
   rowEnd: { justifyContent: 'flex-start', marginTop: 16, marginLeft: -6 },
-  action: { color: chat.labelTertiary, fontSize: 13 },
+  /**
+   * The web's per-message control: a 28px tap target with 6px of padding around
+   * a 15px glyph, on the shared `radius-sm`. The hover chrome has no touch
+   * analogue, so only the resting tertiary color survives.
+   */
+  iconButton: {
+    width: 28,
+    height: 28,
+    padding: 6,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   /**
    * The turn-usage trigger: the web's 28px pill — a 15px data glyph, 4px to its
    * label, 8px of pill padding — seated with the other actions.
@@ -223,7 +242,6 @@ const styles = StyleSheet.create({
   usageText: { color: chat.labelTertiary, fontSize: 12, lineHeight: 24 },
   /** The dialog keeps the web's 12px viewport margin around the panel. */
   usagePanel: { alignSelf: 'stretch', marginHorizontal: spacing(3) },
-  active: { color: colors.accent, fontWeight: '700' },
   /** A branch control on a turn that has not closed yet: visible, inert. */
   unavailable: { opacity: 0.45 },
   clock: { color: chat.labelTertiary, fontSize: 13, lineHeight: 24 },

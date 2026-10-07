@@ -12,6 +12,7 @@ import { ConfirmModal } from '../components/ConfirmModal'
 import { profileTitle, type Profile } from '../pairing-store'
 import { useI18n } from '../i18n'
 import { colors, fontSize, radius, spacing } from '../theme'
+import { Icon } from '../icons'
 
 interface Props {
   profiles: Profile[]
@@ -58,7 +59,7 @@ export function ConnectionSwitcherScreen({
     <View style={styles.root}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack} accessibilityRole="button" accessibilityLabel={t('common.back')}>
-          <Text style={styles.backIcon}>‹</Text>
+          <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('connections.title')}</Text>
         <TouchableOpacity style={styles.headerAction} onPress={onAdd} accessibilityRole="button" accessibilityLabel={t('connections.add')}>
@@ -151,7 +152,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backButton: { width: 42, height: 42, alignItems: 'flex-start', justifyContent: 'center' },
-  backIcon: { color: colors.accent, fontSize: 34, lineHeight: 36, fontWeight: '300' },
   headerTitle: { flex: 1, color: colors.text, fontSize: 20, fontWeight: '700', textAlign: 'center' },
   headerAction: { width: 72, alignItems: 'flex-end' },
   headerActionText: { color: colors.accent, fontSize: fontSize.small },

@@ -14,6 +14,7 @@ import type { MobileDirectoryEntry } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
+import { Icon } from '../icons'
 import {
   changeTouchesDirectory, joinWorkspacePath, parentWorkspacePath, sortWorkspaceEntries, workspaceCrumbs,
 } from '../workspace-path'
@@ -212,7 +213,7 @@ export function WorkspaceBrowserSheet({ visible, sessionId, manager, onClose, on
                             ...(entry.size === undefined ? {} : { size: entry.size }),
                           })}
                         >
-                          <Text style={styles.rowAction}>＋</Text>
+                          <Icon name="PlusOutlineMedium" size={14} color={colors.accent} />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -257,5 +258,4 @@ const styles = StyleSheet.create({
   rowName: { flex: 1, color: colors.text, fontSize: fontSize.small },
   rowDisabled: { color: colors.textDim },
   rowMeta: { color: colors.textDim, fontSize: fontSize.tiny },
-  rowAction: { color: colors.accent, fontSize: fontSize.body, paddingHorizontal: spacing(1) },
 })

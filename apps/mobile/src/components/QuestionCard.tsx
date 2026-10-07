@@ -5,6 +5,7 @@ import Markdown from 'react-native-markdown-display'
 import { unknownQuestionIntentKind } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
+import { Icon } from '../icons'
 
 export interface QuestionOptionView {
   label: string
@@ -261,7 +262,7 @@ export function QuestionCard({ pending, onSubmit, onCancel }: {
               onPress={() => choose(question, option.label)}
             >
               <View style={[styles.marker, question.multiSelect === true && styles.checkbox]}>
-                {selected && <Text style={styles.markerText}>✓</Text>}
+                {selected && <Icon name="CheckOutline" size={12} color={colors.accent} />}
               </View>
               <View style={styles.optionCopy}>
                 <View style={styles.optionLine}>
@@ -393,7 +394,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkbox: { borderRadius: 3 },
-  markerText: { color: colors.accent, fontSize: 11, fontWeight: '700' },
   optionCopy: { flex: 1 },
   optionLine: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   optionLabel: { color: colors.text, fontSize: fontSize.small },

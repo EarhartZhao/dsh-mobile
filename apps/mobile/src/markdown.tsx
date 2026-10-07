@@ -12,6 +12,7 @@ import React from 'react'
 import { Clipboard, Platform, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { chat, fontSize, radius, spacing } from './theme'
 import { useI18n } from './i18n'
+import { Icon } from './icons'
 
 /** Fenced code block: language chip, copy/share, horizontal scroll. */
 export function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }): React.JSX.Element {
@@ -28,11 +29,21 @@ export function CodeBlock({ node }: { node: { content: string; attributes?: unkn
       <View style={codeStyles.header}>
         <Text style={codeStyles.language}>{language}</Text>
         <View style={codeStyles.actions}>
-          <TouchableOpacity onPress={() => void Clipboard.setString(content)}>
-            <Text style={codeStyles.action}>{t('common.copy')}</Text>
+          <TouchableOpacity
+            onPress={() => void Clipboard.setString(content)}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.copy')}
+            hitSlop={6}
+          >
+            <Icon name="CopyOutline" size={14} color={chat.link} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { void Share.share({ message: content }) }}>
-            <Text style={codeStyles.action}>{t('common.share')}</Text>
+          <TouchableOpacity
+            onPress={() => { void Share.share({ message: content }) }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.share')}
+            hitSlop={6}
+          >
+            <Icon name="ShareOutline" size={14} color={chat.link} />
           </TouchableOpacity>
         </View>
       </View>
@@ -140,7 +151,6 @@ const codeStyles = StyleSheet.create({
   },
   language: { color: chat.labelTertiary, fontSize: fontSize.tiny },
   actions: { flexDirection: 'row', gap: spacing(3) },
-  action: { color: chat.link, fontSize: fontSize.tiny },
   code: {
     minWidth: '100%',
     paddingHorizontal: spacing(2.5),

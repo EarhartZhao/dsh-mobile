@@ -13,6 +13,7 @@ import { colors, fontSize, radius, spacing } from '../theme'
 import type { PairingResult } from '../pairing-store'
 import { installHubAnchor } from '../hub-tls'
 import { useI18n, type TranslationKey } from '../i18n'
+import { Icon } from '../icons'
 
 interface Props {
   onPaired: (result: PairingResult) => void
@@ -314,7 +315,8 @@ export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): Re
             accessibilityLabel={t('pairing.closeScanner')}
             hitSlop={8}
           >
-            <Text style={styles.scannerBackText}>‹ {t('pairing.closeScanner')}</Text>
+            <Icon name="ChevronLeftOutline" size={16} color="#fff" />
+            <Text style={styles.scannerBackText}>{t('pairing.closeScanner')}</Text>
           </TouchableOpacity>
         </View>
         {cameraError !== null && (
@@ -376,7 +378,7 @@ export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): Re
             accessibilityLabel={t('common.clear')}
             hitSlop={8}
           >
-            <Text style={styles.clearButtonText}>×</Text>
+            <Icon name="CloseOutline" size={16} color={colors.textDim} />
           </TouchableOpacity>
         )}
       </View>
@@ -441,6 +443,9 @@ const styles = StyleSheet.create({
   },
   scannerBackButton: {
     alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing(1),
     minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: spacing(2),
@@ -555,7 +560,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  clearButtonText: { color: colors.textDim, fontSize: 24, lineHeight: 26 },
   error: { color: colors.danger, fontSize: fontSize.small, marginTop: spacing(2) },
   button: {
     marginTop: spacing(4),

@@ -1,10 +1,10 @@
 /** Composer-context strips: todo plan, goal bar, usage meter, plan chip. */
 import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { Path, Svg } from 'react-native-svg'
 import { billedInputTokens, formatCacheHitPercent, formatTokensPerSecond, type ContextBreakdownProjection, type SessionStatsView, type TodoItemView, type UsageView } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, shadow, spacing } from '../theme'
 import { useI18n } from '../i18n'
+import { Icon } from '../icons'
 
 export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Element | null {
   const { t } = useI18n()
@@ -12,10 +12,19 @@ export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Eleme
   const done = todos.filter(t => t.status === 'completed').length
   return (
     <View style={styles.strip}>
-      <Text style={styles.stripTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
+      <View style={styles.stripHead}>
+        <Icon name="ChecklistOutline" size={14} color={colors.textDim} />
+        <Text style={styles.stripHeadTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
+      </View>
       {todos.map((t, i) => (
         <View key={i} style={styles.todoRow}>
-          <Text style={[styles.todoMark, t.status === 'completed' && styles.todoDone]}>{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '·'}</Text>
+          <View style={styles.todoMark}>
+            {t.status === 'completed'
+              ? <Icon name="CheckOutline" size={14} color={colors.textDim} />
+              : t.status === 'in_progress'
+                ? <Icon name="PlayOutline" size={14} color={colors.accent} />
+                : <View style={styles.todoPending} />}
+          </View>
           <Text style={[styles.todoText, t.status === 'completed' && styles.todoDone]} numberOfLines={1}>{t.content}</Text>
         </View>
       ))}
@@ -101,25 +110,14 @@ function compactDuration(ms: number): string {
   return `${Math.floor(whole / 60)}m${whole % 60}s`
 }
 
-/** The web's gauge glyph, the session-statistics pill's leading mark. */
-function GaugeGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M3.5 18a9 9 0 1 1 17 0" />
-      <Path d="M12 14.5 16 9.5" />
-    </Svg>
-  )
+/** The session-statistics pill's leading mark, the web's own gauge artwork. */
+function GaugeGlyph({ color, size = 14 }: { color: string; size?: number }): React.JSX.Element {
+  return <Icon name="GaugeOutline" size={size} color={color} />
 }
 
 /** The web's database glyph, worn by every token-usage reading. */
-export function DatabaseGlyph({ color }: { color: string }): React.JSX.Element {
-  return (
-    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
-      <Path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
-      <Path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
-    </Svg>
-  )
+export function DatabaseGlyph({ color, size = 14 }: { color: string; size?: number }): React.JSX.Element {
+  return <Icon name="DatabaseOutline" size={size} color={color} />
 }
 
 /** Exact token count, grouped the way the reader's locale groups numbers. */
@@ -359,8 +357,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
   },
   stripTitle: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(1.5) },
+  stripHead: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5), marginBottom: spacing(1.5) },
+  stripHeadTitle: { color: colors.textDim, fontSize: fontSize.tiny },
   todoRow: { flexDirection: 'row', gap: spacing(2), marginTop: 2 },
-  todoMark: { color: colors.accent, fontSize: fontSize.small, width: 14 },
+  todoMark: { width: 14, alignItems: 'center', justifyContent: 'center' },
+  todoPending: { width: 10, height: 10, borderWidth: 1, borderColor: colors.textDim, borderRadius: 2 },
   todoDone: { color: colors.textDim },
   todoText: { color: colors.text, fontSize: fontSize.small, flex: 1 },
   goalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

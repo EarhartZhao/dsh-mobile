@@ -12,9 +12,21 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, spacing } from '../theme'
 import { AttachmentImage } from './AttachmentImage'
-import { toolDisplayName } from '../ui-labels'
+import { toolDisplayName, toolRowVariant, type ToolRowVariant } from '../ui-labels'
 import { cardRenderer, isRecord, Mono, MonoActionRow, type Translate } from './tool-cards'
 import { useI18n } from '../i18n'
+import { Icon, type IconName } from '../icons'
+
+/** Variant leading glyphs, the web's table: every glyph renders at 14 in a 16 box. */
+const VARIANT_ICONS: Record<ToolRowVariant, IconName> = {
+  search: 'SearchOutline',
+  read: 'BrowseOutline',
+  bash: 'ApiOutline',
+  write: 'EditOutline',
+  edit: 'EditOutline',
+  code: 'CodeOutline',
+  others: 'SparkleRegular',
+}
 
 function activeView(item: ConversationItem & { kind: 'tool' }): Record<string, unknown> | null {
   const view = item.status === 'running' ? item.callView : (item.resultView ?? item.callView)
@@ -79,7 +91,7 @@ function SubCall({ call, manager, sessionId, depth = 0 }: {
     <View style={[styles.subCall, depth > 0 && styles.subCallNested]}>
       <TouchableOpacity onPress={() => setOpen(o => !o)} style={styles.subCallHeader}>
           <Text style={styles.subCallName} numberOfLines={1}>{toolDisplayName(call.name, t)}</Text>
-        <Text style={[styles.subCallStatus, { color: statusColor }]}>{open ? '▾' : '▸'}</Text>
+        <Icon name={open ? 'ChevronDownOutline' : 'ChevronRightOutline'} size={14} color={statusColor} />
       </TouchableOpacity>
       {open && (
         <View style={styles.subCallBody}>
@@ -132,11 +144,11 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
       <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={bare ? styles.row : styles.header}>
         {bare ? (
           // The web's ToolRow: one 24px line — a 16px leading glyph, the call's
-          // title, the 2px separator, then the detail that truncates. The status
-          // rides the glyph's colour, which is where the web puts it too.
+          // title, the 2px separator, then the detail that truncates. The glyph
+          // is the variant's business icon, tinted by status.
           <>
             <View style={styles.rowLeading}>
-              <View style={[styles.rowDot, { backgroundColor: statusColor }]} />
+              <Icon name={VARIANT_ICONS[toolRowVariant(item.name)]} size={14} color={statusColor} />
             </View>
             <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
             {summary !== '' && <View style={styles.rowSep} />}
@@ -155,7 +167,10 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
                 <Text style={styles.meta} numberOfLines={1}>{meta.join(' · ')}</Text>
               )}
             </View>
-            <Text style={[styles.status, { color: statusColor }]}>{statusText} {open ? '▾' : '▸'}</Text>
+            <View style={styles.statusGroup}>
+              <Text style={[styles.status, { color: statusColor }]}>{statusText}</Text>
+              <Icon name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'} size={14} color={statusColor} />
+            </View>
           </>
         )}
       </TouchableOpacity>
@@ -197,7 +212,6 @@ const styles = StyleSheet.create({
   /** The web's ToolRow: a 24px line, 6px after the leading glyph, 8px around the dot. */
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 24 },
   rowLeading: { width: 16, alignItems: 'center', justifyContent: 'center', marginRight: 6 },
-  rowDot: { width: 6, height: 6, borderRadius: 3 },
   rowTitle: { color: chat.labelTertiary, fontSize: 13, lineHeight: 24, flexShrink: 0 },
   rowSep: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
   rowSummary: { flex: 1, color: chat.labelTertiary, fontSize: 13, lineHeight: 24 },
@@ -216,6 +230,7 @@ const styles = StyleSheet.create({
   meta: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 2 },
   summary: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: 3, lineHeight: 15 },
   status: { color: colors.success, fontSize: fontSize.tiny },
+  statusGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   body: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, padding: spacing(2), gap: spacing(1.5) },
   mono: { color: colors.text, fontSize: 12, fontFamily: 'monospace', padding: spacing(2) },
   locations: { gap: spacing(1) },
@@ -225,7 +240,6 @@ const styles = StyleSheet.create({
   subCallNested: { marginTop: spacing(1), marginLeft: spacing(2) },
   subCallHeader: { flexDirection: 'row', justifyContent: 'space-between' },
   subCallName: { color: colors.text, fontSize: fontSize.tiny, flex: 1 },
-  subCallStatus: { color: colors.textDim, fontSize: fontSize.tiny },
   subCallBody: { marginTop: spacing(1), gap: spacing(1) },
   subCallResult: { color: colors.textDim, fontSize: fontSize.tiny },
   toolImage: { width: '100%', maxHeight: 260, borderRadius: radius.card, backgroundColor: colors.bg },

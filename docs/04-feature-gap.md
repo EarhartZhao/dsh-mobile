@@ -99,6 +99,19 @@
 > 调用与 `deliverables/presented` 事件（`session/history` 下 `arguments` 是字符串，可解析出
 > 交付文件与说明），App 渲染的两张卡与 Web 的交付区一致。
 
+> 2026-10-07 追加（图标改为上游原件）：App 之前用的是自绘近似字形和文字符号（`‹ › ⚙ ＋ ✕ ▼ ✓ 👍 👎`），
+> 形状、笔画粗细、留白都和 Web 对不上。现在图标**不再手绘**：`scripts/sync-icons.mjs` 从
+> `deepseek-harness/packages/client/ui-primitives/src/icons`（外加 `ui-conversation` 的 `InputBar`
+> 里那两个内联 `<svg>`：发送上箭头、停止圆角方块）逐条拷贝 path 数据，生成 `apps/mobile/src/icons.tsx`，
+> 每个字形保留 Web 自己的 16×16 viewBox、1px（regular）/1.3px（medium）描边和 `currentColor` 语义；
+> 上游改图标只需重跑脚本，`pnpm run sync-icons:check` 用来防止本地副本过期（没有 harness 检出时自动跳过）。
+> 对话面按 Web 的用法逐处对齐：头部返回/搜索/更多、回到底部、轮次折叠箭头、消息动作行
+> （复制 / Like / Dislike / 分支，28×28 命中区、15px 字形、已评分换填充版）、思考行前置 `IconThinkOutline`、
+> 工具行按 `classifyTool` 变体表选前置图标（search/read/bash/write/edit/code/others）、代码块复制与分享、
+> 会话统计的 gauge 与 database、输入卡 34px 发送圆钮的 16px 上箭头（停止态同尺寸圆角方块）。
+> 其余页面的 `‹ › ⚙ ＋ ✓ ×` 一并换成同一套字形。Todo 条的逐项状态改用 Web `ToolDetails` 的三态标记
+>（完成 `IconCheckOutline`、进行中 `IconPlayOutline`、待办空心方框）。
+
 ## 一、移动端现状（已完成）
 
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
