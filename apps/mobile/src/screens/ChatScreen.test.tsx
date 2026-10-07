@@ -117,6 +117,13 @@ function pressableRendering(
     && node.findAll(child => child.props.children === text).length > 0).at(-1)
 }
 
+/** The composer's own input, found by the send placeholder it carries. */
+function composer(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance | undefined {
+  return tree.root.findAll(node =>
+    typeof node.props.onChangeText === 'function'
+    && node.props.placeholder === 'chat.sendPlaceholder').at(-1)
+}
+
 /**
  * The screen re-renders from a 50ms store throttle, so a page that landed is
  * only on screen after that window has passed.
@@ -136,17 +143,28 @@ const INSETS: Metrics = {
   insets: { top: 0, left: 0, right: 0, bottom: 0 },
 }
 
-function render(manager: ConnectionManager, sessionId = 's1'): renderer.ReactTestRenderer {
+function render(manager: ConnectionManager, sessionId = 's1', onBack: () => void = jest.fn()): renderer.ReactTestRenderer {
   let tree!: renderer.ReactTestRenderer
   act(() => {
     tree = renderer.create(
       <SafeAreaProvider initialMetrics={INSETS}>
-        <ChatScreen manager={manager} sessionId={sessionId} onBack={jest.fn()} />
+        <ChatScreen manager={manager} sessionId={sessionId} onBack={onBack} />
       </SafeAreaProvider>,
     )
   })
   trees.push(tree)
   return tree
+}
+
+/** Hand the mounted screen another conversation, as a hop down a lineage does. */
+function renderSession(tree: renderer.ReactTestRenderer, manager: ConnectionManager, sessionId: string, onBack: () => void): void {
+  act(() => {
+    tree.update(
+      <SafeAreaProvider initialMetrics={INSETS}>
+        <ChatScreen manager={manager} sessionId={sessionId} onBack={onBack} />
+      </SafeAreaProvider>,
+    )
+  })
 }
 
 // VirtualizedList schedules a cells-to-render timeout; left mounted it fires
@@ -758,5 +776,35 @@ describe('ChatScreen subagent conversation', () => {
     expect(screenText(tree)).toContain('subagent.readOnly.oneShotBody')
     // The draft it would have taken is gone with the composer.
     expect(screenText(tree)).not.toContain('chat.sendPlaceholder')
+  })
+
+  it('takes a back press again after the screen is handed another conversation', async () => {
+    const { manager } = setup()
+    const onBack = jest.fn()
+    const tree = render(manager, 'parent', onBack)
+    await settle()
+
+    const back = (): void => {
+      act(() => { pressableByLabel(tree, 'chat.back')?.props.onPress() })
+    }
+
+    // One press closes the conversation; the duplicate activation of that same
+    // press does not ask again.
+    back()
+    back()
+    expect(onBack).toHaveBeenCalledTimes(1)
+
+    // The composer belongs to the conversation it was written for: a half-typed
+    // message must not ride into the conversation next door.
+    act(() => { composer(tree)?.props.onChangeText('给父会话的草稿') })
+    expect(composer(tree)?.props.value).toBe('给父会话的草稿')
+
+    // Following a subagent swaps the Session under the same mounted screen, so
+    // backing out of the child and then out of its parent has to work.
+    renderSession(tree, manager, 'child', onBack)
+    await settle()
+    expect(composer(tree)?.props.value).toBe('')
+    back()
+    expect(onBack).toHaveBeenCalledTimes(2)
   })
 })

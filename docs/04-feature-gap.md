@@ -112,8 +112,13 @@
 > 其余页面的 `‹ › ⚙ ＋ ✓ ×` 一并换成同一套字形。Todo 条的逐项状态改用 Web `ToolDetails` 的三态标记
 >（完成 `IconCheckOutline`、进行中 `IconPlayOutline`、待办空心方框）。
 
-## 一、移动端现状（已完成）
+> 2026-10-07 追加（会话谱系导航）：从父会话头部切进子智能体后，返回键要回到**父会话**而不是会话列表——
+> 子会话根本不在列表里，直接退列表等于把读者正在读的会话弄丢。谱系放在 `apps/mobile/src/route.ts`
+>（`openChat` 从 chat→chat 记父、`closeChat` 逐跳回退、离开对话即清空），`ChatScreen` 在
+> `sessionId` 变化时重置一次性闩锁与输入框（草稿、引用 chip、待发图片都属于写下它们的那个会话）；
+> 子会话头部的「父会话」行按标题显示，也可点回父会话。
 
+## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、
 取消、队列 dock（排队/引导/编辑/删除）、审批/提问动作条、任务折叠条 + 前台提醒
@@ -163,7 +168,7 @@
 | 模型选择 | ✅ session.models + session.selectModel | ● | 会话页模型 chip、provider 分组和 effort 子菜单已接入 |
 | Agent preset | ✅ agentPreset.list/select + summary.agentPreset | ● | 新会话选择、`+` 菜单切换和元信息展示已接入 |
 | 子代理面板 | ✅ subagent.list/history/prompt/interrupt + lineage 事件 | ● | 子代理列表、查看/继续/打断已接入 |
-| 技能 /skill | ✅ skill.list（白名单已有） | ● | 输入触发候选与 `+` 引用面板已接入 |
+| 技能 /skill | ✅ skill.list（白名单已有） | ● | 输入 `/` 与 `+` 面板的「命令」tab 是同一个上拉弹框，落点即该 tab；子智能体会话没有自己的命令表，只显示原因说明 |
 | 权限预设 | ✅ settings.mutate（permission 命名空间） | ● | chips、当前项和 Full access 确认已接入 |
 
 ### D. 工作区/文件面（中价值，契约已有）
@@ -176,7 +181,7 @@
 | Markdown 文中图片 | ✅ `workspaceFiles/readRelated` | ● | 以文档目录为基准解析 `![](rel)`，最多 4 张就地展示，单张失败不影响其余 |
 | 变更实时刷新 | ✅ `workspaceFiles/changes`（插件 `file.watch`/`file.unwatch`） | ● | 复用已发布的 `host/remote-event` 承载；插件按 workspace 相对路径补 `path`，App 只刷新受影响目录，300ms 去抖 |
 | 交付物/产物行 | ✅ tool/result + 产物投影 | ● | assistant 收尾后的产物 chips 已接入 |
-| @ 引用（文件/会话） | ✅ `fileReferences/list` + `sessionReferenceResolver/candidates` + `workspaceFiles` 浏览器 | ● | 输入触发候选、`+` 引用面板与目录浏览器三条入口共用 `fileMention` 规则；浏览器插入后显示引用 chip 并交还焦点 |
+| @ 引用（文件/会话） | ✅ `fileReferences/list` + `sessionReferenceResolver/candidates` + `workspaceFiles` 浏览器 | ● | 输入 `@`、`+` 面板的「引用」tab 与目录浏览器三条入口共用 `fileMention` 规则；浏览器插入后显示引用 chip 并交还焦点 |
 | 宿主机打开/定位 | ✅ `session/openWorkspacePath`（`action: 'reveal'`） | ● | 预览面板可"在电脑上打开"或用文件管理器定位；宿主不支持时回显错误 |
 | 文件导出 | ⚠️ session.export（ZIP，max_payload 1MiB 限制） | ○ | 设计已排除大文件传输；用一次性下载 URL 方案，待宿主支持 |
 | 目录列表分页 | ⚠️ `workspaceFiles/list` 无游标/offset | ○ | 宿主按 `maxEntries` 截断并回报 `truncated`，客户端只能提示进子目录；真续读需上游加 limit/offset |
@@ -212,7 +217,7 @@
 5. 模型选择 chip
 
 **P1（已完成）**
-6. /skill 技能候选 + @ 引用候选（两个输入触发源，共用一套候选菜单）
+6. /skill 技能候选 + @ 引用候选（两个输入触发源都落到 `+` 的同一个上拉弹框，各自定位到对应 tab）
 7. 子代理面板（lineage + 列表/打断）
 8. 目标条 GoalBar + Plan chip
 9. workspace 管理操作 + 目录浏览

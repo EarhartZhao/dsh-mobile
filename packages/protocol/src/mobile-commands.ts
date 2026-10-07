@@ -3,7 +3,7 @@
  * subjects; unlike the browser Remote gateway they are plain unary calls and
  * older hosts may not serve them, so callers must keep a fallback.
  */
-import { serverResponseSchema } from './vendor/api/rpc.schema.ts'
+import { readMobileResponse } from './mobile-response.ts'
 import { svcSubject, TOKEN_HEADER } from './subjects.ts'
 import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 
@@ -43,9 +43,7 @@ export async function callMobileRemote<T>(
     timeout: timeoutMs,
     headers,
   })
-  const full = serverResponseSchema.parse(JSON.parse(new TextDecoder().decode(reply.data)))
-  if (!full.result.ok) throw new Error(full.result.error.message)
-  return full.result.value as T
+  return readMobileResponse(reply.data) as T
 }
 
 export function createMobileCommands(conn: NatsConnLike, headersFactory: NatsHeadersFactory, instanceId: string, getToken: () => string | undefined): {

@@ -41,15 +41,8 @@ import { SessionListScreen } from './screens/SessionListScreen'
 import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
+import { INITIAL_NAV, closeChat, openChat, routeTo, type NavState, type Route } from './route'
 import { handleSystemBack } from './system-back'
-
-type Route =
-  | { name: 'list' }
-  | { name: 'chat'; sessionId: string }
-  | { name: 'settings' }
-  | { name: 'plugins' }
-  | { name: 'connections' }
-  | { name: 'pairing' }
 
 interface DiagnosticError {
   at: string
@@ -159,7 +152,16 @@ function AppContent(): React.JSX.Element {
   const [connections, setConnections] = useState<PairingState>(EMPTY_PAIRING_STATE)
   const [deviceName, setDeviceName] = useState(defaultDeviceName())
   const [booted, setBooted] = useState(false)
-  const [route, setRoute] = useState<Route>({ name: 'list' })
+  /**
+   * The screen on top, plus the conversation lineage its back gesture walks.
+   * Kept in one value so a hop and the screen it lands on can never disagree.
+   */
+  const [nav, setNav] = useState<NavState>(INITIAL_NAV)
+  const route = nav.route
+  /** Show one screen, dropping any conversation lineage that does not apply. */
+  const goTo = useCallback((next: Route) => {
+    setNav(current => routeTo(current, next))
+  }, [])
   /**
    * Chat the user was in last. A brand-new Session is blank until its first
    * message, and the list hides blank rows — except this one, which keeps the
@@ -168,10 +170,18 @@ function AppContent(): React.JSX.Element {
    */
   const [lastChatSessionId, setLastChatSessionId] = useState<string | null>(null)
 
-  /** Open one chat, remembering it as the list's provisional blank row. */
+  /**
+   * Open one chat, remembering it as the list's provisional blank row and, when
+   * it was opened from another conversation, remembering that one as the way
+   * back.
+   */
   const openSession = useCallback((sessionId: string) => {
     setLastChatSessionId(sessionId)
-    setRoute({ name: 'chat', sessionId })
+    setNav(current => openChat(current, sessionId))
+  }, [])
+  /** Back out of a conversation: its parent, or the session list. */
+  const leaveChat = useCallback(() => {
+    setNav(closeChat)
   }, [])
   const [connState, setConnState] = useState<ConnectionState>('idle')
   const [alert, setAlert] = useState<string | null>(null)
@@ -375,14 +385,16 @@ function AppContent(): React.JSX.Element {
       route: route.name,
       now: Date.now(),
       lastBackAt: lastBackPress.current,
-      goToList: () => setRoute({ name: 'list' }),
-      goToSettings: () => setRoute({ name: 'settings' }),
+      // Any route but a conversation ends at the list, and a conversation ends
+      // at the one it was opened from before that.
+      goToList: leaveChat,
+      goToSettings: () => goTo({ name: 'settings' }),
       showPrompt: showBackExitPrompt,
       moveToBackground,
     })
     lastBackPress.current = result.lastBackAt
     return result.handled
-  }, [moveToBackground, route.name, showBackExitPrompt])
+  }, [goTo, leaveChat, moveToBackground, route.name, showBackExitPrompt])
 
   const handleHardwareBack = useCallback(() => {
     if (pairing === null || managerRef.current === null) return false
@@ -491,8 +503,8 @@ function AppContent(): React.JSX.Element {
    */
   const onPaired = useCallback((result: PairingResult) => {
     mutateConnections(state => upsertProfile(state, result))
-    setRoute({ name: 'list' })
-  }, [mutateConnections])
+    goTo({ name: 'list' })
+  }, [goTo, mutateConnections])
 
   /**
    * Drops one saved connection. What it taught the app to trust only goes with
@@ -507,8 +519,8 @@ function AppContent(): React.JSX.Element {
     if (target !== undefined && !stillNeeded) {
       void clearHubAnchor(target.hub).catch(() => undefined)
     }
-    setRoute({ name: 'list' })
-  }, [mutateConnections])
+    goTo({ name: 'list' })
+  }, [goTo, mutateConnections])
 
   /** The settings screen's 解除配对 acts on whatever is currently in use. */
   const onUnpair = useCallback(() => {
@@ -519,8 +531,8 @@ function AppContent(): React.JSX.Element {
     mutateConnections(state => setActiveProfile(state, id))
     // Whatever was open belongs to the Hub being left behind.
     setLastChatSessionId(null)
-    setRoute({ name: 'list' })
-  }, [mutateConnections])
+    goTo({ name: 'list' })
+  }, [goTo, mutateConnections])
 
   const renameConnection = useCallback((id: string, label: string) => {
     mutateConnections(state => setProfileLabel(state, id, label))
@@ -760,7 +772,7 @@ function AppContent(): React.JSX.Element {
             <SessionListScreen
               manager={managerRef.current}
               onOpenSession={openSession}
-              onOpenSettings={() => setRoute({ name: 'settings' })}
+              onOpenSettings={() => goTo({ name: 'settings' })}
               currentSessionId={lastChatSessionId}
             />
           ) : route.name === 'connections' ? (
@@ -770,8 +782,8 @@ function AppContent(): React.JSX.Element {
               onSwitch={switchConnection}
               onRemove={removeConnection}
               onRename={renameConnection}
-              onAdd={() => setRoute({ name: 'pairing' })}
-              onBack={() => setRoute({ name: 'settings' })}
+              onAdd={() => goTo({ name: 'pairing' })}
+              onBack={() => goTo({ name: 'settings' })}
             />
           ) : route.name === 'pairing' ? (
             // Adding a second machine: the first pairing is untouched until the
@@ -779,7 +791,7 @@ function AppContent(): React.JSX.Element {
             <PairingScreen
               onPaired={onPaired}
               deviceName={deviceName}
-              onSystemBack={() => { setRoute({ name: 'connections' }); return true }}
+              onSystemBack={() => { goTo({ name: 'connections' }); return true }}
             />
           ) : route.name === 'settings' ? (
             <SettingsScreen
@@ -798,11 +810,11 @@ function AppContent(): React.JSX.Element {
               connectionTitle={pairing === null ? '' : profileTitle(pairing)}
               deviceName={deviceName}
               setDeviceName={updateDeviceName}
-              onOpenConnections={() => setRoute({ name: 'connections' })}
+              onOpenConnections={() => goTo({ name: 'connections' })}
               onOpenDiagnostics={() => setDiagnosticsOpen(true)}
-              onOpenPlugins={() => setRoute({ name: 'plugins' })}
+              onOpenPlugins={() => goTo({ name: 'plugins' })}
               onUnpair={onUnpair}
-              onBack={() => setRoute({ name: 'list' })}
+              onBack={() => goTo({ name: 'list' })}
               appVersion={APP_VERSION}
               updateStatus={updateCheck}
               onCheckUpdate={() => { void checkUpdate('manual') }}
@@ -813,13 +825,13 @@ function AppContent(): React.JSX.Element {
               inventoryLoading={inventoryLoading}
               refreshInventory={refreshInventory}
               features={managerRef.current.compatibility?.features ?? []}
-              onBack={() => setRoute({ name: 'settings' })}
+              onBack={() => goTo({ name: 'settings' })}
             />
           ) : (
             <ChatScreen
               manager={managerRef.current}
               sessionId={route.sessionId}
-              onBack={() => setRoute({ name: 'list' })}
+              onBack={leaveChat}
               onOpenSession={openSession}
               enterToSend={preferences.enterToSend}
             />

@@ -25,6 +25,17 @@ export function sessionDisplayTitle(input: { title?: string | null, cwd?: string
   return base !== '' ? base : input.sessionId
 }
 
+/**
+ * Short handle for a Session id, for a label with no room for the whole one.
+ *
+ * Nothing but the `session-` prefix fits in the first eight characters, so the
+ * handle starts after it and a truncated id still says something.
+ */
+export function shortSessionId(sessionId: string, length = 8): string {
+  const body = sessionId.replace(/^session-/u, '')
+  return body.slice(0, length)
+}
+
 /** Session-list row label: the provisional chat names a blank row, never its path. */
 export function sessionRowTitle(
   input: { blank: boolean, title?: string | null },

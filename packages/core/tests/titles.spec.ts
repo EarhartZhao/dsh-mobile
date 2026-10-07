@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { increasedForkTitle, sessionDisplayTitle, sessionRowTitle, workspaceBasename } from '../src/titles.ts'
+import { increasedForkTitle, sessionDisplayTitle, sessionRowTitle, shortSessionId, workspaceBasename } from '../src/titles.ts'
 
 describe('session labels', () => {
   it('takes the workspace basename for both separator styles', () => {
@@ -35,5 +35,17 @@ describe('session labels', () => {
     // An untitled session keeps its empty title rather than gaining a suffix.
     expect(increasedForkTitle('')).toBe('')
     expect(increasedForkTitle('   ')).toBe('   ')
+  })
+
+  it('shortens a session id past the prefix that identifies nothing', () => {
+    // Every id carries `session-`, so taking the first eight characters used
+    // to spell the prefix and nothing else.
+    expect(shortSessionId('session-72d46602-ccc5-4665-a3d0-109d8e557f21')).toBe('72d46602')
+    expect(shortSessionId('session-72d46602-ccc5')).toBe('72d46602')
+    // An id without the prefix, a shorter one, and the empty string all pass
+    // through without inventing characters.
+    expect(shortSessionId('abc12345')).toBe('abc12345')
+    expect(shortSessionId('session-ab')).toBe('ab')
+    expect(shortSessionId('')).toBe('')
   })
 })

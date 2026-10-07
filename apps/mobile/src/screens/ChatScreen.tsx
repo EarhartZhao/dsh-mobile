@@ -28,7 +28,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, shortSessionId, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import { subagentAddress, subagentRows, type SubagentAddress } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
@@ -37,7 +37,6 @@ import { presetSelectionEnabled } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { AttachmentImage } from '../components/AttachmentImage'
-import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { linkTarget } from '../link-targets'
@@ -50,7 +49,14 @@ import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
 import { ToolCard, VARIANT_ICONS } from '../components/ToolCard'
 import { WorkspaceBrowserSheet } from '../components/WorkspaceBrowserSheet'
-import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, type PlusReference } from '../components/PlusMenuSheet'
+import {
+  PlusMenuSheet,
+  type PlusCommand,
+  type PlusMenuStatus,
+  type PlusPreset,
+  type PlusReference,
+  type PlusTab,
+} from '../components/PlusMenuSheet'
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
 import { SubagentSwitcher } from '../components/SubagentSwitcher'
@@ -318,79 +324,62 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   } | null>(null)
   const [pendingModel, setPendingModel] = useState<{ providerId: string; modelId: string; efforts: { id: string; name: string }[] } | null>(null)
   const [modelLabel, setModelLabel] = useState(t('chat.model'))
-  const [candidates, setCandidates] = useState<Candidate[]>([])
-  const skillsCache = useRef<{
-    sessionId: string
-    skills: { name: string; description: string; path?: string }[]
-  } | null>(null)
-  const candidateGeneration = useRef(0)
+  /**
+   * What opened the plus sheet: the attach button, or one of the composer's own
+   * triggers. The trigger decides the tab it starts on and what a pick does —
+   * `/` and `@` are text the reader typed, so their pick completes that text,
+   * while the attach button starts a command outright.
+   */
+  const [sheetTrigger, setSheetTrigger] = useState<'plus' | '/' | '@'>('plus')
+  const [sheetTab, setSheetTab] = useState<PlusTab>('commands')
+  const [sheetQuery, setSheetQuery] = useState('')
+  /**
+   * A trigger the reader already dismissed, as `<char>@<offset>`. Without it
+   * the modal reopens on the next keystroke, since the token is still in the
+   * draft; it is cleared whenever no trigger is left, so typing `/` again
+   * after deleting it opens the sheet as usual.
+   */
+  const dismissedTrigger = useRef<string | null>(null)
 
-  /** Trailing-token detection: /skill and @file/session triggers (ui-input-trigger lite). */
+  /** Open the one plus sheet, on the tab and query the trigger implies. */
+  const openPlus = (tab: PlusTab, query: string, trigger: 'plus' | '/' | '@'): void => {
+    setSheetTrigger(trigger)
+    setSheetTab(tab)
+    setSheetQuery(query)
+    setPlusOpen(true)
+    if (tab === 'commands') void loadCommands()
+    if (tab === 'references') void loadReferences()
+    if (tab === 'controls') void loadPresets()
+  }
+
+  /**
+   * Trailing-token detection: `/` opens the commands tab, `@` the references
+   * tab, both in the same sheet the attach button opens (ui-input-trigger lite).
+   */
   const onDraftChange = (text: string): void => {
     setDraft(text)
-    const generation = ++candidateGeneration.current
     const token = activeComposerToken(text)
-    if (token === null) { setCandidates([]); return }
-    if (token.trigger === '/') {
-      void resolveSkills(token.query, generation)
-    } else {
-      void resolveAtRefs(token.query, generation)
+    if (token === null) {
+      dismissedTrigger.current = null
+      return
     }
+    const key = `${token.trigger}@${text.length - token.prefix.length}`
+    if (dismissedTrigger.current === key) return
+    openPlus(token.trigger === '/' ? 'commands' : 'references', token.query, token.trigger)
   }
 
-  const resolveSkills = async (query: string, generation: number): Promise<void> => {
-    const client = manager.client
-    if (client === null) return
-    let skills = skillsCache.current?.sessionId === sessionId ? skillsCache.current.skills : null
-    if (skills === null) {
-      const result = await client.catalog.skills({ sessionId }).catch(() => null)
-      if (result !== null) {
-        skills = result.skills.map(skill => ({
-          name: skill.name,
-          description: skill.description,
-          ...(skill.path === undefined ? {} : { path: skill.path }),
-        }))
-        skillsCache.current = { sessionId, skills }
-      }
-    }
-    if (skills === null) return
-    if (candidateGeneration.current !== generation) return
-    setCandidates(skills
-      .filter(s => s.name.startsWith(query))
-      .map(s => ({ key: s.name, title: `/${s.name}`, subtitle: s.description, insert: `/${s.name} ` })))
-  }
-
-  const resolveAtRefs = async (query: string, generation: number): Promise<void> => {
-    const client = manager.client
-    if (client === null) return
-    const [fileValues, sessionValues] = await Promise.all([
-      client.references.files({ sessionId, query }).catch(() => []),
-      client.references.sessions({ sessionId, query }).catch(() => []),
-    ])
-    if (candidateGeneration.current !== generation) return
-    const files: Candidate[] = fileValues.flatMap((entry) => {
-      const mention = fileMention(entry.path, entry.kind)
-      if (mention === null) return []
-      const title = entry.path.split('/').filter(Boolean).at(-1) ?? entry.path
-      return [{ key: `file:${entry.path}`, title: `${title}${entry.kind === 'directory' ? '/' : ''}`, subtitle: entry.path, insert: `${mention} ` }]
-    })
-    const sessions: Candidate[] = sessionValues.map(entry => ({
-      key: `session:${entry.sessionId}`,
-      ...sessionReferenceText(entry, t('chat.session')),
-      insert: `${entry.mention} `,
-    }))
-    setCandidates([...files.slice(0, 8), ...sessions.slice(0, 8)])
-  }
-
-  const pickCandidate = (candidate: Candidate): void => {
-    candidateGeneration.current++
-    const token = activeComposerToken(draft)
-    if (token !== null) {
-      setDraft(`${draft.slice(0, -token.prefix.length)}${candidate.insert}`)
-      // Keep the caret in the composer so the picked reference is immediately sendable.
-      composerRef.current?.focus()
-    }
-    setCandidates([])
+  /**
+   * Replace the trigger token the sheet was opened for with the picked text,
+   * and keep the caret in the composer so the result is immediately sendable.
+   * A pick made from the attach button has no token to replace: its insert
+   * appends.
+   */
+  const insertAtTrigger = (insert: string): void => {
+    const token = sheetTrigger === 'plus' ? null : activeComposerToken(draft)
+    setDraft(token === null
+      ? `${draft}${draft === '' || draft.endsWith(' ') ? '' : ' '}${insert}`
+      : `${draft.slice(0, -token.prefix.length)}${insert}`)
+    composerRef.current?.focus()
   }
 
   const chooseImages = async (): Promise<void> => {
@@ -483,6 +472,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<TranscriptRow>>(null)
+  /**
+   * One press, one navigation. The header can receive both a touch-up and an
+   * accessibility activation, and a large conversation is expensive to release
+   * twice. The latch is cleared whenever this screen is handed another
+   * conversation: following a subagent and coming back keeps the same mounted
+   * screen, so a latch held across the hop swallowed the second back gesture.
+   */
   const backHandled = useRef(false)
   const mountedRef = useRef(true)
   /**
@@ -538,6 +534,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     backHandled.current = true
     onBack()
   }, [onBack])
+
+  /**
+   * This screen stays mounted while the reader follows a child conversation and
+   * comes back, so everything held loosely on it has to be re-scoped by hand.
+   * The latch is per press, and the composer belongs to the conversation it was
+   * written for — a draft, a reference chip or a staged photo must not ride
+   * into the conversation next door.
+   */
+  useEffect(() => {
+    backHandled.current = false
+    setDraft('')
+    setPendingImages([])
+    setInsertedRefs([])
+    setEditingItem(null)
+  }, [sessionId])
 
   const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
@@ -1507,6 +1518,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     void runMenuCommand(command)
   }
 
+  /**
+   * A command picked from the sheet. Opened by a typed trigger, the reader was
+   * writing a line, so the pick finishes it in place and they can still add
+   * arguments before sending; opened by the attach button, the pick is the
+   * whole invocation and runs now.
+   */
+  const pickSheetCommand = (command: PlusCommand): void => {
+    if (sheetTrigger !== 'plus') {
+      setPlusOpen(false)
+      insertAtTrigger(`/${command.name} `)
+      return
+    }
+    pickMenuCommand(command)
+  }
+
   const messageText = (item: ConversationItem): string => {
     if (item.kind === 'tool') return item.resultText !== '' ? item.resultText : item.args
     if (item.kind === 'compaction') return item.summary
@@ -1796,12 +1822,35 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       </View>
       {(() => {
         const s = manager.store.summaries.find(x => x.sessionId === sessionId)
+        // The parent's own title when this client already holds it — the same
+        // label the switcher lists it under — and a short handle otherwise.
+        // The raw id starts with `session-`, so its first characters identify
+        // nothing.
+        const parentSessionId = s?.parentSessionId
+        const parentTitle = parentSessionId === undefined ? undefined : manager.store.title(parentSessionId)
+        const parentLabel = parentTitle !== undefined && parentTitle.trim() !== ''
+          ? parentTitle
+          : shortSessionId(parentSessionId ?? '')
         return (
           <View style={styles.metaHeader}>
             <View style={styles.metaText}>
               {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.directory', { value: s.cwd })}</Text>}
               {s?.agentPreset !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.preset', { value: s.agentPreset })}</Text>}
-              {s?.parentSessionId !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.parentSession', { value: s.parentSessionId.slice(0, 8) })}</Text>}
+              {/* The way back to a subagent's parent, besides the back gesture:
+                  the parent's own header carries the switcher, but the child's
+                  cannot, so this line is the only affordance down here. */}
+              {s?.parentSessionId !== undefined && (
+                <TouchableOpacity
+                  onPress={() => onOpenSession?.(s.parentSessionId as string)}
+                  disabled={onOpenSession === undefined}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.openParent')}
+                >
+                  <Text style={[styles.metaLine, styles.metaLink]} numberOfLines={1}>
+                    {t('chat.parentSession', { value: parentLabel })}
+                  </Text>
+                </TouchableOpacity>
+              )}
               <Text style={styles.metaLine} numberOfLines={1}>
                 {t('chat.updated', { value: new Date(s?.updatedAt ?? Date.now()).toLocaleString(locale, { hour12: false }) })}
                 {s?.origin === 'subagent' ? t('chat.subagentMeta') : ''}
@@ -2053,7 +2102,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           onApprovalStale={() => showNotice(t('chat.approvalStale'))}
         />
       )}
-      <CandidateMenu items={candidates} onPick={pickCandidate} />
       <SessionStatsBar view={statsView} />
       <View style={styles.composer}>
         {lightbox !== null && (
@@ -2174,7 +2222,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
               <TouchableOpacity
                 style={styles.addButton}
                 hitSlop={8}
-                onPress={() => { setPlusOpen(true); void loadCommands(); void loadReferences(); void loadPresets() }}
+                onPress={() => openPlus('commands', '', 'plus')}
                 accessibilityRole="button"
                 accessibilityLabel={t('chat.add')}
               >
@@ -2308,6 +2356,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       </Modal>
       <PlusMenuSheet
         visible={plusOpen}
+        initialTab={sheetTab}
+        initialQuery={sheetQuery}
+        commandsUnavailable={isSubagentSession ? t('plus.commandsSubagent') : undefined}
         commands={commands}
         commandStatus={commandStatus}
         commandError={commandError}
@@ -2327,15 +2378,22 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         pendingImageCount={pendingImages.length}
         pendingFileCount={pendingFiles.length}
         uploadingFileCount={pendingFiles.filter(file => file.status === 'uploading').length}
-        onClose={() => setPlusOpen(false)}
-        onPickCommand={pickMenuCommand}
+        onClose={() => {
+          // Remember which trigger was dismissed: the token is still in the
+          // draft, and the next keystroke must not reopen the same sheet.
+          const token = sheetTrigger === 'plus' ? null : activeComposerToken(draft)
+          dismissedTrigger.current = token === null
+            ? null
+            : `${token.trigger}@${draft.length - token.prefix.length}`
+          setPlusOpen(false)
+        }}
+        onPickCommand={pickSheetCommand}
         onCaptureImage={() => { setPlusOpen(false); void captureImage() }}
         onPickImages={() => { setPlusOpen(false); void chooseImages() }}
         onPickFile={() => { setPlusOpen(false); void chooseFile() }}
         onInsertReference={reference => {
           setPlusOpen(false)
-          setDraft(current => `${current}${current.endsWith(' ') || current === '' ? '' : ' '}${reference.insert}`)
-          composerRef.current?.focus()
+          insertAtTrigger(reference.insert)
         }}
         onPermission={value => { setPlusOpen(false); selectPermission(value) }}
         onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: t('plus.planSubtitle'), images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
@@ -3179,6 +3237,7 @@ const styles = StyleSheet.create({
   modelChip: { alignSelf: 'flex-end', marginRight: spacing(1), marginVertical: spacing(0.5) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
+  metaLink: { color: colors.accent },
   permissionBar: { flexGrow: 0, flexShrink: 0, height: 46, minHeight: 46, maxHeight: 46, marginBottom: spacing(0.5) },
   permissionContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(0.5), gap: spacing(1.5), alignItems: 'center' },
   permissionDanger: { borderColor: colors.danger },

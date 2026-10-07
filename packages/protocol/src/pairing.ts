@@ -6,7 +6,7 @@
  * ServerResponse full forms as every other call.
  */
 
-import { serverResponseSchema } from './vendor/api/rpc.schema.ts'
+import { readMobileResponse } from './mobile-response.ts'
 import { svcSubject, TOKEN_HEADER } from './subjects.ts'
 import type { NatsConnLike, NatsHeadersFactory } from './nats-types.ts'
 
@@ -76,11 +76,12 @@ async function callPlugin(
     JSON.stringify(envelope),
     { timeout: timeoutMs, headers },
   )
-  const full = serverResponseSchema.parse(JSON.parse(new TextDecoder().decode(reply.data)))
-  if (!full.result.ok) {
-    throw new PairingError(full.result.error.message)
+  try {
+    return readMobileResponse(reply.data)
+  } catch (error: unknown) {
+    // The pairing screen's own vocabulary is the message, not the code.
+    throw new PairingError(error instanceof Error ? error.message : String(error))
   }
-  return full.result.value
 }
 
 /**

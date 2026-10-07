@@ -29,8 +29,20 @@ export interface PlusReference {
 
 export type PlusMenuStatus = 'idle' | 'loading' | 'ready' | 'failed'
 
+/** One tab of the sheet; the composer's `/` and `@` triggers pick a start tab. */
+export type PlusTab = 'commands' | 'attachments' | 'references' | 'controls'
+
 interface Props {
   visible: boolean
+  /** Tab to open on, and the query to seed its search with, for a typed trigger. */
+  initialTab?: PlusTab
+  initialQuery?: string
+  /**
+   * Why this conversation has no command list at all, when it has none — a
+   * subagent child owns no command registry, and asking would only produce a
+   * Host refusal where the reason belongs.
+   */
+  commandsUnavailable?: string
   commands: PlusCommand[]
   commandStatus: PlusMenuStatus
   commandError: string
@@ -93,10 +105,15 @@ function StatusLine({ status, error, onRetry }: { status: PlusMenuStatus; error:
 
 export function PlusMenuSheet(props: Props): React.JSX.Element {
   const { t } = useI18n()
-  const [tab, setTab] = useState<'commands' | 'attachments' | 'references' | 'controls'>('commands')
+  const [tab, setTab] = useState<PlusTab>('commands')
   const [query, setQuery] = useState('')
+  // Seeded on each open, and only then: a trigger's own text is where the
+  // search starts, while the search box the user then types in owns the query.
   useEffect(() => {
-    if (props.visible) setQuery('')
+    if (!props.visible) return
+    setQuery(props.initialQuery ?? '')
+    if (props.initialTab !== undefined) setTab(props.initialTab)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-time seed, not a live binding
   }, [props.visible])
 
   const filteredCommands = props.commands.filter(command =>
@@ -131,34 +148,40 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
           <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} keyboardShouldPersistTaps="handled">
             {tab === 'commands' && (
               <>
-                <TextInput
-                  style={styles.search}
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder={t('plus.searchCommands')}
-                  placeholderTextColor={colors.textDim}
-                />
-                <StatusLine status={props.commandStatus} error={props.commandError} onRetry={() => props.onReloadCommands()} />
-                {props.commandStatus === 'ready' && props.commandError !== '' && (
-                  <Text style={styles.itemWarning}>{props.commandError}</Text>
-                )}
-                {props.commandStatus === 'ready' && filteredCommands.length === 0 && (
-                  <Text style={styles.meta}>{t('plus.noCommands')}</Text>
-                )}
-                {filteredCommands.map(command => (
-                  <TouchableOpacity
-                    key={command.name}
-                    style={styles.item}
-                    disabled={props.pendingImageCount > 0 && command.images !== true}
-                    onPress={() => props.onPickCommand(command)}
-                  >
-                    <Text style={styles.itemTitle}>/{command.name}</Text>
-                    <Text style={styles.itemSubtitle} numberOfLines={2}>{command.description}</Text>
-                    {props.pendingImageCount > 0 && command.images !== true && (
-                      <Text style={styles.itemWarning}>{t('plus.commandRejectsImages')}</Text>
+                {props.commandsUnavailable !== undefined ? (
+                  <Text style={styles.meta}>{props.commandsUnavailable}</Text>
+                ) : (
+                  <>
+                    <TextInput
+                      style={styles.search}
+                      value={query}
+                      onChangeText={setQuery}
+                      placeholder={t('plus.searchCommands')}
+                      placeholderTextColor={colors.textDim}
+                    />
+                    <StatusLine status={props.commandStatus} error={props.commandError} onRetry={() => props.onReloadCommands()} />
+                    {props.commandStatus === 'ready' && props.commandError !== '' && (
+                      <Text style={styles.itemWarning}>{props.commandError}</Text>
                     )}
-                  </TouchableOpacity>
-                ))}
+                    {props.commandStatus === 'ready' && filteredCommands.length === 0 && (
+                      <Text style={styles.meta}>{t('plus.noCommands')}</Text>
+                    )}
+                    {filteredCommands.map(command => (
+                      <TouchableOpacity
+                        key={command.name}
+                        style={styles.item}
+                        disabled={props.pendingImageCount > 0 && command.images !== true}
+                        onPress={() => props.onPickCommand(command)}
+                      >
+                        <Text style={styles.itemTitle}>/{command.name}</Text>
+                        <Text style={styles.itemSubtitle} numberOfLines={2}>{command.description}</Text>
+                        {props.pendingImageCount > 0 && command.images !== true && (
+                          <Text style={styles.itemWarning}>{t('plus.commandRejectsImages')}</Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
               </>
             )}
             {tab === 'attachments' && (
@@ -188,6 +211,13 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
             )}
             {tab === 'references' && (
               <>
+                <TextInput
+                  style={styles.search}
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder={t('plus.searchReferences')}
+                  placeholderTextColor={colors.textDim}
+                />
                 <StatusLine status={props.referenceStatus} error={props.referenceStatus === 'failed' ? t('plus.referencesFailed') : ''} onRetry={props.onReloadCommands} />
                 {filteredReferences.length === 0 && props.referenceStatus === 'ready' && (
                   <Text style={styles.meta}>{t('plus.noReferences')}</Text>
