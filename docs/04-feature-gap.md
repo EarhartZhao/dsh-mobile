@@ -168,7 +168,7 @@
 | 模型选择 | ✅ session.models + session.selectModel | ● | 会话页模型 chip、provider 分组和 effort 子菜单已接入 |
 | Agent preset | ✅ agentPreset.list/select + summary.agentPreset | ● | 新会话选择、`+` 菜单切换和元信息展示已接入 |
 | 子代理面板 | ✅ subagent.list/history/prompt/interrupt + lineage 事件 | ● | 子代理列表、查看/继续/打断已接入 |
-| 技能 /skill | ✅ skill.list（白名单已有） | ● | 输入 `/` 与 `+` 面板的「命令」tab 是同一个上拉弹框，落点即该 tab；子智能体会话没有自己的命令表，只显示原因说明 |
+| 技能 /skill | ✅ skill.list（白名单已有） | ● | 输入 `/` 与 `+` 面板的「命令」tab 是同一个上拉弹框，落点即该 tab；子智能体会话里这个弹框和 `/`、`@` 触发都不存在（命令由父会话执行，输入框只发文字） |
 | 权限预设 | ✅ settings.mutate（permission 命名空间） | ● | chips、当前项和 Full access 确认已接入 |
 
 ### D. 工作区/文件面（中价值，契约已有）

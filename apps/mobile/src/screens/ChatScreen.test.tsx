@@ -78,7 +78,13 @@ function setup() {
     // The screen re-reads its tail on every establish pass; no reconnect
     // happens inside one test case, so the subscription only needs to exist.
     on: jest.fn(() => () => undefined),
-    client: { sessions: { history, models: jest.fn(async () => refusal('stub')) } },
+    client: {
+      sessions: { history, models: jest.fn(async () => refusal('stub')) },
+      // The composer's own sheets read these the moment a trigger opens one.
+      commands: { list: jest.fn(async () => ({ commands: [] })) },
+      catalog: { skills: jest.fn(async () => ({ skills: [] })) },
+      references: { files: jest.fn(async () => []), sessions: jest.fn(async () => []) },
+    },
   } as unknown as ConnectionManager
   return { manager, history }
 }
@@ -122,6 +128,13 @@ function composer(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance 
   return tree.root.findAll(node =>
     typeof node.props.onChangeText === 'function'
     && node.props.placeholder === 'chat.sendPlaceholder').at(-1)
+}
+
+/** Whether a search field carrying this i18n placeholder is on screen. */
+function hasField(tree: renderer.ReactTestRenderer, placeholder: string): boolean {
+  return tree.root.findAll(node =>
+    typeof node.props.onChangeText === 'function'
+    && node.props.placeholder === placeholder).length > 0
 }
 
 /**
@@ -806,5 +819,50 @@ describe('ChatScreen subagent conversation', () => {
     expect(composer(tree)?.props.value).toBe('')
     back()
     expect(onBack).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('ChatScreen composer triggers', () => {
+  it('keeps a subagent conversation text-only', async () => {
+    const { manager } = setupChild('continuable')
+    const tree = render(manager, 'child')
+    await settle()
+
+    // The attach circle is the sheet's only door in this conversation, and it
+    // is gone.
+    expect(pressableByLabel(tree, 'chat.add')).toBeUndefined()
+
+    // `/` and `@` stay text: a child's commands are its parent's, and a mention
+    // would only earn a refusal from the child domain.
+    act(() => { composer(tree)?.props.onChangeText('/compact') })
+    await settle()
+    expect(hasField(tree, 'plus.searchCommands')).toBe(false)
+    expect(composer(tree)?.props.value).toBe('/compact')
+
+    act(() => { composer(tree)?.props.onChangeText('@reports') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+  })
+
+  it('opens the sheet from a typed trigger in a top-level chat, on that tab', async () => {
+    const { manager } = setup()
+    const tree = render(manager, 's1')
+    await settle()
+    expect(pressableByLabel(tree, 'chat.add')).toBeDefined()
+
+    act(() => { composer(tree)?.props.onChangeText('/') })
+    await settle()
+    expect(hasField(tree, 'plus.searchCommands')).toBe(true)
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+
+    // The modal owns the screen from here, so the other trigger gets its own
+    // open — the sheet seeds its tab once, when it becomes visible.
+    act(() => { pressableRendering(tree, 'common.close')?.props.onPress() })
+    const other = render(setup().manager, 's1')
+    await settle()
+    act(() => { composer(other)?.props.onChangeText('@') })
+    await settle()
+    expect(hasField(other, 'plus.searchReferences')).toBe(true)
+    expect(hasField(other, 'plus.searchCommands')).toBe(false)
   })
 })

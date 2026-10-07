@@ -355,9 +355,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   /**
    * Trailing-token detection: `/` opens the commands tab, `@` the references
    * tab, both in the same sheet the attach button opens (ui-input-trigger lite).
+   * A child conversation has no sheet to open, so there the token stays plain
+   * text — `/compact` typed at a child is a message, not a command.
    */
   const onDraftChange = (text: string): void => {
     setDraft(text)
+    if (textOnlyComposer) return
     const token = activeComposerToken(text)
     if (token === null) {
       dismissedTrigger.current = null
@@ -950,6 +953,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const composerReadOnly: 'one-shot' | 'unknown' | null = !isSubagentSession || subagentMode === 'continuable'
     ? null
     : subagentMode === 'one-shot' ? 'one-shot' : 'unknown'
+  /**
+   * A child's composer sends text and nothing else. Its commands are the
+   * parent's, it has no queue, and every attachment the attach sheet offers is
+   * either refused (`chat.subagentNoFiles`) or belongs to a Session it is not.
+   * So the sheet — and the `/` and `@` triggers that open it — is gone from
+   * this conversation: the composer is the field and the send circle.
+   */
+  const textOnlyComposer = isSubagentSession
 
   /**
    * Ask the parent for its catalog when this client has not read that
@@ -1296,10 +1307,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * prop: a draft, a picked image, an uploaded file or a queued-prompt edit all
    * give the composer something to submit — the same rule the web applies when
    * it dims the button at 0.4.
+   *
+   * A child conversation only ever has the draft: it cannot stage an image or a
+   * file, and an empty composer there has nothing to send.
    */
   const canSubmit = draft.trim() !== ''
-    || pendingImages.length > 0
-    || pendingFiles.some(file => file.status === 'ready')
+    || (!textOnlyComposer && (pendingImages.length > 0 || pendingFiles.some(file => file.status === 'ready')))
     || editingItem !== null
 
   const canRateMessages = (manager.compatibility?.features ?? []).includes('message-feedback')
@@ -2218,7 +2231,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           {/* The web's control row: the attach circle pins left, the send
               circle right, and the two never move the draft's own geometry. */}
           <View style={styles.composerRow}>
-            {editingItem === null && (
+            {editingItem === null && !textOnlyComposer && (
               <TouchableOpacity
                 style={styles.addButton}
                 hitSlop={8}
@@ -2358,7 +2371,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         visible={plusOpen}
         initialTab={sheetTab}
         initialQuery={sheetQuery}
-        commandsUnavailable={isSubagentSession ? t('plus.commandsSubagent') : undefined}
         commands={commands}
         commandStatus={commandStatus}
         commandError={commandError}

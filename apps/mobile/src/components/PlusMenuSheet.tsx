@@ -37,12 +37,6 @@ interface Props {
   /** Tab to open on, and the query to seed its search with, for a typed trigger. */
   initialTab?: PlusTab
   initialQuery?: string
-  /**
-   * Why this conversation has no command list at all, when it has none — a
-   * subagent child owns no command registry, and asking would only produce a
-   * Host refusal where the reason belongs.
-   */
-  commandsUnavailable?: string
   commands: PlusCommand[]
   commandStatus: PlusMenuStatus
   commandError: string
@@ -148,40 +142,34 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
           <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} keyboardShouldPersistTaps="handled">
             {tab === 'commands' && (
               <>
-                {props.commandsUnavailable !== undefined ? (
-                  <Text style={styles.meta}>{props.commandsUnavailable}</Text>
-                ) : (
-                  <>
-                    <TextInput
-                      style={styles.search}
-                      value={query}
-                      onChangeText={setQuery}
-                      placeholder={t('plus.searchCommands')}
-                      placeholderTextColor={colors.textDim}
-                    />
-                    <StatusLine status={props.commandStatus} error={props.commandError} onRetry={() => props.onReloadCommands()} />
-                    {props.commandStatus === 'ready' && props.commandError !== '' && (
-                      <Text style={styles.itemWarning}>{props.commandError}</Text>
-                    )}
-                    {props.commandStatus === 'ready' && filteredCommands.length === 0 && (
-                      <Text style={styles.meta}>{t('plus.noCommands')}</Text>
-                    )}
-                    {filteredCommands.map(command => (
-                      <TouchableOpacity
-                        key={command.name}
-                        style={styles.item}
-                        disabled={props.pendingImageCount > 0 && command.images !== true}
-                        onPress={() => props.onPickCommand(command)}
-                      >
-                        <Text style={styles.itemTitle}>/{command.name}</Text>
-                        <Text style={styles.itemSubtitle} numberOfLines={2}>{command.description}</Text>
-                        {props.pendingImageCount > 0 && command.images !== true && (
-                          <Text style={styles.itemWarning}>{t('plus.commandRejectsImages')}</Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </>
+                <TextInput
+                  style={styles.search}
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder={t('plus.searchCommands')}
+                  placeholderTextColor={colors.textDim}
+                />
+                <StatusLine status={props.commandStatus} error={props.commandError} onRetry={() => props.onReloadCommands()} />
+                {props.commandStatus === 'ready' && props.commandError !== '' && (
+                  <Text style={styles.itemWarning}>{props.commandError}</Text>
                 )}
+                {props.commandStatus === 'ready' && filteredCommands.length === 0 && (
+                  <Text style={styles.meta}>{t('plus.noCommands')}</Text>
+                )}
+                {filteredCommands.map(command => (
+                  <TouchableOpacity
+                    key={command.name}
+                    style={styles.item}
+                    disabled={props.pendingImageCount > 0 && command.images !== true}
+                    onPress={() => props.onPickCommand(command)}
+                  >
+                    <Text style={styles.itemTitle}>/{command.name}</Text>
+                    <Text style={styles.itemSubtitle} numberOfLines={2}>{command.description}</Text>
+                    {props.pendingImageCount > 0 && command.images !== true && (
+                      <Text style={styles.itemWarning}>{t('plus.commandRejectsImages')}</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
               </>
             )}
             {tab === 'attachments' && (
