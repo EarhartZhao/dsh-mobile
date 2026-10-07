@@ -4,7 +4,7 @@
  * Chunks never set state directly — the store batches and the 50ms throttle
  * bounds render frequency regardless of chunk rate (docs/01 移植策略).
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   ActivityIndicator,
@@ -552,6 +552,30 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     setInsertedRefs([])
     setEditingItem(null)
   }, [sessionId])
+
+  /**
+   * A conversation opens on its newest message, the way the Web's pane does.
+   *
+   * The screen outlives the Session it is showing — following a child
+   * conversation and coming back reuses this component — so the reader's place
+   * in the previous transcript would otherwise be carried into this one: a
+   * stale offset left them in the middle of the new transcript, or on its first
+   * screen with the answer below the fold, exactly where the follow scroll
+   * would never look because it only answers a content-size change.
+   *
+   * The reset runs in the commit that swaps the Session, before the new
+   * transcript's first layout can report a size: by the time the list measures
+   * itself there is nothing left to disagree with the follow scroll, and the
+   * transcript it drives is a fresh one (`key` on the list).
+   */
+  useLayoutEffect(() => {
+    listInteractionActive.current = false
+    listDistanceFromBottom.current = 0
+    // A frame the previous transcript had queued would pin this one to the
+    // previous transcript's bottom; dropping its height makes it a no-op.
+    pendingTailHeight.current = null
+    syncFollowTail(true)
+  }, [sessionId, syncFollowTail])
 
   const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
@@ -1914,6 +1938,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       <View style={styles.listWrap}>
         <FlatList
           ref={listRef}
+          // The transcript belongs to one Session: swapping conversations swaps
+          // the list itself, so no offset, measurement cache or armed anchor of
+          // the previous one survives into the new one. Without this the reader
+          // landed wherever the old offset happened to fall — mid-transcript, or
+          // on the first screen with the answer below the fold.
+          key={sessionId}
           data={listRows}
           keyExtractor={row => row.key}
           contentContainerStyle={styles.listContent}
@@ -2842,6 +2872,64 @@ function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessio
 const LONG_REPLY_LIMIT = 6000
 const REPLY_PREVIEW_LIMIT = 1200
 
+/**
+ * The opening of a reply too long to render whole, cut between Markdown blocks.
+ *
+ * A plain character slice can land inside a fenced block, and the renderer then
+ * reads every later line as code — an answer whose preview showed `## 来源代号`
+ * as literal text rather than a heading, which is what a folded sub-agent reply
+ * looked like. Cutting at the last line break inside the window, and closing a
+ * fence the window opened, keeps the preview reading as the same document.
+ * @param text - the reply's full source.
+ * @param limit - how many characters the preview may keep.
+ * @returns the preview's source, with an ellipsis marking the cut.
+ */
+function previewSource(text: string, limit: number): string {
+  const head = text.slice(0, limit)
+  const boundary = head.lastIndexOf('\n')
+  let body = boundary > limit / 2 ? head.slice(0, boundary) : head
+  if ((body.match(/^```/gm) ?? []).length % 2 === 1) body += '\n```'
+  return `${body.trimEnd()}…`
+}
+
+/**
+ * The prompt bubble's body: the prompt as written, with its own whitespace.
+ *
+ * The web's `.bubble` is `white-space: pre-wrap` over inline runs — a prompt
+ * shows the fenced block, the asterisks and the backticks exactly as typed, and
+ * never a code card. Running it through the Markdown renderer instead was not
+ * only a different look: a code card carries a horizontal ScrollView, and
+ * inside a bubble whose width is `maxWidth: '82%'` (an at-most measure, so
+ * percentages below resolve against an indefinite width) iOS measured the
+ * bubble's body six times too tall and three screens wide. A 1,667-character
+ * sub-agent prompt rendered as a 10,567pt empty box whose text was clipped on
+ * the right, which is what buried the answer under it.
+ */
+function PromptBubbleText({ text }: { text: string }): React.JSX.Element {
+  const { t } = useI18n()
+  const collapsible = text.length > LONG_REPLY_LIMIT
+  const [expanded, setExpanded] = useState(!collapsible)
+  if (!collapsible || expanded) {
+    return (
+      <>
+        {collapsible && (
+          <TouchableOpacity style={styles.replyToggle} onPress={() => setExpanded(false)}>
+            <Text style={styles.replyToggleText}>{t('chat.replyCollapse')}</Text>
+          </TouchableOpacity>
+        )}
+        <Text style={styles.userBubbleText}>{text}</Text>
+      </>
+    )
+  }
+  const preview = previewSource(text, REPLY_PREVIEW_LIMIT)
+  return (
+    <TouchableOpacity style={styles.replyPreview} onPress={() => setExpanded(true)} accessibilityRole="button">
+      <Text style={styles.userBubbleText}>{preview}</Text>
+      <Text style={styles.replyToggleText}>{t('chat.replyExpand', { count: text.length })}</Text>
+    </TouchableOpacity>
+  )
+}
+
 function CollapsibleMarkdown({ text, onOpenLink }: {
   text: string
   /**
@@ -2889,10 +2977,24 @@ function CollapsibleMarkdown({ text, onOpenLink }: {
     )
   }
 
-  const preview = text.slice(0, REPLY_PREVIEW_LIMIT).trimEnd()
+  // The preview is the answer's own opening, rendered: a reply too long to draw
+  // whole still has to read as the answer the model wrote rather than as its
+  // Markdown source. Taps belong to the row that expands it, so the body takes
+  // no pointers of its own.
+  const preview = previewSource(text, REPLY_PREVIEW_LIMIT)
   return (
     <TouchableOpacity style={styles.replyPreview} onPress={() => setExpanded(true)} accessibilityRole="button">
-      <Text style={styles.replyPreviewText} numberOfLines={12}>{preview}{preview.length < text.length ? '…' : ''}</Text>
+      <View style={styles.replyPreviewBody} pointerEvents="none">
+        <Markdown
+          style={markdownStyles}
+          rules={markdownRules}
+          {...onOpenLink === undefined
+            ? {}
+            : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+        >
+          {preview}
+        </Markdown>
+      </View>
       <Text style={styles.replyToggleText}>{t('chat.replyExpand', { count: text.length })}</Text>
     </TouchableOpacity>
   )
@@ -3031,7 +3133,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
             </View>
           )}
           <TouchableOpacity activeOpacity={1} style={styles.userBubble} onLongPress={onLongPress}>
-            <CollapsibleMarkdown text={item.text} onOpenLink={onOpenLink} />
+            <PromptBubbleText text={item.text} />
           </TouchableOpacity>
           {actions}
         </View>
@@ -3290,6 +3392,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(4),
     paddingVertical: 10,
   },
+  /**
+   * The web's `.bubble` type: 14/22 body copy, one step tighter than the
+   * answer's 14/24 so a prompt reads as a single quoted line.
+   */
+  userBubbleText: { color: chat.labelPrimary, fontSize: 14, lineHeight: 22 },
   userAttachments: { alignSelf: 'flex-end', alignItems: 'flex-end', gap: spacing(2), maxWidth: '82%' },
   userAttachment: { width: 240, maxWidth: '100%', borderRadius: radius.lg },
   /**
@@ -3420,7 +3527,8 @@ const styles = StyleSheet.create({
   deliveredName: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
   deliveredDescription: { color: colors.textDim, fontSize: fontSize.tiny, lineHeight: 16 },
   replyPreview: { borderRadius: radius.card, backgroundColor: colors.bgElevated, paddingHorizontal: spacing(1.5), paddingVertical: spacing(1) },
-  replyPreviewText: { color: colors.text, fontSize: fontSize.small, lineHeight: 20 },
+  /** The preview shows the answer's own opening, clipped to a screenful. */
+  replyPreviewBody: { maxHeight: 320, overflow: 'hidden' },
   replyToggle: { alignSelf: 'flex-start', paddingVertical: spacing(0.5) },
   replyToggleText: { color: colors.accent, fontSize: fontSize.tiny },
   compactionRow: {

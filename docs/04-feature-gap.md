@@ -118,6 +118,18 @@
 > `sessionId` 变化时重置一次性闩锁与输入框（草稿、引用 chip、待发图片都属于写下它们的那个会话）；
 > 子会话头部的「父会话」行按标题显示，也可点回父会话。
 
+> 2026-10-07 追加（子智能体会话看到底）：子会话的记录一直是完整的，看不到回答是渲染问题——
+> 用户气泡之前走 Markdown 渲染器，提示词里的 ``` 代码块因此变成带横向 ScrollView 的代码卡，
+> 而气泡宽度是 `maxWidth: '82%'` 这样的 at-most 约束，iOS 把它量成了六倍高、三屏宽的空盒
+> （1667 字的提示词量出 10567pt），正文只露顶部几行、右侧被切，把下面的回答整个顶出屏幕。
+> 现在气泡正文是 `white-space: pre-wrap` 的纯文本，与 Web 的 `.bubble` 同源（`projectUserText`
+> 发的是 inline runs，不是文档），超过 6000 字仍可折叠；长回答的折叠预览也改为**渲染后的**
+> Markdown，并按块边界截断（未闭合的围栏补上闭合），不再是裸源码。
+> 另外，`FlatList` 现在按 `sessionId` 换 `key`：换会话就是换一份 transcript，上一份的
+> offset、测量缓存和已armed 的 anchor 都不会带过来；尾随状态在换会话的那次 commit 里
+>（`useLayoutEffect`）就复位，早于新 transcript 的第一次布局，因此进子会话/回父会话都落在
+> 最新一条消息上。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

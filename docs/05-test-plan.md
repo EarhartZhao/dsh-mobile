@@ -262,3 +262,36 @@
 - 新增 `chat.questionStale` i18n key（中/英）。
 - 新增 `session-store.spec.ts` 的 `resolveQuestion` 测试（幂等清除、
   未知 session/rpcId 安全）。
+
+## 八、子智能体会话看不到回答（数据完整、渲染崩掉）
+
+用户在真机上报「App 里子 agent 的数据不全，dsh 端有完整 AI 回复，App 没有」。
+
+先核对数据链路，排除了传输：插件分页读出的 439 条 seq 无缺口，子会话
+transcript 为 `rows=[user 1667 字, assistant 8315 字]`，最终答案整段都到了
+客户端。问题在渲染：
+
+1. 子会话的提示词很长且含 ``` 围栏。用户气泡走 Markdown 渲染器后，围栏变成
+   代码卡（内含横向 `ScrollView`），而气泡是 `maxWidth: '82%'` 的 at-most
+   约束——百分比在没有确定宽度时解析，iOS 量出的气泡是 290×10567（正文实际
+   约 2068pt），文字右侧被裁，回答被推到屏幕之外，看上去就是「AI 没回复」。
+2. 超长回答的折叠预览用 `text.slice(0, 1200)` 的裸源码，`##`、`**`、链接
+   URL 原样露出，和 Web 的观感不一致。
+3. 换会话时列表沿用上一份 transcript 的 offset/测量缓存，可能停在顶部。
+
+修复：
+
+- 用户气泡正文改为纯文本（`white-space: pre-wrap` 语义），与 Web 的
+  `.bubble` + `projectUserText`（inline runs）一致；超长提示词保留折叠/展开。
+- 折叠预览改为渲染 Markdown，并按块边界截断、补闭合围栏（`previewSource`）。
+- `FlatList` 按 `sessionId` 换 `key`（换会话即换列表），并由 `useLayoutEffect`
+  在这次 commit 内复位尾随状态，早于新 transcript 的第一次布局。
+- 新增回归用例：`draws a sub-agent prompt as the text that was sent, and its
+  answer as Markdown`、`opens the next conversation at its newest row, not
+  where the reader left the last one`（后者在去掉尾随复位后确实失败）。
+
+验证：iPhone 17 Pro 模拟器（iOS 26.5）实机走查两轮——父会话 ↔ 两个子会话
+互相切换都落在最新一条消息，两个子会话的 8315 / 9430 字回答都可「展开完整
+回复」后完整渲染；`pnpm run typecheck`、`pnpm run lint`（0 error）、
+`pnpm run test`（222 passed）与 workspace `pnpm run test`（core 161 passed）
+全绿。

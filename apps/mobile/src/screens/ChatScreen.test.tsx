@@ -9,6 +9,7 @@ import React from 'react'
 import renderer, { act } from 'react-test-renderer'
 import { FlatList } from 'react-native'
 import { SafeAreaProvider, type Metrics } from 'react-native-safe-area-context'
+import Markdown from 'react-native-markdown-display'
 import { SessionStore, type ConnectionManager } from '@dsh-mobile/core'
 import { RpcId } from '@dsh-mobile/protocol'
 
@@ -100,6 +101,18 @@ function screenText(tree: renderer.ReactTestRenderer): string {
   }
   walk(tree.root)
   return parts.join('|')
+}
+
+/**
+ * The sources handed to the Markdown renderer.
+ *
+ * Which rows go through it is the assertion: a prompt is a pre-wrap run of the
+ * text that was sent, while an answer is the document the model wrote.
+ */
+function markdownSources(tree: renderer.ReactTestRenderer): string[] {
+  return tree.root
+    .findAll(node => (node.type as unknown) === Markdown)
+    .map(node => String(node.props.children))
 }
 
 const trees: renderer.ReactTestRenderer[] = []
@@ -462,6 +475,39 @@ describe('ChatScreen tail following', () => {
     expect(toEnd).not.toHaveBeenCalled()
     expect(list.props.maintainVisibleContentPosition).toBeUndefined()
   })
+
+  it('opens the next conversation at its newest row, not where the reader left the last one', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValue(okPage())
+    const tree = render(manager)
+    await settle()
+
+    // The reader parks themselves in the middle of the first conversation, so
+    // the tail is theirs no longer and the anchor is holding their place.
+    const first = scrollCommands(tree)
+    act(() => { first.list.props.onLayout(listLayout(800)) })
+    act(() => { first.list.props.onScrollBeginDrag() })
+    act(() => { first.list.props.onScroll(scrollTo(200, 2_000, 800)) })
+    act(() => { first.list.props.onScrollEndDrag() })
+    await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 200)) })
+    expect(first.list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
+
+    // A hop down the lineage swaps the conversation under the same screen.
+    renderSession(tree, manager, 'child', jest.fn())
+    await settle()
+
+    // The new transcript is a fresh one that opens on its tail: the anchor is
+    // unarmed again, and the first size it reports is followed to the bottom.
+    // Carried over, the reader's old place left them on the first screen of a
+    // conversation whose answer sat below the fold.
+    const next = scrollCommands(tree)
+    expect(next.list.props.maintainVisibleContentPosition).toBeUndefined()
+    act(() => { next.list.props.onLayout(listLayout(800)) })
+    act(() => { next.list.props.onContentSizeChange(390, 3_000) })
+    await frame()
+
+    expect(next.toOffset.mock.calls).toEqual([[{ offset: 2_200, animated: false }]])
+  })
 })
 
 /**
@@ -789,6 +835,43 @@ describe('ChatScreen subagent conversation', () => {
     expect(screenText(tree)).toContain('subagent.readOnly.oneShotBody')
     // The draft it would have taken is gone with the composer.
     expect(screenText(tree)).not.toContain('chat.sendPlaceholder')
+  })
+
+  it('draws a sub-agent prompt as the text that was sent, and its answer as Markdown', async () => {
+    const { manager, subagentHistory } = setupChild('continuable')
+    const prompt = '补齐细分行业数据。\n\n'
+      + '```\ncurl -sSL -m 40 --compressed -H \'User-Agent: Mozilla/5.0\' "URL" -o /tmp/f.html\n```\n\n'
+      + '**注意**：不要用 pip 安装包。'
+    const answer = '## 已停止检索\n\n以下为本轮已确认的数据汇总（全部来自重庆市统计局官方发布）。'
+    const transcript = {
+      events: [
+        {
+          event: {
+            type: 'user/message', seq: 1, time: 1,
+            data: { content: [{ type: 'text', text: prompt }] },
+          },
+        },
+        {
+          event: {
+            type: 'assistant/message', seq: 2, time: 2,
+            data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: answer }] } },
+          },
+        },
+      ],
+      hasMore: false,
+    } as unknown as ReturnType<typeof page>
+    subagentHistory.mockResolvedValue(okHistory(transcript))
+    const tree = render(manager, 'child')
+    await settle()
+
+    // A prompt is pre-wrap text, the way the Web's bubble renders it. Sent
+    // through the Markdown renderer instead, its fenced block became a code
+    // card carrying a horizontal ScrollView, and inside a bubble whose width is
+    // an at-most `maxWidth: '82%'` that measured the prompt several times too
+    // tall and too wide — the answer below it was clipped off the screen, which
+    // read as a sub-agent that answered nothing.
+    expect(screenText(tree)).toContain(prompt)
+    expect(markdownSources(tree)).toEqual([answer])
   })
 
   it('takes a back press again after the screen is handed another conversation', async () => {
