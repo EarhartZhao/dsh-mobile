@@ -53,7 +53,20 @@ export type ConversationItem =
    * the web renders that gap as its "preparing" row, and so does this client.
    * Transient: superseded by the `tool/call` for the same callId.
    */
-  | { kind: 'preparing'; key: string; seq: number; time: number; callId: string; name: string }
+  | {
+      kind: 'preparing'
+      key: string
+      seq: number
+      time: number
+      callId: string
+      name: string
+      /**
+       * Bytes of argument text streamed so far. The web's preparing row for a
+       * file mutation reports them as `正在准备内容 NKB`, which is the only
+       * sign of progress a long `write` gives before it is dispatched.
+       */
+      argsLength: number
+    }
   /**
    * Turn boundaries. Not rendered: they carry the exact start time and the end
    * reason a turn's process header reports ("用时 3 分 12 秒" / "已停止").
@@ -303,7 +316,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
    * the same id supersedes the entry, and a closing turn drops whatever is left:
    * a cancelled stream must not leave a phantom "preparing" row on screen.
    */
-  const preparing = new Map<string, { seq: number; time: number; turn: number; step: number; callId: string; name: string }>()
+  const preparing = new Map<string, { seq: number; time: number; turn: number; step: number; callId: string; name: string; argsLength: number }>()
   const finalizedSteps = new Set<string>()
   const tools = new Map<string, ConversationItem & { kind: 'tool' }>()
   const toolTurns = new Map<string, number>()
@@ -458,8 +471,18 @@ export function deriveConversation(session: SessionState, options: ConversationO
         if (chunk['type'] === 'tool-call-delta') {
           const callId = typeof chunk['id'] === 'string' || typeof chunk['id'] === 'number' ? String(chunk['id']) : ''
           const name = typeof chunk['name'] === 'string' ? chunk['name'] : ''
-          if (callId !== '' && name !== '' && !tools.has(callId) && !preparing.has(callId)) {
-            preparing.set(callId, { seq, time, turn, step, callId, name })
+          const delta = typeof chunk['argumentsDelta'] === 'string' ? chunk['argumentsDelta'] : ''
+          const announced = callId === '' ? undefined : preparing.get(callId)
+          if (callId !== '' && !tools.has(callId)) {
+            // The first delta names the call; the rest only stream its
+            // arguments, so a later delta adds to the row rather than dropping.
+            if (announced === undefined) {
+              if (name !== '') {
+                preparing.set(callId, { seq, time, turn, step, callId, name, argsLength: delta.length })
+              }
+            } else if (delta !== '') {
+              announced.argsLength += delta.length
+            }
           }
           break
         }
@@ -617,6 +640,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
         time: entry.time,
         callId: entry.callId,
         name: entry.name,
+        argsLength: entry.argsLength,
       })
     }
   }

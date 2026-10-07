@@ -160,6 +160,24 @@ export function reasoningPreview(text: string): string {
 }
 
 /**
+ * The collapsed summary of a settled reasoning block: the first line of the
+ * whole text, `**` emphasis stripped.
+ *
+ * The web reads a block two ways — the newest completed paragraph while it is
+ * still the streaming tail ({@link reasoningPreview}), and the block's own
+ * first line once it settles (`firstLine` in `ReasoningRow.tsx`). The first
+ * line is where a finished thought starts, which is what a reader reopening a
+ * turn wants to be reminded of.
+ * @param text - complete reasoning text.
+ * @returns the summary line, empty when the text opens with a blank line.
+ */
+export function reasoningSettledPreview(text: string): string {
+  const newline = text.indexOf('\n')
+  const line = newline === -1 ? text : text.slice(0, newline)
+  return line.replace(/\*\*/g, '').trim()
+}
+
+/**
  * The detail a group falls back to with no running tool: the last nonempty
  * paragraph of the latest running reasoning. `**` emphasis is stripped because
  * the header renders plain text.

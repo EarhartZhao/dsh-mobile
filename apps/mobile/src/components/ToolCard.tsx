@@ -12,13 +12,18 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, spacing } from '../theme'
 import { AttachmentImage } from './AttachmentImage'
-import { toolDisplayName, toolRowVariant, type ToolRowVariant } from '../ui-labels'
+import { toolDisplayName, toolResultSummary, toolRowSummary, toolRowVariant, toolTitleIsGeneric, type ToolRowVariant } from '../ui-labels'
 import { cardRenderer, isRecord, Mono, MonoActionRow, type Translate } from './tool-cards'
 import { useI18n } from '../i18n'
 import { Icon, type IconName } from '../icons'
 
-/** Variant leading glyphs, the web's table: every glyph renders at 14 in a 16 box. */
-const VARIANT_ICONS: Record<ToolRowVariant, IconName> = {
+/**
+ * Variant leading glyphs, the web's table: every glyph renders at 14 in a 16
+ * box. Exported because a process row that has no card of its own (an announced
+ * call, still streaming its arguments) shows the same variant glyph and title
+ * it will keep once it is dispatched.
+ */
+export const VARIANT_ICONS: Record<ToolRowVariant, IconName> = {
   search: 'SearchOutline',
   read: 'BrowseOutline',
   bash: 'ApiOutline',
@@ -68,10 +73,35 @@ function shortText(value: string, limit = 140): string {
 }
 
 /**
- * The summary the row uses when the card has no summary facet: what the call
- * produced, else what it was asked to do, else how much it delegated.
+ * The summary a tool *row* uses when its card has no summary facet of its own.
+ *
+ * The Web derives a tool row's summary from the call's *arguments* — the
+ * description it was given, the path it targets, the word it searches for — so
+ * a row reads as what the call is doing rather than as a dump of what came back
+ * (`deriveSummary` in `tool-call-model.ts`). Entity lists are the one family
+ * that reads its result instead, because "2 个智能体" is the answer a list call
+ * exists to give; a generic row, whose tool this build has no vocabulary for, is
+ * named by its wire tool name first, exactly as the Web's own join does.
  */
-function fallbackSummary(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
+function rowSummary(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
+  const counted = toolResultSummary(item.name, item.resultText, t)
+  if (counted !== undefined) return counted
+  const derived = toolRowSummary(item.name, item.args)
+  const base = derived !== '' ? derived : item.args === '' ? item.callId : ''
+  const line = [toolTitleIsGeneric(item.name) ? item.name : '', base].filter(part => part !== '').join(' · ')
+  if (line !== '') return shortText(line)
+  if (item.subCalls.length > 0) return t('tools.subCallsCount', { count: item.subCalls.length })
+  return t('tools.tapToExpand')
+}
+
+/**
+ * The standalone card's own fallback, deliberately not the row model: a card no
+ * `summary` facet names shows what the call produced. A reader who has to expand
+ * a card to find out what it did would be reading an argument dump they never
+ * asked for, so this surface keeps printing the result it is holding while the
+ * transcript's own rows take the Web's argument-derived summary.
+ */
+function cardSummary(item: ConversationItem & { kind: 'tool' }, t: Translate): string {
   if (item.resultText !== '') return shortText(item.resultText)
   if (item.args !== '') return shortText(item.args)
   if (item.subCalls.length > 0) return t('tools.subCallsCount', { count: item.subCalls.length })
@@ -129,7 +159,11 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
   const title = labels.map(candidate => cardRenderer(candidate).title?.(candidate))
     .find(candidate => candidate !== undefined) ?? toolDisplayName(item.name, t)
   const meta = [...new Set(labels.flatMap(candidate => cardRenderer(candidate).meta?.(candidate, t) ?? []))]
-  const summary = (view === null ? undefined : card.summary?.(view, t)) ?? fallbackSummary(item, t)
+  // The two surfaces answer the summary question differently on purpose: the
+  // transcript's row takes the Web's argument-derived model, the standalone card
+  // keeps printing what the call produced.
+  const summary = (view === null ? undefined : card.summary?.(view, t))
+    ?? (bare ? rowSummary(item, t) : cardSummary(item, t))
   const locations = locationLines(item)
   // `body` returning nothing means "no structure to show": fall back to the raw
   // result text, which is what a reader can act on.

@@ -4,7 +4,7 @@
  * Chunks never set state directly — the store batches and the 50ms throttle
  * bounds render frequency regardless of chunk rate (docs/01 移植策略).
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   ActivityIndicator,
@@ -29,6 +29,7 @@ import {
   View,
 } from 'react-native'
 import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
+import { subagentAddress, subagentRows, type SubagentAddress } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -40,22 +41,23 @@ import { CandidateMenu, type Candidate } from '../components/CandidateMenu'
 import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { linkTarget } from '../link-targets'
-import { markdownRules, markdownStyles } from '../markdown'
+import { markdownCompactStyles, markdownRules, markdownStyles } from '../markdown'
 import { extensionOf } from '../file-kinds'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
 import { ImageLightbox } from '../components/ImageLightbox'
 import { MessageActionRow } from '../components/MessageActions'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { PromptModal } from '../components/PromptModal'
-import { ToolCard } from '../components/ToolCard'
+import { ToolCard, VARIANT_ICONS } from '../components/ToolCard'
 import { WorkspaceBrowserSheet } from '../components/WorkspaceBrowserSheet'
 import { PlusMenuSheet, type PlusCommand, type PlusMenuStatus, type PlusPreset, type PlusReference } from '../components/PlusMenuSheet'
 import { QuestionCard, type QuestionAnswerPayload } from '../components/QuestionCard'
 import { SubagentPanel } from '../components/SubagentPanel'
+import { SubagentSwitcher } from '../components/SubagentSwitcher'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { chat, chatText, colors, fontSize, radius, shadow, spacing } from '../theme'
 import whale from '../assets/running-whale.png'
-import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, toolDisplayName } from '../ui-labels'
+import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, toolDisplayName, toolRowVariant } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
 import { appendPendingImage, buildPromptContent, formatBytes, type ImageLimitsView, type ImageRejection, type PendingImage } from '../chat-images'
@@ -261,6 +263,23 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
+  /** The header switcher's own dropdown, distinct from the full panel. */
+  const [lineageOpen, setLineageOpen] = useState(false)
+  /**
+   * The switcher's clock. A child that is running shows how long its open turn
+   * has taken, so the list re-renders once a second while — and only while —
+   * that list is on screen with live work in it.
+   */
+  const [subNow, setSubNow] = useState(() => Date.now())
+  /**
+   * The mode this conversation was created with, learned by asking its parent
+   * for the catalog when the store had not carried that projection yet. Held
+   * with the parent it was read for, so a screen that changes Session cannot
+   * address the new one with the old one's mode.
+   */
+  const [catalogedMode, setCatalogedMode] = useState<
+    { parentSessionId: string, mode: 'one-shot' | 'continuable' } | null
+  >(null)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [browserOpen, setBrowserOpen] = useState(false)
   /** References picked from the browser, shown as composer chips. */
@@ -878,6 +897,74 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const connection = manager.client
 
   /**
+   * This conversation's durable subagent address, when it is a child.
+   *
+   * A child is not addressable as a Session — the Host answers such a read with
+   * "subagent Sessions require their durable parent address" — so a reader that
+   * followed one out of the header switcher has to name the parent and the mode
+   * the child was created with before its transcript can be read at all. The
+   * list carries the parent; the parent's own `subagentCatalog` carries the
+   * mode. Until both are known the read waits, because the mode is part of the
+   * address and a guessed one is refused rather than ignored.
+   */
+  const subagentParentId = ((): string | null => {
+    const row = manager.store.summaries.find(summary => String(summary.sessionId) === sessionId)
+    return typeof row?.parentSessionId === 'string' && row.parentSessionId !== ''
+      ? row.parentSessionId
+      : null
+  })()
+  const storeAddress = subagentParentId === null ? null : subagentAddress(manager.store, sessionId)
+  const subagentMode: 'one-shot' | 'continuable' | null = storeAddress?.mode
+    ?? (catalogedMode?.parentSessionId === subagentParentId ? catalogedMode.mode : null)
+  // Memoized on the three primitives that make it: the read callbacks take this
+  // as a dependency, and a fresh object every render would restart the tail
+  // read on every render.
+  const subagentReadAddress = useMemo<SubagentAddress | null>(
+    () => subagentParentId !== null && subagentMode !== null
+      ? { parentSessionId: subagentParentId, childSessionId: sessionId, mode: subagentMode }
+      : null,
+    [sessionId, subagentMode, subagentParentId],
+  )
+  /** This conversation is a subagent child, whether or not its mode is known. */
+  const isSubagentSession = subagentParentId !== null
+  /** The read may start: a top-level Session always, a child once addressed. */
+  const historyReady = !isSubagentSession || subagentMode !== null
+  /**
+   * Why this conversation's composer is read-only, when it is — the Web swaps
+   * the whole composer for that explanation. A one-shot child never accepts a
+   * follow-up, and a child whose mode this client cannot read has no address to
+   * send one through either, so both states explain themselves instead of
+   * offering a box whose send the Host would refuse.
+   */
+  const composerReadOnly: 'one-shot' | 'unknown' | null = !isSubagentSession || subagentMode === 'continuable'
+    ? null
+    : subagentMode === 'one-shot' ? 'one-shot' : 'unknown'
+
+  /**
+   * Ask the parent for its catalog when this client has not read that
+   * projection yet — the mode is in there, and nothing else carries it. One
+   * request per parent, and a failure leaves the transcript read-only rather
+   * than spending a read the Host would refuse.
+   */
+  const catalogAsk = useRef<string | null>(null)
+  useEffect(() => {
+    if (subagentParentId === null || subagentMode !== null) return
+    const client = manager.client
+    const ask = `${subagentParentId}:${sessionId}`
+    if (client === null || catalogAsk.current === ask) return
+    catalogAsk.current = ask
+    let live = true
+    void client.subagents.list({ parentSessionId: subagentParentId } as never).then((result) => {
+      if (!live || result?.result.ok !== true) return
+      const entry = result.result.value.entries
+        .find(row => row.kind === 'child' && String(row.id) === sessionId)
+      if (entry === undefined || entry.kind !== 'child') return
+      setCatalogedMode({ parentSessionId: subagentParentId, mode: entry.mode })
+    }).catch(() => undefined)
+    return () => { live = false }
+  }, [manager, sessionId, subagentMode, subagentParentId])
+
+  /**
    * The tail read that fills this Session's transcript.
    *
    * A failed read used to be swallowed whole: the screen stayed blank and the
@@ -888,12 +975,23 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     // No connection yet: the caller keeps the loading state, and the read is
     // retried when one arrives (the connection is a dependency below).
     if (connection === null) return
+    // A child whose mode is still being read has no address yet, so there is
+    // nothing to ask: the effect that owns this read re-runs when it lands.
+    if (!historyReady) return
+    const address = subagentReadAddress
     const request = ++historyRequest.current
     setHistoryStatus('loading')
     setHistoryError('')
     try {
       const page = await readHistoryPage(async maxMessages => {
-        const result = await connection.sessions.history({ sessionId, maxMessages } as never)
+        const result = address === null
+          ? await connection.sessions.history({ sessionId, maxMessages } as never)
+          : await connection.subagents.history({
+            parentSessionId: address.parentSessionId,
+            childSessionId: address.childSessionId,
+            mode: address.mode,
+            maxMessages,
+          } as never)
         if (!result.result.ok) throw new Error(result.result.error.message)
         return result.result.value
       })
@@ -911,7 +1009,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       setHistoryStatus('error')
       setHistoryError(error instanceof Error ? error.message : String(error))
     }
-  }, [connection, manager, sessionId])
+  }, [connection, historyReady, manager, sessionId, subagentReadAddress])
 
   /**
    * One page further back, applied to the store.
@@ -922,9 +1020,18 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const client = manager.client
     const beforeSeq = oldestSeq(manager.store.sessions.get(sessionId))
     if (client === null || beforeSeq === undefined || !hasMoreRef.current) return null
+    const address = subagentReadAddress
     try {
       const page = await readHistoryPage(async maxMessages => {
-        const result = await client.sessions.history({ sessionId, beforeSeq, maxMessages } as never)
+        const result = address === null
+          ? await client.sessions.history({ sessionId, beforeSeq, maxMessages } as never)
+          : await client.subagents.history({
+            parentSessionId: address.parentSessionId,
+            childSessionId: address.childSessionId,
+            mode: address.mode,
+            beforeSeq,
+            maxMessages,
+          } as never)
         if (!result.result.ok) throw new Error(result.result.error.message)
         return result.result.value
       })
@@ -942,7 +1049,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       showNotice(t('chat.historyFailed', { message: error instanceof Error ? error.message : String(error) }))
       return null
     }
-  }, [manager, sessionId, showNotice, t])
+  }, [manager, sessionId, showNotice, subagentReadAddress, t])
 
   /**
    * Pull the rest of the log, one page at a time.
@@ -1267,6 +1374,40 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
     const clientTimeZone = typeof tz === 'string' && (tz === 'UTC' || tz.includes('/')) ? tz : undefined
     if (clientTimeZone === undefined) console.warn('[prompt] non-IANA timeZone omitted:', tz)
+    // A continuable child takes human messages through its own domain: the
+    // Session methods refuse one with `agent-busy`, and what actually reaches
+    // the child's inbox is `subagent.prompt` under its durable parent address.
+    // It has no queue, so this is the one path here that is not a queue write.
+    const child = subagentReadAddress
+    if (child !== null && child.mode === 'continuable') {
+      if (readyFiles.length > 0) {
+        showNotice(t('chat.subagentNoFiles'))
+        setDraft(text)
+        return
+      }
+      const content = buildPromptContent(text, pendingImages, [])
+      let sent = false
+      try {
+        const result = await client.subagents.prompt({
+          parentSessionId: child.parentSessionId,
+          childSessionId: child.childSessionId,
+          mode: 'continuable',
+          content,
+          ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
+        } as never)
+        if (result.result.ok) sent = true
+        else showNotice(t('chat.sendFailed', { message: result.result.error.message }))
+      } catch (error) {
+        showNotice(t('chat.sendFailed', { message: error instanceof Error ? error.message : String(error) }))
+      }
+      if (!sent) {
+        setDraft(text)
+        return
+      }
+      setPendingImages([])
+      setPendingFiles([])
+      return
+    }
     let result: any = null
     const content = buildPromptContent(text, pendingImages, readyFiles.map(file => ({ receiptId: file.receiptId as string })))
     try {
@@ -1604,6 +1745,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const liveTurn = turns.at(-1)?.live === true ? turns.at(-1) : undefined
   /** What sits directly above the running line, for its separating rule. */
   const lastRow = listRows.at(-1)
+  /**
+   * The header switcher's rows, derived from exactly the projections the Web's
+   * catalog reads: the parent's durable `subagentCatalog`, each child's own
+   * `subagentTiming` / `tokenUsage` / `title`, and the Session list's liveness.
+   * Deriving beats fetching here — every one of those values already arrives on
+   * this client's own mux stream, so the list is live without a request.
+   */
+  const subRows = subagentRows(manager.store, sessionId, subNow)
+  const subRowsOf = useCallback(
+    (parentId: string, now: number) => subagentRows(manager.store, parentId, now),
+    [manager.store],
+  )
+  const subLive = subRows.some(row => row.activity === 'running')
+  useEffect(() => {
+    if (!lineageOpen || !subLive) return
+    const timer = setInterval(() => setSubNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [lineageOpen, subLive])
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -1618,6 +1777,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           <Text style={styles.backLabel}>{t('chat.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+        <SubagentSwitcher
+          rows={subRows}
+          currentSessionId={sessionId}
+          open={lineageOpen}
+          now={subNow}
+          rowsOf={subRowsOf}
+          onToggle={() => { setSubNow(Date.now()); setLineageOpen(open => !open) }}
+          onClose={() => setLineageOpen(false)}
+          onSwitch={id => onOpenSession?.(id)}
+        />
         <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
           <Icon name="SearchOutline" size={20} color={colors.accent} />
         </TouchableOpacity>
@@ -1771,6 +1940,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                     manager={manager}
                     sessionId={sessionId}
                     onLongPress={setMessageAction}
+                    onOpenLink={openTranscriptLink}
                   />
                 </View>
               )
@@ -1889,7 +2059,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         {lightbox !== null && (
           <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
         )}
-        {imageLimits !== null && pendingImages.length === 0 && editingItem === null && (
+        {imageLimits !== null && pendingImages.length === 0 && editingItem === null && composerReadOnly === null && (
           <View style={styles.imageLimitsBar}>
             <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits, t)}</Text>
           </View>
@@ -1898,6 +2068,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             and its control row, with the attachment and reference chips as the
             card's own accessory — not separate strips above it. */}
         <View style={styles.composerCard}>
+          {composerReadOnly !== null ? (
+            <View style={styles.composerNotice}>
+              <Text style={styles.composerNoticeTitle}>
+                {t(composerReadOnly === 'one-shot'
+                  ? 'subagent.readOnly.oneShotTitle'
+                  : 'subagent.readOnly.title')}
+              </Text>
+              <Text style={styles.composerNoticeBody}>
+                {t(composerReadOnly === 'one-shot'
+                  ? 'subagent.readOnly.oneShotBody'
+                  : 'subagent.readOnly.body')}
+              </Text>
+            </View>
+          ) : (
+            <>
           {editingItem === null && (pendingImages.length > 0 || pendingFiles.length > 0) && (
             <View style={styles.composerAccessory}>
               {pendingImages.length > 0 && (
@@ -2030,6 +2215,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
               </TouchableOpacity>
             )}
           </View>
+            </>
+          )}
         </View>
       </View>
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
@@ -2370,7 +2557,97 @@ function RunningIndicator({ startedAt, divider = false }: {
   )
 }
 
-function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessionId, onLongPress, bare = false }: {
+/**
+ * One reasoning row, the Web's `ReasoningRow`: a single 24px line at rest — a
+ * 14px glyph in a 16px box, the title, the Web's 2px separator, then the
+ * one-line summary — that swaps to the complete text as compact Markdown once
+ * it is opened.
+ *
+ * Two of its behaviours are the ones the reader notices. The collapsed line's
+ * height never changes, so a paragraph streaming in one character at a time
+ * grows nothing and nudges nothing under the reader's thumb (the Web pins the
+ * same row with `contain: size layout`). And the summary follows the Web's own
+ * source: while the block is still the streaming tail it names the newest
+ * *completed* paragraph, because the one below it is still being written; once
+ * the block settles it reads its own first line, which is where a finished
+ * thought starts.
+ */
+function ProcessReasoningRow({ step, running, open, onToggle, onLongPress, onOpenLink }: {
+  step: Extract<TurnProcessStep, { kind: 'thinking' }>
+  /** This block is the live tail: still being written right now. */
+  running: boolean
+  open: boolean
+  onToggle: () => void
+  onLongPress: () => void
+  onOpenLink?: ((href: string) => void) | undefined
+}): React.JSX.Element {
+  const { t } = useI18n()
+  const summary = running ? step.preview : step.settledPreview
+  return (
+    <TouchableOpacity
+      style={styles.reasoningRow}
+      activeOpacity={1}
+      onPress={onToggle}
+      onLongPress={onLongPress}
+    >
+      <View style={styles.reasoningHead}>
+        <View style={styles.reasoningGlyph}>
+          <Icon name="ThinkOutline" size={14} color={chat.labelTertiary} />
+        </View>
+        <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
+        {!open && summary !== '' && <View style={styles.reasoningDot} />}
+        {!open && summary !== '' && (
+          <Text style={styles.reasoningSummary} numberOfLines={1}>{summary}</Text>
+        )}
+      </View>
+      {open && (
+        <View style={styles.reasoningBody}>
+          <Markdown
+            style={markdownCompactStyles}
+            rules={markdownRules}
+            {...onOpenLink === undefined
+              ? {}
+              : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+          >
+            {step.text}
+          </Markdown>
+        </View>
+      )}
+    </TouchableOpacity>
+  )
+}
+
+/**
+ * One announced-but-undispatched call: the icon and title of the row it will
+ * become, plus the only progress a long file write can report before the Host
+ * accepts it.
+ *
+ * The Web measures the argument stream exactly once, on its file-mutation
+ * preparation row (`tool.preparing.content`); every other family shows its own
+ * title alone until the call is dispatched, so this row does the same rather
+ * than inventing a count for tools that never measured one.
+ */
+function ProcessPreparingRow({ step }: {
+  step: Extract<TurnProcessStep, { kind: 'preparing' }>
+}): React.JSX.Element {
+  const { t } = useI18n()
+  const variant = toolRowVariant(step.name)
+  const summary = variant === 'write' || variant === 'edit'
+    ? t('tool.preparingContent', { kilobytes: Math.ceil(step.argsLength / 1024) })
+    : ''
+  return (
+    <View style={styles.processRow}>
+      <View style={styles.processRowGlyph}>
+        <Icon name={VARIANT_ICONS[variant]} size={14} color={chat.labelTertiary} />
+      </View>
+      <Text style={styles.processRowTitle} numberOfLines={1}>{toolDisplayName(step.name, t)}</Text>
+      {summary !== '' && <View style={styles.processRowDot} />}
+      {summary !== '' && <Text style={styles.processRowSummary} numberOfLines={1}>{summary}</Text>}
+    </View>
+  )
+}
+
+function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessionId, onLongPress, onOpenLink, bare = false }: {
   turn: Turn
   /**
    * The steps this block holds: one run of a live turn, or — once the turn
@@ -2385,6 +2662,8 @@ function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessio
   manager: ConnectionManager
   sessionId: string
   onLongPress: (item: ConversationItem) => void
+  /** Link handling for an expanded reasoning body's own Markdown. */
+  onOpenLink?: ((href: string) => void) | undefined
   /** Embedded in the answer's own card, so it drops its chrome and reads as
    *  one module with the answer — the web's disclosure is fully transparent. */
   bare?: boolean
@@ -2458,62 +2737,32 @@ function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessio
           <Icon name="ChevronDownOutline" size={14} color={chat.labelTertiary} />
         </View>
       </TouchableOpacity>
-      {open && steps.map(step => step.kind === 'thinking'
+      {open && steps.map(step => (step.kind === 'thinking'
         ? (
-          <TouchableOpacity
+          <ProcessReasoningRow
             key={step.key}
-            style={styles.reasoningRow}
-            activeOpacity={1}
-            onPress={() => toggleStep(step.key)}
+            step={step}
+            // Only the newest step of a live turn is still being written, which
+            // is the Web's own rule (`running={streaming && i === last}`).
+            running={turn.live && step.key === turn.process.at(-1)?.key}
+            open={openSteps.has(step.key)}
+            onToggle={() => toggleStep(step.key)}
             onLongPress={() => setCopied(step.key)}
-          >
-            {openSteps.has(step.key) ? (
-              <>
-                <View style={styles.reasoningHead}>
-                  <View style={styles.reasoningGlyph}>
-                    <Icon name="ThinkOutline" size={14} color={chat.labelTertiary} />
-                  </View>
-                  <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
-                </View>
-                <Text selectable style={styles.reasoningBody}>{step.text}</Text>
-              </>
-            ) : (
-              <View style={styles.reasoningHead}>
-                <View style={styles.reasoningGlyph}>
-                  <Icon name="ThinkOutline" size={14} color={chat.labelTertiary} />
-                </View>
-                <Text style={styles.reasoningTitle}>{t('chat.thoughtStep')}</Text>
-                <View style={styles.reasoningDot} />
-                <Text style={styles.reasoningSummary} numberOfLines={1}>
-                  {step.preview === '' ? step.text.replace(/\s+/g, ' ').trim() : step.preview}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
+            onOpenLink={onOpenLink}
+          />
         )
         : step.kind === 'preparing'
-          ? (
-            <View key={step.key} style={styles.processRow}>
-              <View style={styles.processRowGlyph} />
-              <Text style={styles.processRowTitle} numberOfLines={1}>
-                {stepActivityLabel(step.activity, 'preparing', t)}
-              </Text>
-              {step.activity === 'tools' && <View style={styles.processRowDot} />}
-              {step.activity === 'tools' && (
-                <Text style={styles.processRowSummary} numberOfLines={1}>{step.name}</Text>
-              )}
-            </View>
-          )
-        : (
-          <ToolCard
-            key={step.key}
-            item={step.item}
-            manager={manager}
-            sessionId={sessionId}
-            onLongPress={() => onLongPress(step.item)}
-            bare
-          />
-        ))}
+          ? <ProcessPreparingRow key={step.key} step={step} />
+          : (
+            <ToolCard
+              key={step.key}
+              item={step.item}
+              manager={manager}
+              sessionId={sessionId}
+              onLongPress={() => onLongPress(step.item)}
+              bare
+            />
+          )))}
       <ActionSheet
         visible={copied !== null}
         title={t('chat.thoughtStep')}
@@ -2764,6 +3013,7 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
               manager={manager}
               sessionId={sessionId}
               onLongPress={() => onLongPress()}
+              onOpenLink={onOpenLink}
               bare
             />
           )}
@@ -3023,9 +3273,8 @@ const styles = StyleSheet.create({
   /** The web's 2px separator dot between a row's title and its summary. */
   reasoningDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: chat.labelCaption, marginHorizontal: 8 },
   reasoningSummary: { flex: 1, color: chat.labelTertiary, ...chatText.secondary },
+  /** The Web indents an expanded reasoning body to the title's own column. */
   reasoningBody: {
-    color: chat.labelTertiary,
-    ...chatText.secondary,
     paddingLeft: 22,
     paddingVertical: 4,
   },
@@ -3239,6 +3488,23 @@ const styles = StyleSheet.create({
     boxShadow: shadow.soft,
     paddingTop: 8,
   },
+  /**
+   * The web's read-only composer: the same frame the draft would have held,
+   * carrying the reason it holds nothing instead — title in primary, reason in
+   * tertiary, both on one centered line.
+   */
+  composerNotice: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 54,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  composerNoticeTitle: { color: chat.labelPrimary, fontSize: 13, lineHeight: 20, fontWeight: '500' },
+  composerNoticeBody: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20 },
   /** The card's accessory band: picked images, files and reference chips. */
   composerAccessory: { paddingTop: 10, paddingHorizontal: 12, gap: spacing(2) },
   /**

@@ -17,25 +17,219 @@ export function commonLabel(value: string, t: LabelTranslate): string {
   return key === undefined ? value : t(key)
 }
 
-const toolLabels: Record<string, TranslationKey> = {
-  bash: 'tool.bash',
-  pwsh: 'tool.powershell',
-  powershell: 'tool.powershell',
-  read: 'tool.read',
-  write: 'tool.write',
-  edit: 'tool.edit',
-  glob: 'tool.glob',
-  grep: 'tool.grep',
-  web_search: 'tool.webSearch',
-  skill: 'tool.skill',
-  subagent: 'tool.subagent',
-  todo_write: 'tool.todoWrite',
-  str_replace_editor: 'tool.strReplaceEditor',
+/**
+ * Tool-owned row titles, ported one for one from the Web's `TOOL_TITLE_KEYS`
+ * (`tool-call-model.ts`): a tool that names its own act keeps that name whatever
+ * family it belongs to. Everything else falls back to its variant's title, so a
+ * phone row and a browser row read the same for the same call.
+ */
+const toolTitleKeys: Record<string, TranslationKey> = {
+  pwsh: 'tool.title.pwsh',
+  powershell: 'tool.title.pwsh',
+  read_image: 'tool.title.readImage',
+  web_fetch: 'tool.title.webFetch',
+  grep: 'tool.title.grep',
+  glob: 'tool.title.glob',
+  web_search: 'tool.title.webSearch',
+  todo_write: 'tool.title.todoWrite',
+  ask_user_question: 'tool.title.askQuestion',
+  create_goal: 'tool.title.createGoal',
+  get_goal: 'tool.title.getGoal',
+  update_goal: 'tool.title.updateGoal',
+  schedule_create: 'tool.title.createSchedule',
+  schedule_list: 'tool.title.listSchedules',
+  schedule_delete: 'tool.title.deleteSchedule',
+  schedule_update: 'tool.title.updateSchedule',
+  cordis_package_inspect: 'tool.title.inspect',
+  cordis_runtime_inspect: 'tool.title.inspect',
+  cordis_run: 'tool.title.runCordis',
+  cordis_stop: 'tool.title.stopCordis',
+  cordis_undefine: 'tool.title.removeCordis',
+  cordis_inspect_list: 'tool.title.inspectProviders',
+  cordis_inspect_query: 'tool.title.queryRuntime',
+  cordis_inspect_self: 'tool.title.inspectPlugins',
+  workflow: 'tool.title.workflow',
+  ralph: 'tool.title.ralph',
+  session_event_read: 'tool.title.readEvent',
+  session_event_search: 'tool.title.searchEvents',
+  session_event_trace: 'tool.title.traceEvent',
+  session_search: 'tool.title.searchSessions',
+  session_trace: 'tool.title.traceSession',
+  list_subagent_models: 'tool.title.listModels',
+  subagent: 'tool.title.subagent',
+  list_agents: 'tool.title.listAgents',
+  send_message: 'tool.title.sendMessage',
+  interrupt_agent: 'tool.title.interruptAgent',
+  job_list: 'tool.title.listJobs',
+  job_output: 'tool.title.readJob',
+  job_kill: 'tool.title.killJob',
+  terminal_open: 'tool.title.openTerminal',
+  terminal_read: 'tool.title.readTerminal',
+  terminal_list: 'tool.title.listTerminals',
+  terminal_signal: 'tool.title.signalTerminal',
+  terminal_close: 'tool.title.closeTerminal',
+  lsp: 'tool.title.lsp',
+  spawn_teammate: 'tool.title.spawnTeammate',
+  team_task_create: 'tool.title.createTeamTask',
+  team_task_get: 'tool.title.getTeamTask',
+  team_task_update: 'tool.title.updateTeamTask',
+  team_task_list: 'tool.title.listTeamTasks',
+  wait_agent: 'tool.title.waitAgent',
+  skill: 'tool.title.skill',
+  str_replace_editor: 'tool.title.edit',
 }
 
+/** Variant titles, the Web's `VARIANT_TITLE_KEYS`. */
+const variantTitleKeys: Record<ToolRowVariant, TranslationKey> = {
+  search: 'tool.title.search',
+  read: 'tool.title.read',
+  bash: 'tool.title.bash',
+  write: 'tool.title.write',
+  edit: 'tool.title.edit',
+  code: 'tool.title.code',
+  others: 'tool.title.generic',
+}
+
+/** The generic row prefixes its own wire tool name (the Web's `tool.title.generic`). */
+export function toolTitleIsGeneric(name: string): boolean {
+  return toolTitleKeys[name] === undefined && toolRowVariant(name) === 'others'
+}
+
+/**
+ * The localized title of one tool row: the tool's own name when it has one, else
+ * its variant's, else the wire name for a tool this build has never heard of.
+ */
 export function toolDisplayName(name: string, t: LabelTranslate): string {
-  const key = toolLabels[name.toLowerCase()]
-  return key === undefined ? name : t(key)
+  const toolKey = toolTitleKeys[name]
+  if (toolKey !== undefined) return t(toolKey)
+  const variantKey = variantTitleKeys[toolRowVariant(name)]
+  return variantKey === undefined ? name : t(variantKey)
+}
+
+/** One-line summary argument keys per variant (the Web's `SUMMARY_KEYS`). */
+const summaryKeys: Record<ToolRowVariant, readonly string[]> = {
+  bash: ['description', 'command'],
+  read: ['path', 'file_path', 'url'],
+  search: ['query', 'pattern', 'url'],
+  write: ['path', 'file_path'],
+  edit: ['path', 'file_path'],
+  code: ['description'],
+  others: [],
+}
+
+function firstLine(text: string): string {
+  const newline = text.indexOf('\n')
+  return newline === -1 ? text : text.slice(0, newline)
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/**
+ * The one-line summary a tool row shows beside its title, derived from the
+ * call's own arguments exactly as the Web does (`deriveSummary`): a search's
+ * `queries` array wins, then the variant's preferred keys, then any non-empty
+ * string argument, and finally the raw argument text's first line. Unparseable
+ * arguments (a truncated stream) fall back to that raw first line.
+ * @param name - the wire tool name, which selects the variant.
+ * @param args - the call's raw argument JSON.
+ * @returns the summary text, empty when there is nothing to show.
+ */
+export function toolRowSummary(name: string, args: string): string {
+  if (args === '') return ''
+  const variant = toolRowVariant(name)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(args)
+  } catch {
+    return firstLine(args)
+  }
+  if (!isRecordValue(parsed)) return firstLine(args)
+  if (variant === 'search' && Array.isArray(parsed.queries)) {
+    const queries = parsed.queries.filter(
+      (query): query is string => typeof query === 'string' && query !== '',
+    )
+    if (queries.length > 0) return queries.map(firstLine).join(', ')
+  }
+  for (const key of summaryKeys[variant]) {
+    const value = parsed[key]
+    if (typeof value === 'string' && value !== '') return firstLine(value)
+  }
+  for (const value of Object.values(parsed)) {
+    if (typeof value === 'string' && value !== '') return firstLine(value)
+  }
+  return firstLine(args)
+}
+
+/**
+ * A token count in the Web's compact shape (`formatTokens` in
+ * `SubagentHeaderLineage.tsx`): one decimal under 100K, whole numbers above,
+ * where the decimal is dropped only once rounding to a whole number is honest
+ * enough to read.
+ * @param value - total tokens.
+ * @returns the display text without the `tok` suffix.
+ */
+export function formatTokenCount(value: number): string {
+  const scaled = (next: number): string =>
+    next >= 100 ? String(Math.round(next)) : String(Math.round(next * 10) / 10)
+  if (value < 1_000) return String(value)
+  if (value < 1_000_000) return `${scaled(value / 1_000)}K`
+  return `${scaled(value / 1_000_000)}M`
+}
+
+/**
+ * The entity-list tools whose row summary the Web derives from the *result*
+ * rather than the arguments: `control-details-model.ts` parses the tool's own
+ * line format (or a JSON array) and titles the row `N 个智能体` / `N 个后台任务`
+ * / `N 个终端`. A result in any other shape is not that family and yields to
+ * the ordinary argument-derived summary.
+ */
+const entityListTools: Record<string, {
+  /** Marker line meaning "the list is empty". */
+  empty: string
+  /** One entity per line; every line must match for the count to be trusted. */
+  line: RegExp
+  key: TranslationKey
+}> = {
+  list_agents: {
+    empty: '(no subagents)',
+    line: /^(\S+) \[([^\]]+)\](?: parent=(\S+) depth=(\d+))?(?: — (.*))?$/u,
+    key: 'tools.agentsCount',
+  },
+  job_list: {
+    empty: '(no background jobs)',
+    line: /^(\S+) \[([^\]]+)\] (\S+) — (.*)$/u,
+    key: 'tools.jobsCount',
+  },
+  terminal_list: {
+    empty: '(no terminal sessions)',
+    line: /^(\S+)(?: \((.*?)\))? \[([^\]]+)\] (running|exited code=(\S+) signal=(\S+))(?: pid=(\d+))?$/u,
+    key: 'tools.terminalsCount',
+  },
+}
+
+/**
+ * The summary an entity-list tool shows instead of its arguments.
+ * @param name - the wire tool name.
+ * @param resultText - the tool's flattened result text.
+ * @param t - translator.
+ * @returns the localized count, or undefined when this result is not a list
+ *   this build can count (an unknown tool, or a shape it does not recognize).
+ */
+export function toolResultSummary(
+  name: string,
+  resultText: string,
+  t: LabelTranslate,
+): string | undefined {
+  const family = entityListTools[name]
+  if (family === undefined) return undefined
+  const text = resultText.trim()
+  if (text === family.empty) return t(family.key, { count: 0 })
+  if (text === '') return undefined
+  const lines = text.split('\n').map(line => line.trimEnd()).filter(line => line !== '')
+  if (lines.length === 0 || !lines.every(line => family.line.test(line))) return undefined
+  return t(family.key, { count: lines.length })
 }
 
 /** The web's tool-row variant: the family that decides a row's leading glyph. */
@@ -144,4 +338,86 @@ export function runDurationLabel(ms: number, t: LabelTranslate): string {
   return minutes > 0
     ? t('chat.duration.minutes', { minutes, seconds: String(seconds).padStart(2, '0') })
     : t('chat.duration.seconds', { seconds })
+}
+
+interface DurationParts {
+  seconds: number
+  minutes: number
+  hours: number
+  days: number
+  totalMinutes: number
+  totalHours: number
+}
+
+function splitDuration(ms: number): DurationParts {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1_000)
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const totalHours = Math.floor(totalMinutes / 60)
+  return {
+    seconds: totalSeconds % 60,
+    minutes: totalMinutes % 60,
+    hours: totalHours % 24,
+    days: Math.floor(totalHours / 24),
+    totalMinutes,
+    totalHours,
+  }
+}
+
+/**
+ * A duration with the Web's own decreasing precision at larger scales
+ * (`formatDuration` in `SubagentHeaderLineage.tsx`): the same measurement reads
+ * identically in both clients, down to the padded minutes and seconds an hour
+ * shape carries.
+ * @param ms - measured milliseconds.
+ * @param t - translator.
+ * @returns the compact display text.
+ */
+export function durationLabel(ms: number, t: LabelTranslate): string {
+  const { seconds, minutes, hours, days, totalMinutes, totalHours } = splitDuration(ms)
+  if (days >= 365) {
+    const years = Math.floor(days / 365)
+    const months = Math.floor((days % 365) / 30)
+    return months === 0
+      ? t('chat.duration.years', { years })
+      : t('chat.duration.yearsMonths', { years, months })
+  }
+  if (days >= 30) {
+    const months = Math.floor(days / 30)
+    const remainingDays = days % 30
+    return remainingDays === 0
+      ? t('chat.duration.months', { months })
+      : t('chat.duration.monthsDays', { months, days: remainingDays })
+  }
+  if (days > 0) {
+    return hours === 0
+      ? t('chat.duration.days', { days })
+      : t('chat.duration.daysHours', { days, hours })
+  }
+  if (totalHours > 0) {
+    return t('chat.duration.hours', {
+      hours: totalHours,
+      minutes: String(minutes).padStart(2, '0'),
+      seconds: String(seconds).padStart(2, '0'),
+    })
+  }
+  if (totalMinutes > 0) {
+    return t('chat.duration.minutes', {
+      minutes: totalMinutes,
+      seconds: String(seconds).padStart(2, '0'),
+    })
+  }
+  return t('chat.duration.seconds', { seconds })
+}
+
+/** The exact-seconds form a hover or an accessibility label uses past one day. */
+export function exactDurationLabel(ms: number, t: LabelTranslate): string {
+  const { seconds, minutes, hours, days } = splitDuration(ms)
+  return days === 0
+    ? durationLabel(ms, t)
+    : t('chat.duration.exactDays', {
+      days,
+      hours: String(hours).padStart(2, '0'),
+      minutes: String(minutes).padStart(2, '0'),
+      seconds: String(seconds).padStart(2, '0'),
+    })
 }

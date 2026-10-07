@@ -65,6 +65,23 @@ describe('deriveConversation', () => {
     })
 
     expect(deriveConversation(store.sessions.get('s-1')!).map(i => i.kind)).toEqual(['user', 'preparing'])
+    // The announced call's row measures the argument stream, which is the only
+    // progress a long `write` shows before dispatch.
+    expect(deriveConversation(store.sessions.get('s-1')!)[1])
+      .toMatchObject({ kind: 'preparing', name: 'bash', argsLength: 6 })
+    // Later deltas carry no name and only extend that measurement.
+    store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', time: 5,
+        data: {
+          turn: 1, step: 1, transient: true, attemptId: 'a1', index: 1,
+          chunk: { type: 'tool-call-delta', id: 'c9', argumentsDelta: ':"ls"}' },
+        },
+      } as never,
+    })
+    expect(deriveConversation(store.sessions.get('s-1')!)[1])
+      .toMatchObject({ kind: 'preparing', name: 'bash', argsLength: 12 })
 
     // The durable call supersedes the announcement: one row, not two.
     feed(store, 6, 'tool/call', { turn: 1, step: 1, callId: 'c9', name: 'bash', arguments: '{"cmd":"ls"}' })

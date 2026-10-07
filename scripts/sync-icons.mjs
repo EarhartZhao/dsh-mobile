@@ -78,6 +78,7 @@ const GLYPHS = {
   ContextInjectionOutline: { export: 'IconContextInjectionOutlineRegular', note: '@ reference chips' },
   ShareOutline: { export: 'IconShareOutlineRegular', note: 'code block share' },
   SettingsOutline: { export: 'IconSettingsOutlineRegular', note: 'session list settings' },
+  PresetOutline: { export: 'IconAgentPresetOutlineRegular', note: 'subagent switcher and subagent rows' },
 }
 
 const source = [

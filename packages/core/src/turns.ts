@@ -14,6 +14,7 @@
  */
 import {
   reasoningPreview,
+  reasoningSettledPreview,
   summarizeActivity,
   toolActivity,
   toolCallDetail,
@@ -36,10 +37,23 @@ export type TurnProcessStep =
       kind: 'thinking'
       key: string
       text: string
-      /** One-line collapsed preview of the newest reasoning. */
+      /** One-line collapsed preview while the block is still streaming. */
       preview: string
+      /**
+       * One-line collapsed preview once the block settles: its own first line,
+       * which is the Web's `firstLine` rule for a finished reasoning block.
+       */
+      settledPreview: string
     }
-  | { kind: 'preparing'; key: string; name: string; activity: ToolActivity; time: number }
+  | {
+      kind: 'preparing'
+      key: string
+      name: string
+      activity: ToolActivity
+      time: number
+      /** Argument bytes streamed so far; the row's preparation detail. */
+      argsLength: number
+    }
   | {
       kind: 'tool'
       key: string
@@ -292,7 +306,14 @@ function stepsOf(item: ConversationItem): TurnProcessStep[] {
     }]
   }
   if (item.kind === 'preparing') {
-    return [{ kind: 'preparing', key: item.key, name: item.name, activity: toolActivity(item.name), time: item.time }]
+    return [{
+      kind: 'preparing',
+      key: item.key,
+      name: item.name,
+      activity: toolActivity(item.name),
+      time: item.time,
+      argsLength: item.argsLength,
+    }]
   }
   if ((item.kind === 'assistant' || item.kind === 'stream') && item.reasoning.trim() !== '') {
     return [{
@@ -300,6 +321,7 @@ function stepsOf(item: ConversationItem): TurnProcessStep[] {
       key: `${item.key}:reasoning`,
       text: item.reasoning,
       preview: reasoningPreview(item.reasoning),
+      settledPreview: reasoningSettledPreview(item.reasoning),
     }]
   }
   return []

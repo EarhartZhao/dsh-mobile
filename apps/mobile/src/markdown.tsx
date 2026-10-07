@@ -129,6 +129,46 @@ export const markdownStyles = StyleSheet.create({
   hr: { backgroundColor: chat.borderL2 },
 })
 
+/**
+ * The Web's `variant="compact"` Markdown: secondary typography (13/20) in the
+ * tertiary label colour, with its own tighter block rhythm. It is what a
+ * reasoning disclosure's expanded body and a tool row's expanded details read
+ * at — one step under the answer's body, so the answer stays the loudest thing
+ * on screen.
+ */
+export const markdownCompactStyles = StyleSheet.create({
+  body: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20 },
+  paragraph: { marginTop: 0, marginBottom: 4 },
+  strong: { color: chat.labelTertiary, fontWeight: '700' },
+  em: { fontStyle: 'italic' },
+  link: { color: chat.labelTertiary, textDecorationLine: 'underline' },
+  heading1: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20, fontWeight: '600', marginTop: 8, marginBottom: 4 },
+  heading2: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20, fontWeight: '600', marginTop: 8, marginBottom: 4 },
+  heading3: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20, fontWeight: '600', marginTop: 8, marginBottom: 4 },
+  code_inline: {
+    color: chat.labelTertiary,
+    backgroundColor: chat.inlineCode,
+    fontSize: 13,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  fence: {
+    backgroundColor: chat.codeBlock,
+    borderColor: chat.borderL2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.sm,
+    padding: spacing(2),
+    marginVertical: spacing(1),
+  },
+  code: { color: chat.labelTertiary, fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { marginVertical: 2 },
+  bullet_list_icon: { color: chat.labelTertiary },
+  ordered_list_content: { color: chat.labelTertiary, fontSize: 13, lineHeight: 20 },
+  blockquote: { borderLeftWidth: 3, borderLeftColor: chat.borderL3, paddingLeft: spacing(2), marginVertical: 4 },
+  hr: { backgroundColor: chat.borderL2, marginVertical: 8 },
+})
+
 const codeStyles = StyleSheet.create({
   block: {
     alignSelf: 'stretch',

@@ -98,6 +98,25 @@ function screenText(tree: renderer.ReactTestRenderer): string {
 
 const trees: renderer.ReactTestRenderer[] = []
 
+/** The innermost pressable carrying this accessibility label. */
+function pressableByLabel(
+  tree: renderer.ReactTestRenderer,
+  label: string,
+): renderer.ReactTestInstance | undefined {
+  return tree.root.findAll(node =>
+    typeof node.props.onPress === 'function' && node.props.accessibilityLabel === label).at(-1)
+}
+
+/** The innermost pressable whose own subtree renders this text. */
+function pressableRendering(
+  tree: renderer.ReactTestRenderer,
+  text: string,
+): renderer.ReactTestInstance | undefined {
+  return tree.root.findAll(node =>
+    typeof node.props.onPress === 'function'
+    && node.findAll(child => child.props.children === text).length > 0).at(-1)
+}
+
 /**
  * The screen re-renders from a 50ms store throttle, so a page that landed is
  * only on screen after that window has passed.
@@ -117,12 +136,12 @@ const INSETS: Metrics = {
   insets: { top: 0, left: 0, right: 0, bottom: 0 },
 }
 
-function render(manager: ConnectionManager): renderer.ReactTestRenderer {
+function render(manager: ConnectionManager, sessionId = 's1'): renderer.ReactTestRenderer {
   let tree!: renderer.ReactTestRenderer
   act(() => {
     tree = renderer.create(
       <SafeAreaProvider initialMetrics={INSETS}>
-        <ChatScreen manager={manager} sessionId="s1" onBack={jest.fn()} />
+        <ChatScreen manager={manager} sessionId={sessionId} onBack={jest.fn()} />
       </SafeAreaProvider>,
     )
   })
@@ -569,6 +588,49 @@ describe('ChatScreen running turn', () => {
     expect(screenText(tree)).not.toContain('chat.running')
     expect(screenText(tree)).not.toContain('写了一半')
   })
+
+  it('reads a settled step as one line and expands it on tap, the way the Web does', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    feed(manager, 2, 'assistant/message', {
+      turn: 1, step: 1,
+      message: {
+        content: [
+          { type: 'reasoning', text: '先规划一下\n\n再看来源' },
+          { type: 'text', text: '开始查。' },
+        ],
+      },
+    })
+    feed(manager, 3, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'web_search', arguments: '{}' })
+    feed(manager, 4, 'tool/result', {
+      turn: 1, step: 1,
+      message: { toolCallId: 'c1', content: [{ type: 'text', text: '8 个来源' }] },
+    })
+    feed(manager, 5, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await settle()
+    // Settled, the trace folds back to its answer: a closed turn opens only
+    // because the reader opened it.
+    expect(screenText(tree)).not.toContain('先规划一下')
+
+    const openBlock = pressableByLabel(tree, 'chat.toolCallSummary(1)')
+    expect(openBlock).toBeDefined()
+    act(() => { openBlock!.props.onPress() })
+    await settle()
+
+    // One truncated line, exactly the Web's `ReasoningRow`: the settled preview
+    // is the thought's own first line, and the rest stays folded.
+    expect(screenText(tree)).toContain('先规划一下')
+    expect(screenText(tree)).not.toContain('再看来源')
+
+    const row = pressableRendering(tree, 'chat.thoughtStep')
+    expect(row).toBeDefined()
+    act(() => { row!.props.onPress() })
+    await settle()
+    expect(screenText(tree)).toContain('再看来源')
+  })
 })
 
 /**
@@ -630,5 +692,71 @@ describe('ChatScreen scroll-to-bottom control', () => {
     expect(toEnd).not.toHaveBeenCalled()
     expect(backToBottom(tree)).toBeUndefined()
     expect(list.props.maintainVisibleContentPosition).toBeUndefined()
+  })
+})
+
+/**
+ * The manager surface for a conversation opened as a subagent child.
+ *
+ * The list carries the child's parent, and the parent's own catalog carries the
+ * mode the child's durable address needs — the two facts `subagent.history`
+ * takes and a plain `session.history` cannot stand in for.
+ */
+function setupChild(mode: 'one-shot' | 'continuable') {
+  const history = jest.fn(async () => okPage())
+  // The request is the point of this double: the address the read was sent
+  // with is what the test asserts on.
+  const subagentHistory = jest.fn(async (_request: unknown) => okPage())
+  const store = new SessionStore()
+  store.applyBaseline({
+    summaries: [
+      {
+        sessionId: 'parent', updatedAt: 0, running: false, blank: false,
+        projections: { asOfSeq: 1, values: { subagentCatalog: [{ id: 'child', createdAt: 1, mode, label: 'data' }] } },
+      },
+      {
+        sessionId: 'child', updatedAt: 0, running: false, blank: false,
+        parentSessionId: 'parent', origin: 'subagent',
+      },
+    ],
+    workspaces: [],
+  } as never)
+  const manager = {
+    store,
+    compatibility: { pluginVersion: '0.2.36', mobileApi: 2, features: [] },
+    refreshBaseline: jest.fn(async () => undefined),
+    on: jest.fn(() => () => undefined),
+    client: {
+      sessions: { history, models: jest.fn(async () => refusal('stub')) },
+      subagents: { history: subagentHistory, list: jest.fn(async () => refusal('stub')) },
+    },
+  } as unknown as ConnectionManager
+  return { manager, history, subagentHistory }
+}
+
+describe('ChatScreen subagent conversation', () => {
+  it('reads a child transcript through its durable parent address', async () => {
+    const { manager, history, subagentHistory } = setupChild('continuable')
+    const tree = render(manager, 'child')
+
+    await settle()
+    // The Host refuses a child read as a Session ("subagent Sessions require
+    // their durable parent address"), so the read must never be sent as one.
+    expect(history).not.toHaveBeenCalled()
+    expect(subagentHistory.mock.calls[0]?.[0]).toMatchObject({
+      parentSessionId: 'parent', childSessionId: 'child', mode: 'continuable',
+    })
+    expect(screenText(tree)).toContain('你好')
+  })
+
+  it('explains the one-shot child it cannot take a message for', async () => {
+    const { manager } = setupChild('one-shot')
+    const tree = render(manager, 'child')
+
+    await settle()
+    expect(screenText(tree)).toContain('subagent.readOnly.oneShotTitle')
+    expect(screenText(tree)).toContain('subagent.readOnly.oneShotBody')
+    // The draft it would have taken is gone with the composer.
+    expect(screenText(tree)).not.toContain('chat.sendPlaceholder')
   })
 })
