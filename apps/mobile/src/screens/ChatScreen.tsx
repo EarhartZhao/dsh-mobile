@@ -2059,11 +2059,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         {lightbox !== null && (
           <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
         )}
-        {imageLimits !== null && pendingImages.length === 0 && editingItem === null && composerReadOnly === null && (
-          <View style={styles.imageLimitsBar}>
-            <Text style={styles.imageLimitsText} numberOfLines={1}>{imageLimitsSummary(imageLimits, t)}</Text>
-          </View>
-        )}
         {/* The web's composer card: one panel-radius surface holding the draft
             and its control row, with the attachment and reference chips as the
             card's own accessory — not separate strips above it. */}
@@ -2421,15 +2416,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       />
     </KeyboardAvoidingView>
   )
-}
-
-function imageLimitsSummary(limits: ImageLimitsView, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
-  const mediaTypes = limits.mediaTypes
-    .map(type => type.replace('image/', '').toUpperCase())
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .slice(0, 4)
-    .join('/')
-  return t('chat.imageLimits', { size: formatBytes(limits.maxImageBytes), count: limits.maxImagesPerMessage, types: mediaTypes })
 }
 
 function QueueDock({ queue, editingId, onEdit, onRemove, onSteer }: {
@@ -3394,8 +3380,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2),
   },
-  imageLimitsBar: { alignSelf: 'stretch', paddingHorizontal: spacing(3), paddingBottom: spacing(1.5) },
-  imageLimitsText: { color: colors.textDim, fontSize: fontSize.tiny },
   pendingImagesRow: { alignSelf: 'stretch', flexGrow: 0 },
   pendingImagesContent: { gap: spacing(2) },
   pendingFilesRow: { alignSelf: 'stretch', flexGrow: 0 },
