@@ -23,6 +23,9 @@ function stateFromEvents(sessionId: string, events: HistoryEntry[]): SessionStat
     pendingApprovals: new Map(),
     pendingQuestions: new Map(),
     running: false,
+    // A subagent read is a page of history, never a live stream, and the panel
+    // has no Host run state to hand down: the log is all it has.
+    runningKnown: false,
     todos: [],
     usage: null,
   }

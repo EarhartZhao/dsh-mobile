@@ -123,8 +123,30 @@ async function readHistoryPage<T>(read: (maxMessages: number) => Promise<T>): Pr
  */
 function oldestSeq(session: SessionState | undefined): number | undefined {
   return session?.events
+    // Transient chunks ride a placeholder zero, not a log position: counting
+    // one as the oldest seq made "load older" ask for records before seq 0 and
+    // stop on the empty page it got back, so a page that had been trimmed
+    // mid-turn was never filled in.
+    .filter(entry => !isTransientEvent(entry.event))
     .map(entry => typeof entry.event.seq === 'number' ? entry.event.seq : undefined)
     .find((seq): seq is number => seq !== undefined)
+}
+
+/** One live-stream chunk, which the durable log never carries. */
+function isTransientEvent(event: unknown): boolean {
+  if (typeof event !== 'object' || event === null) return false
+  const data = (event as { data?: unknown }).data
+  return typeof data === 'object' && data !== null && (data as { transient?: unknown }).transient === true
+}
+
+/**
+ * The Host's run state for one Session, or `undefined` while the Host has not
+ * said anything about it. The distinction is the whole point: a Session that
+ * merely defaults to not-running must not settle a turn the Host may well be
+ * running, and one the Host has reported idle must.
+ */
+function hostRunningOf(session: SessionState): boolean | undefined {
+  return session.runningKnown ? session.running : undefined
 }
 
 interface Props {
@@ -589,7 +611,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const refresh = useCallback(() => {
     const session = manager.store.sessions.get(sessionId)
     if (session === undefined) return
-    const nextItems = deriveConversation(session)
+    const nextItems = deriveConversation(session, { running: hostRunningOf(session) })
     setItems(nextItems)
     setRunning(session.running)
     setQueue([...session.queue])
@@ -1473,7 +1495,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   // Row building lives in core: the rows are not the conversation items (tool
   // calls and reasoning-only answers have no row of their own), and the same
   // grouping answers where a search hit's jump must land.
-  const { turns, rows: listRows, rowIndexOfItemKey } = buildTranscript(items)
+  //
+  // The Host's run state goes with them: when it says the Session is idle, a
+  // turn whose closing event the live stream dropped renders as finished
+  // instead of leaving a clock running over it forever.
+  const { turns, rows: listRows, rowIndexOfItemKey } = buildTranscript(items, {
+    running: session === undefined ? undefined : hostRunningOf(session),
+  })
   /**
    * The running turn, for the transcript's own bottom indicator: the web keeps
    * a live clock there so a long turn never looks stalled. It rides the last

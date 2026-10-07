@@ -114,6 +114,33 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 >   不变）。真机（vivo V2405A，dev 包）复验：同一宿主同一份数据，列表由 22 行降到 5 行（22 − 17 个子会话），
 >   父会话仍能打开、子代理面板仍列出 3 个直接子级并可进入。
 
+> 进度（2026-10-07 第二十一轮）：**宿主说这一轮跑完了，App 的「深度求索中」就停下。**
+> - 症状：真机重庆长任务（1 轮 78 步、约 12 分钟）跑完后，App 仍挂着「正在分析请求 / 思考 / 深度求索中，用时 14 分 06 秒」；
+>   退出重进该会话也不消失，只有**杀进程冷启动**（纯历史加载、没有实时 chunk）才恢复正常，且正常显示收尾的
+>   复制/评分/用量行。同一时刻宿主磁盘上 `turn/end`（seq 614）就在日志里，web 侧一切正常。
+> - 实测证据（`adb logcat` 里的 nats.ws 协议 trace，app 侧逐帧）：
+>   1) 该会话的实时 `session/event` 流在 10:30:01 断掉，最后一条 durable 事件是 seq 394；此后到轮次结束（seq 614）
+>      的**全部**事件——包括最后几条 `assistant/message` 和收尾的 `turn/end`——App 一帧都没收到。断的只有**每会话的
+>      watcher**（插件 `startSessionWatcher` 的流失败后静默结束、不重试），同一条 mux 上的 `session/projection`、
+>      `session/jobs` 一直正常。
+>   2) 10:32:50 App **确实收到了** `host/session-status {running:false}`（插件由 `agent/status` 转出），也就是说
+>      「跑完了」这个事实早就到了 App，只是 transcript 不认它。
+>   3) 10:37 重进会话触发历史尾页，`.session.history` 回了 1 MB（记录从 seq 428 起）——中途被裁掉的一段
+>      (395–427) 正是那批 chunk buffer 的收尾事件所在；本该补齐的 backfill 反而发了一条
+>      `{"events":[],"hasMore":false}` 的空页就停了。
+> - 根因两条，都在 App 侧：
+>   a. **活跃状态只看日志，不看宿主**。`turn.live` 由事件推出来（`turn.running || 末尾轮且没有 turn/end`），
+>      实时流丢尾时它永远为真；同时落后的 chunk buffer 一直没被 `assistant/message` 收尾，`turn.running` 也永远为真，
+>      于是「深度求索中」永不消失。
+>   b. **`oldestSeq` 把实时 chunk 的占位 `seq: 0` 当成了日志位置**。backfill 于是请求「seq 0 之前的记录」，
+>      宿主回空页，App 判定历史到底、停止往回走，被裁掉的那一段再也没补上。
+> - 现在：`SessionState` 增 `runningKnown`（只有收到 `host/session-status` 才算「听过宿主表态」，默认的 not-running
+>   不算），`deriveConversation` / `buildTranscript` 收一个 `running` 提示——宿主说 false 时不再渲染实时 buffer、
+>   也不让任何一轮 live；`oldestSeq` 跳过 `transient` 事件，backfill 从真正的最老记录往回走。
+> - 验证：`packages/core` test（18 套 139 例，新增「宿主说空闲就不再把轮次当 live」「空闲时丢弃实时 buffer」，
+>   store 用例补 `runningKnown`）/ `apps/mobile` typecheck / test（27 套 200 例，新增「宿主报空闲后不再显示
+>   深度求索中」「backfill 从最老真实记录而不是 chunk 占位往回走」）/ lint 0 error（222 warnings 基线不变）。
+
 > 进度（2026-10-07 第十九轮）：**运行中的轮次按 web 的读法逐段渲染，并修掉思考时的三处布局问题。**
 > - 答案位置：`groupTurns` 原先把整轮的工序 block 统一插在答案之前（`rows = [prompt, process, 所有可见项]`），
 >   于是「我来查一下天津近五年的经济数据。」这类**中途旁白**被压到了它后面那些工具调用的下方。web 的读法是

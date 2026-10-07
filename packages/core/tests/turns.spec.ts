@@ -285,6 +285,22 @@ describe('groupTurns', () => {
     expect(older[1]!.live).toBe(true)
   })
 
+  it('stops calling a turn live once the Host reports the Session idle', () => {
+    // The live stream can drop the closing `turn/end`, and then the log alone
+    // reads as a turn still in progress: the transcript kept its clock running
+    // over a finished turn until the screen was reloaded from scratch. The
+    // Host's own run state is what settles it.
+    const dropped = items(user(1, 'q'), assistant(2, 'thinking out loud'))
+    expect(groupTurns(dropped)[0]!.live).toBe(true)
+    expect(groupTurns(dropped, { running: false })[0]!.live).toBe(false)
+    // While the Host says it is running, the trailing turn stays live.
+    expect(groupTurns(dropped, { running: true })[0]!.live).toBe(true)
+
+    // A turn the Host has never reported on keeps the log-only reading: an
+    // unknown Session is not an idle one.
+    expect(groupTurns(dropped, { running: undefined })[0]!.live).toBe(true)
+  })
+
   it('seats the branch control on the turn tail, anchored at the turn/end seq', () => {
     // The web forks at the closing boundary it already holds, not at the
     // message seq, and a later delivery row never displaces the answer.

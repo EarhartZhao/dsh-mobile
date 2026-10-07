@@ -22,6 +22,7 @@ import {
   turnTail,
   type Turn,
   type TurnBranchAnchor,
+  type TurnGroupOptions,
   type TurnProcessStep,
 } from './turns.ts'
 
@@ -73,10 +74,12 @@ export interface Transcript {
 /**
  * Group a conversation into the rows the transcript renders.
  * @param items - conversation items, in log order.
+ * @param options - the Host's run state, which settles a turn whose closing
+ *   event the live stream dropped.
  * @returns the turns, their rows, and the item-key → row-index map.
  */
-export function buildTranscript(items: ConversationItem[]): Transcript {
-  const turns = groupTurns(items)
+export function buildTranscript(items: ConversationItem[], options: TurnGroupOptions = {}): Transcript {
+  const turns = groupTurns(items, options)
   const rows: TranscriptRow[] = []
   const rowIndexOfItemKey = new Map<string, number>()
   /** Each turn's first row, for the content the transcript folds away. */

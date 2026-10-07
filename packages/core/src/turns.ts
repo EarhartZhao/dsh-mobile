@@ -359,8 +359,20 @@ function settledRows(turn: Turn): TurnRow[] {
   ]
 }
 
+/** What the caller knows about the Session beyond its items. */
+export interface TurnGroupOptions {
+  /**
+   * Host-reported run state. `false` is authoritative: nothing is running, so
+   * no turn may claim to be live. That matters when the live stream dropped the
+   * closing `turn/end` — the log then looks like a turn still in progress, and
+   * without this the transcript keeps a clock running over a finished turn
+   * forever. `undefined` keeps the log-only reading.
+   */
+  running?: boolean | undefined
+}
+
 /** Split a conversation into turns, each with one process block plus its rows. */
-export function groupTurns(items: ConversationItem[]): Turn[] {
+export function groupTurns(items: ConversationItem[], options: TurnGroupOptions = {}): Turn[] {
   const turns: Turn[] = []
   let current: Turn | null = null
   /** A `turn/start` seen before its turn's first content row. */
@@ -463,7 +475,9 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
     }
     // Only the newest turn may still be running with no recorded end. An older
     // turn whose closing event sits outside the loaded page is history, not work.
-    turn.live = turn.running || (turn.endReason === undefined && index === turns.length - 1)
+    turn.live = options.running === false
+      ? false
+      : turn.running || (turn.endReason === undefined && index === turns.length - 1)
     turn.summary = summarizeSteps(turn.process)
     turn.changes = summarizeFileChanges(
       turn.process.flatMap(step => step.kind === 'tool' ? diffsOf(step.item) : []),

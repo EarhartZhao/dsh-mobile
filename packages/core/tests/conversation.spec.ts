@@ -477,6 +477,22 @@ describe('deriveConversation', () => {
     expect(deriveConversation(store.sessions.get('s-1')!)).toEqual([])
   })
 
+  it('drops transient buffers the Host has already stopped running', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: '查一下' }], source: { kind: 'user' } } })
+    feed(store, 2, 'assistant/chunk', { turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0, chunk: { type: 'text-delta', index: 0, text: '半句' } })
+    const session = store.sessions.get('s-1')!
+
+    // The closing message never arrived — the live stream dropped it — so the
+    // buffer is still on the log and reads as a half-typed answer.
+    expect(deriveConversation(session).map(i => i.kind)).toEqual(['user', 'stream'])
+    // Once the Host reports the Session idle those buffers are stale leftovers,
+    // not content in flight, so they render nowhere.
+    expect(deriveConversation(session, { running: false }).map(i => i.kind)).toEqual(['user'])
+    // Unknown (no Host report) keeps the log-only reading.
+    expect(deriveConversation(session, { running: undefined }).map(i => i.kind)).toEqual(['user', 'stream'])
+  })
+
   it('skips injected-context user messages (non-user source kind)', () => {
     const store = new SessionStore()
     // Real wire shape (verified against harness 0.1.1-rc.2): data IS the message.

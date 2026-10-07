@@ -60,6 +60,13 @@ export interface SessionState {
   pendingApprovals: Map<string, PendingApproval>
   pendingQuestions: Map<string, PendingQuestion>
   running: boolean
+  /**
+   * Whether {@link running} came from the Host at all. A Session the App has
+   * never heard a status for defaults to not-running, which is not the same
+   * fact as "the Host says this Session is idle": the transcript only lets the
+   * Host settle a turn it has actually reported on.
+   */
+  runningKnown: boolean
   todos: TodoItemView[]
   usage: UsageView | null
 }
@@ -92,6 +99,7 @@ function emptySession(sessionId: string): SessionState {
     pendingApprovals: new Map(),
     pendingQuestions: new Map(),
     running: false,
+    runningKnown: false,
     todos: [],
     usage: null,
   }
@@ -184,6 +192,7 @@ export class SessionStore extends Emitter<StoreEvents> {
       session.pendingApprovals.clear()
       session.pendingQuestions.clear()
       session.running = false
+      session.runningKnown = false
     }
     this.emit('changed', { sessionId: undefined })
   }
@@ -344,7 +353,9 @@ export class SessionStore extends Emitter<StoreEvents> {
         this.summaries = this.summaries.filter(s => s.sessionId !== frame.sessionId)
         break
       case 'host/session-status': {
-        this.session(frame.sessionId).running = frame.running
+        const session = this.session(frame.sessionId)
+        session.running = frame.running
+        session.runningKnown = true
         const summary = this.summaries.find(s => s.sessionId === frame.sessionId)
         if (summary !== undefined) summary.running = frame.running
         break

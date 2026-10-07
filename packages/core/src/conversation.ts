@@ -275,7 +275,27 @@ function normalizeEventType(type: unknown): unknown {
  */
 const LIVE_TAIL_SEQ = 1_000_000_000
 
-export function deriveConversation(session: SessionState): ConversationItem[] {
+/**
+ * What the caller knows about the Session beyond its log.
+ *
+ * The transcript's live surface — a streaming bubble, an announced-but-
+ * undispatched call, the "深度求索中" clock — is a claim that the model is
+ * working right now, and the log alone cannot always settle that claim: the
+ * live event stream can drop mid-turn, leaving chunk buffers whose closing
+ * `assistant/message` never arrived. The Host's own run state is what settles
+ * it, so a caller that has heard from the Host passes it in.
+ */
+export interface ConversationOptions {
+  /**
+   * Host-reported run state: `false` means nothing is in flight, so the
+   * transient buffers are stale leftovers and are not rendered at all.
+   * `undefined` keeps the client's own reading of the log, which is what a
+   * Session the Host has never reported on gets.
+   */
+  running?: boolean | undefined
+}
+
+export function deriveConversation(session: SessionState, options: ConversationOptions = {}): ConversationItem[] {
   const items: ConversationItem[] = []
   const live = new Map<string, ChunkBuffer>()
   /**
@@ -573,30 +593,32 @@ export function deriveConversation(session: SessionState): ConversationItem[] {
    * that turn to anchor against. They sort behind every durable item instead,
    * in creation order.
    */
-  let liveOffset = 0
-  for (const buffer of live.values()) {
-    if (finalizedSteps.has(`${buffer.turn}:${buffer.step}`)) continue
-    items.push({
-      kind: 'stream',
-      key: `s${buffer.turn}:${buffer.step}`,
-      seq: LIVE_TAIL_SEQ + liveOffset++,
-      time: buffer.time,
-      text: buffer.text,
-      reasoning: buffer.reasoning,
-    })
-  }
-  /** Announced calls get the same tail treatment: they are the newest thing
-   *  happening, so they belong after the durable log rather than wherever their
-   *  seq-less chunk happened to arrive. */
-  for (const entry of preparing.values()) {
-    items.push({
-      kind: 'preparing',
-      key: `p${entry.callId}`,
-      seq: LIVE_TAIL_SEQ + liveOffset++,
-      time: entry.time,
-      callId: entry.callId,
-      name: entry.name,
-    })
+  if (options.running !== false) {
+    let liveOffset = 0
+    for (const buffer of live.values()) {
+      if (finalizedSteps.has(`${buffer.turn}:${buffer.step}`)) continue
+      items.push({
+        kind: 'stream',
+        key: `s${buffer.turn}:${buffer.step}`,
+        seq: LIVE_TAIL_SEQ + liveOffset++,
+        time: buffer.time,
+        text: buffer.text,
+        reasoning: buffer.reasoning,
+      })
+    }
+    /** Announced calls get the same tail treatment: they are the newest thing
+     *  happening, so they belong after the durable log rather than wherever their
+     *  seq-less chunk happened to arrive. */
+    for (const entry of preparing.values()) {
+      items.push({
+        kind: 'preparing',
+        key: `p${entry.callId}`,
+        seq: LIVE_TAIL_SEQ + liveOffset++,
+        time: entry.time,
+        callId: entry.callId,
+        name: entry.name,
+      })
+    }
   }
   items.sort((a, b) => a.seq - b.seq)
   return items

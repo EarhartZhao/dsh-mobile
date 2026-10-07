@@ -197,6 +197,39 @@ describe('ChatScreen transcript backfill', () => {
     expect(screenText(tree)).not.toContain('chat.backfilling')
   })
 
+  it('walks back from the oldest real record, not from a live chunk placeholder', async () => {
+    const { manager, history } = setup()
+    history
+      .mockResolvedValueOnce(okHistory(page([5], true)))
+      .mockResolvedValueOnce(okHistory(page([4], false)))
+    const tree = render(manager)
+    await settle()
+
+    // A transient chunk rides seq 0, which is not a log position. Counting it as
+    // the oldest seq made the walk ask for records before seq 0: the Host
+    // answered an empty page, the walk read that as "history exhausted", and the
+    // records between the chunk and the loaded window were never read.
+    act(() => {
+      manager.store.applyMuxFrame(RpcId('f0'), {
+        type: 'session/event', sessionId: 's1' as never,
+        event: {
+          seq: 0, time: 0, type: 'assistant/chunk',
+          data: {
+            turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0,
+            chunk: { type: 'text-delta', index: 0, text: '写了一半' },
+          },
+        } as never,
+      })
+    })
+    await settle()
+
+    expect(history.mock.calls.map(call => call[0].beforeSeq)).toEqual([undefined, 5])
+    // The chunk rides along at the tail, where its arrival put it; what matters
+    // is that the walk reached seq 4 instead of stopping on seq 0.
+    expect(manager.store.sessions.get('s1')?.events.map(entry => entry.event.seq)).toEqual([4, 5, 0])
+    expect(screenText(tree)).toContain('消息 4')
+  })
+
   it('stops the walk on pause instead of pulling the next page', async () => {
     const { manager, history } = setup()
     let release: (value: unknown) => void = () => undefined
@@ -457,6 +490,48 @@ describe('ChatScreen running turn', () => {
     expect(manager.store.sessions.get('s1')?.running).toBe(false)
     expect(screenText(tree)).toContain('chat.thoughtStep')
     expect(screenText(tree)).toContain('先规划一下')
+  })
+
+  it('stops showing a turn as live once the Host reports the Session idle', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    const status = (running: boolean): void => {
+      act(() => {
+        manager.store.applyHostFrame({ type: 'host/session-status', sessionId: s1, running })
+      })
+    }
+    const chunk = (): void => {
+      act(() => {
+        manager.store.applyMuxFrame(RpcId('f0'), {
+          type: 'session/event', sessionId: s1,
+          event: {
+            seq: 0, time: 0, type: 'assistant/chunk',
+            data: {
+              turn: 1, step: 1, transient: true, attemptId: 'a1', index: 0,
+              chunk: { type: 'text-delta', index: 0, text: '写了一半' },
+            },
+          } as never,
+        })
+      })
+    }
+
+    // The live stream drops mid-turn: the chunks land, their closing message and
+    // the turn's `turn/end` never do, so the log still reads as work in flight.
+    status(true)
+    chunk()
+    await settle()
+    expect(screenText(tree)).toContain('chat.running')
+
+    // The Host is the authority on whether anything is running: once it says the
+    // Session is idle the clock goes away, instead of running over a finished
+    // turn until the screen is reloaded from scratch.
+    status(false)
+    await settle()
+    expect(screenText(tree)).not.toContain('chat.running')
+    expect(screenText(tree)).not.toContain('写了一半')
   })
 })
 

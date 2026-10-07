@@ -181,6 +181,9 @@ describe('SessionStore', () => {
 
     store.applyHostFrame({ type: 'host/session-status', sessionId: sid, running: true })
     expect(store.sessions.get('s-1')!.running).toBe(true)
+    // The status frame is what makes the run state the Host's own statement
+    // rather than the not-running default a fresh Session starts with.
+    expect(store.sessions.get('s-1')!.runningKnown).toBe(true)
     expect(store.summaries[0]!.running).toBe(true)
     store.applyHostFrame({ type: 'host/workspace-changed', workspace: { workspaceId: 'w1', title: 'W', sessionIds: [] } as never })
     store.applyHostFrame({ type: 'host/workspace-removed', workspaceId: 'w1' as never })
