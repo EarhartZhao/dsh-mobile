@@ -1,6 +1,7 @@
 export * from './emitter.ts'
 export * from './compatibility.ts'
 export * from './session-store.ts'
+export * from './session-list.ts'
 export * from './connection-manager.ts'
 export * from './conversation.ts'
 export * from './unknown-event.ts'

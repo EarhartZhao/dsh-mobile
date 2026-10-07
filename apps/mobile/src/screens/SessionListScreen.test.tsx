@@ -1,5 +1,5 @@
 import React from 'react'
-import { FlatList } from 'react-native'
+import { FlatList, TextInput } from 'react-native'
 import renderer, { act } from 'react-test-renderer'
 import type { ConnectionManager } from '@dsh-mobile/core'
 
@@ -153,5 +153,62 @@ describe('SessionListScreen grouping', () => {
 
     expect(expanded).toBe('ChevronDownOutline')
     expect(collapsed).toBe(expanded)
+  })
+
+  /**
+   * `session.list` ships every Session, subagent children included: one
+   * delegating turn leaves a child per agent, each seeded with the parent's own
+   * prompt, and the list rendered them as a run of rows that read like
+   * duplicates of the same chat. The Web sidebar filters them out
+   * (`sessionVisible`), so the App does too.
+   */
+  const withChild = (): ConnectionManager => ({
+    ...manager,
+    store: {
+      ...manager.store,
+      summaries: [
+        ...manager.store.summaries,
+        {
+          sessionId: 'child', blank: false, updatedAt: 4, running: false,
+          origin: 'subagent', parentSessionId: 's1', projections: { asOfSeq: 1, values: { title: '子代理会话' } },
+        },
+      ],
+      title: (sessionId: string) => sessionId === 'child' ? '子代理会话' : manager.store.title(sessionId),
+    },
+  }) as unknown as ConnectionManager
+
+  it('never lists a subagent child the host reports', () => {
+    const tree = render(withChild())
+
+    expect(tree.root.findAllByProps({ children: '子代理会话' })).toHaveLength(0)
+    // The parent it was delegated from keeps its row.
+    expect(tree.root.findAllByProps({ children: '第二个会话' }).length).toBeGreaterThan(0)
+  })
+
+  it('drops subagent children from search results too', async () => {
+    const client = {
+      sessions: {
+        search: jest.fn().mockResolvedValue({
+          result: {
+            ok: true,
+            value: {
+              items: [
+                { sessionId: 's2', snippet: '命中父会话' },
+                { sessionId: 'child', snippet: '命中子代理' },
+              ],
+              hasMore: false,
+            },
+          },
+        }),
+      },
+    }
+    const tree = render({ ...withChild(), client } as unknown as ConnectionManager)
+    const input = tree.root.findByType(TextInput)
+
+    act(() => { input.props.onChangeText('天津') })
+    await act(async () => { input.props.onSubmitEditing() })
+
+    expect(tree.root.findAllByProps({ children: '命中父会话' }).length).toBeGreaterThan(0)
+    expect(tree.root.findAllByProps({ children: '命中子代理' })).toHaveLength(0)
   })
 })

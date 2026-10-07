@@ -11,7 +11,7 @@ import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { PromptModal } from '../components/PromptModal'
 import { sessionSections } from '../session-sections'
-import { sessionDisplayTitle, sessionRowTitle } from '@dsh-mobile/core'
+import { archivedSessions, isSubagentSession, listedSessions, sessionDisplayTitle, sessionRowTitle } from '@dsh-mobile/core'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'
 import { Icon } from '../icons'
@@ -81,9 +81,9 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
   const [sessionMenu, setSessionMenu] = useState<{ sessionId: string; title: string; archived: boolean } | null>(null)
   const [workspaceMenu, setWorkspaceMenu] = useState<{ workspaceId: string; title: string } | null>(null)
   const provisionalId = createdSessionId ?? currentSessionId ?? null
-  const visible = store.summaries.filter(s =>
-    (!s.blank || s.sessionId === provisionalId) && !store.archivedSessionIds.includes(s.sessionId))
-  const archived = store.summaries.filter(s => store.archivedSessionIds.includes(s.sessionId))
+  const listFilter = { currentSessionId: provisionalId, archivedSessionIds: store.archivedSessionIds }
+  const visible = listedSessions(store.summaries, listFilter)
+  const archived = archivedSessions(store.summaries, store.archivedSessionIds)
   const visibleById = new Map(visible.map(s => [s.sessionId, s]))
   const accountedIds = new Set(store.workspaces.flatMap(ws => ws.sessionIds))
   const allOrdered = [
@@ -289,7 +289,11 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
     const client = manager.client
     if (client === null) return
     const result = await client.sessions.search({ query: q } as never).catch(() => null)
-    setSearchHits(result?.result.ok ? (result.result.value.items as never) : [])
+    const items = (result?.result.ok ? result.result.value.items : []) as unknown as { sessionId: string; snippet: string }[]
+    // Search covers whatever the host lists, subagent children included; they
+    // are no more openable from a result than they are from a row.
+    const subagentIds = new Set<string>(manager.store.summaries.filter(isSubagentSession).map(s => s.sessionId))
+    setSearchHits(items.filter(item => !subagentIds.has(item.sessionId)))
   }
 
   const archive = (sessionId: string): void => {

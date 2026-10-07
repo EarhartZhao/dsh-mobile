@@ -5,6 +5,7 @@
  * reproduces. Kept pure so the ordering and filtering rules stay testable.
  */
 import type { SessionSummary, WorkspaceView } from '@dsh-mobile/protocol'
+import { listedSessions } from '@dsh-mobile/core'
 
 export interface SessionSection {
   /** Workspace id, or null for the ungrouped bucket. */
@@ -32,12 +33,10 @@ export interface SessionSectionsInput {
  * to show are dropped rather than rendered as an empty header.
  */
 export function sessionSections(input: SessionSectionsInput): SessionSection[] {
-  const visible = input.summaries.filter(
-    summary => (!summary.blank
-      || (input.currentSessionId !== undefined && input.currentSessionId !== null
-        && summary.sessionId === input.currentSessionId))
-      && !input.archivedSessionIds.includes(summary.sessionId),
-  )
+  const visible = listedSessions(input.summaries, {
+    currentSessionId: input.currentSessionId,
+    archivedSessionIds: input.archivedSessionIds,
+  })
   const visibleIds = new Set<string>(visible.map(summary => summary.sessionId))
   const claimed = new Set<string>()
   const sections: SessionSection[] = []

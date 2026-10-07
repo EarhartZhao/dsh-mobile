@@ -1,8 +1,8 @@
 import { sessionSections } from './session-sections'
 import type { SessionSummary, WorkspaceView } from '@dsh-mobile/protocol'
 
-function summary(sessionId: string, blank = false) {
-  return { sessionId, blank, updatedAt: 0, running: false } as unknown as SessionSummary
+function summary(sessionId: string, blank = false, extra: Record<string, unknown> = {}) {
+  return { sessionId, blank, updatedAt: 0, running: false, ...extra } as unknown as SessionSummary
 }
 
 function workspace(workspaceId: string, title: string, sessionIds: string[]) {
@@ -43,6 +43,22 @@ describe('sessionSections', () => {
     })
 
     expect(sections.map(section => section.sessionIds)).toEqual([['s1'], ['loose']])
+  })
+
+  it('drops subagent children the host lists alongside their parent', () => {
+    // The 天津 delegation left 17 children seeded with the parent's prompt; as
+    // rows they read as duplicates of the same chat.
+    const sections = sessionSections({
+      workspaces: [workspace('w1', 'A', ['parent', 'child', 'grandchild'])],
+      summaries: [
+        summary('parent'),
+        summary('child', false, { origin: 'subagent', parentSessionId: 'parent' }),
+        summary('grandchild', false, { origin: 'subagent', parentSessionId: 'child' }),
+      ],
+      archivedSessionIds: [],
+    })
+
+    expect(sections.map(section => section.sessionIds)).toEqual([['parent']])
   })
 
   it('keeps the one provisional blank row the user is in, like the Web sidebar', () => {

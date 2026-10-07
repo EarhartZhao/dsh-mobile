@@ -96,6 +96,24 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 > - 验证：`packages/core` test（17 套 133 例，改动 settled 折叠与跳转两条期望）/ `apps/mobile` typecheck / test
 >   （27 套 195 例，「运行中的一轮」用例改为：`turn/end` 后动作行 2 个、旁白不再出现、收尾回答仍在）/ lint 0 error。
 
+> 进度（2026-10-07 第二十轮）：**会话列表不再混入子代理会话。**
+> - 症状：App 列表里同一句提示词重复出现十几行，dsh 侧正常。宿主 `session.list` 返回的是**全部**会话，子代理
+>   子会话也在其中——一次委派任务每个 agent 写一个子会话（天津那次留下 17 个），且都以父会话的原提示词当种子，
+>   读起来就像同一个会话复制了十几份。
+> - web 的规则在 `packages/client/ui-workspace/src/client/tree.ts` 的 `sessionVisible`：
+>   `if (session.origin === 'subagent') return false`。子会话只从父会话的 lineage 进（App 走 subagent 面板
+>   那条路），不占列表行；App 缺这条过滤，于是全落进「未分组」桶。
+> - 现在把这条可见性规则收进 `packages/core/src/session-list.ts`（`isSubagentSession` / `listedSessions` /
+>   `archivedSessions`），列表页与 `session-sections` 共用同一份，不再各写一遍布尔式；`summaries` 仍是完整
+>   注册表，从子代理面板打开的会话照样能取到自己的标题与 preset。搜索命中同样过这条规则（web 的
+>   `sessionVisible` 对列表与搜索一视同仁）。
+> - 只按 `origin === 'subagent'` 判，**不按** `parentSessionId`：fork 出来的会话带 `parentSessionId` 而不带
+>   `origin`，它是用户可见的一等会话。
+> - 验证：`packages/core` test（18 套 137 例，新增 `session-list.spec.ts` 4 例）/ `apps/mobile` typecheck /
+>   test（27 套 198 例，新增「不渲染子代理行」「搜索结果剔除子代理」两条）/ lint 0 error（222 warnings 基线
+>   不变）。真机（vivo V2405A，dev 包）复验：同一宿主同一份数据，列表由 22 行降到 5 行（22 − 17 个子会话），
+>   父会话仍能打开、子代理面板仍列出 3 个直接子级并可进入。
+
 > 进度（2026-10-07 第十九轮）：**运行中的轮次按 web 的读法逐段渲染，并修掉思考时的三处布局问题。**
 > - 答案位置：`groupTurns` 原先把整轮的工序 block 统一插在答案之前（`rows = [prompt, process, 所有可见项]`），
 >   于是「我来查一下天津近五年的经济数据。」这类**中途旁白**被压到了它后面那些工具调用的下方。web 的读法是
