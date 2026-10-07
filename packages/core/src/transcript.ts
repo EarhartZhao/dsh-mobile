@@ -14,14 +14,34 @@
  * mapping from an item's key to the row that carries it, so a caller never has
  * to guess the relationship.
  */
+import type { ProcessActivitySummary } from './activity.ts'
 import type { ConversationItem } from './conversation.ts'
-import { groupTurns, processOwnerItem, turnTail, type Turn, type TurnBranchAnchor } from './turns.ts'
+import {
+  groupTurns,
+  processOwnerItem,
+  turnTail,
+  type Turn,
+  type TurnBranchAnchor,
+  type TurnProcessStep,
+} from './turns.ts'
 
-/** One turn's process disclosure, rendered on its own only when nothing else can hold it. */
+/**
+ * One turn's process disclosure. A live turn renders one of these per run, in
+ * the place that run happened; a settled turn's steps ride inside its answer's
+ * card instead (see {@link TranscriptItemRow.process}), so this row appears then
+ * only for a turn with nothing else to hold it.
+ */
 export interface TranscriptProcessRow {
   kind: 'turn'
   key: string
+  /** The turn the block belongs to; its liveness decides how the block reads. */
   turn: Turn
+  /** The steps this block holds, in the order they happened. */
+  steps: TurnProcessStep[]
+  /** This block's own activity, for its header. */
+  summary: ProcessActivitySummary
+  /** Tool calls inside this block, for the block's accessibility label. */
+  toolCallCount: number
 }
 
 /** One plain transcript item. */
@@ -29,6 +49,8 @@ export interface TranscriptItemRow {
   kind: 'item'
   key: string
   item: ConversationItem
+  /** The turn that owns this item — its liveness gates the message's action row. */
+  turn: Turn
   /** The turn whose disclosure and change card ride inside this item's card. */
   process?: Turn
   /** Present only on the row the turn's branch control belongs to. */
@@ -66,11 +88,23 @@ export function buildTranscript(items: ConversationItem[]): Transcript {
     rowStartOfTurn.set(turn.key, rows.length)
     for (const row of turn.rows) {
       if (row.kind === 'process') {
-        // A turn with an answer shows its disclosure inside that answer's card.
-        if (answer !== undefined) continue
+        // A settled turn shows its disclosure inside its answer's card, the way
+        // the web folds a finished run. A live turn keeps every run where it
+        // happened, so the answer the model narrated stays between the work
+        // before it and the work after it instead of sinking under both.
+        if (answer !== undefined && !turn.live) continue
         const index = rows.length
-        rows.push({ kind: 'turn', key: `process:${turn.key}`, turn })
-        for (const step of turn.process) {
+        rows.push({
+          kind: 'turn',
+          // The run's first step names it: stable while the run grows, and a new
+          // run after an answer is a new row.
+          key: `process:${turn.key}:${row.steps[0]?.key ?? ''}`,
+          turn,
+          steps: row.steps,
+          summary: row.summary,
+          toolCallCount: row.toolCallCount,
+        })
+        for (const step of row.steps) {
           rowIndexOfItemKey.set(step.key, index)
           if (step.kind === 'tool') rowIndexOfItemKey.set(step.item.key, index)
         }
@@ -81,6 +115,7 @@ export function buildTranscript(items: ConversationItem[]): Transcript {
         kind: 'item',
         key: row.item.key,
         item: row.item,
+        turn,
         ...(row.item === answer ? { process: turn } : {}),
         ...(tail !== undefined && row.item === tail.item && tail.branch !== undefined
           ? { branch: tail.branch }

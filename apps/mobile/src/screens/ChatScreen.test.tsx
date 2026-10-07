@@ -36,6 +36,7 @@ jest.mock('react-native-markdown-display', () => {
 })
 
 import { ChatScreen } from './ChatScreen'
+import { MessageActionRow } from '../components/MessageActions'
 
 const PAGE = {
   events: [{
@@ -319,6 +320,138 @@ describe('ChatScreen tail following', () => {
     expect(toEnd).not.toHaveBeenCalled()
     // The anchor is what holds their place now.
     expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
+  })
+
+  it('keeps the tail when a stale sample reports the offset a chunk grew away from', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    const { list, toEnd, toOffset } = scrollCommands(tree)
+    act(() => { list.props.onLayout(listLayout(800)) })
+    // The reader is at the bottom and a chunk lands below them: the sample the
+    // native side sends before the follow scroll runs still reports the offset
+    // they were reading at. That is growth, not the reader moving, so the tail
+    // stays theirs — the sample used to disarm the follow and leave the list a
+    // screen short of the newest row.
+    act(() => { list.props.onScroll(scrollTo(200, 2_000, 800)) })
+    act(() => { list.props.onContentSizeChange(390, 2_400) })
+    await frame()
+
+    expect(toOffset.mock.calls).toEqual([[{ offset: 1_600, animated: false }]])
+    expect(toEnd).not.toHaveBeenCalled()
+    expect(list.props.maintainVisibleContentPosition).toBeUndefined()
+  })
+})
+
+/**
+ * What a turn still in flight renders.
+ *
+ * The web reads a running turn run by run, holds its icon row back until the
+ * turn closes, and keeps the live trace open for as long as the turn is the one
+ * being watched. Every part of that is visible to the reader while the model
+ * works, so each is worth pinning down here.
+ */
+describe('ChatScreen running turn', () => {
+  const s1 = 's1' as never
+
+  /** One recorded event, the way the store's mux frames deliver them. */
+  function feed(manager: ConnectionManager, seq: number, type: string, data: unknown): void {
+    act(() => {
+      manager.store.applyMuxFrame(RpcId(`f${seq}`), {
+        type: 'session/event', sessionId: s1,
+        event: { seq, time: seq, type, data } as never,
+      })
+    })
+  }
+
+  /** A step that thought, then answered, then called a tool. */
+  function planningTurn(manager: ConnectionManager): void {
+    feed(manager, 2, 'assistant/message', {
+      turn: 1, step: 1,
+      message: {
+        content: [
+          { type: 'reasoning', text: '先规划一下' },
+          { type: 'text', text: '我来查一下天津近五年的经济数据。' },
+        ],
+      },
+    })
+    feed(manager, 3, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'web_search', arguments: '{}' })
+    feed(manager, 4, 'tool/result', {
+      turn: 1, step: 1,
+      message: { toolCallId: 'c1', content: [{ type: 'text', text: '8 个来源' }] },
+    })
+    feed(manager, 5, 'assistant/message', {
+      turn: 1, step: 2,
+      message: {
+        content: [
+          { type: 'reasoning', text: '再看看来源' },
+          { type: 'text', text: '结果如下。' },
+        ],
+      },
+    })
+  }
+
+  /** The transcript's rows, as the list was handed them. */
+  function rowText(tree: renderer.ReactTestRenderer): string[] {
+    const list = tree.root.findByType(FlatList)
+    return (list.props.data as { kind: string, item?: { text?: string } }[])
+      .map(row => row.kind === 'turn' ? 'process' : row.item?.text ?? '')
+  }
+
+  it('keeps every run where it happened, so a narrated answer stays above the work after it', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    planningTurn(manager)
+    await settle()
+
+    // The web emits a step's reasoning, then its reply, then the tools that
+    // followed, and folds the lot only once the turn closes. Hoisting every run
+    // above the turn's answers put "我来查一下…" under work that came after it.
+    expect(rowText(tree)).toEqual([
+      '你好', 'process', '我来查一下天津近五年的经济数据。', 'process', '结果如下。',
+    ])
+    expect(manager.store.sessions.get('s1')?.running ?? false).toBe(false)
+  })
+
+  it('holds the icon row back until the turn closes', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    planningTurn(manager)
+    await settle()
+    // The prompt keeps its own clock row throughout; the answer still being
+    // written has nothing to copy, rate or fork from yet.
+    expect(tree.root.findAllByType(MessageActionRow)).toHaveLength(1)
+
+    feed(manager, 9, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await settle()
+    // Once it closes, the prompt and both answers carry their own row.
+    expect(tree.root.findAllByType(MessageActionRow)).toHaveLength(3)
+  })
+
+  it('keeps a live turn\'s trace open between its steps', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    planningTurn(manager)
+    await settle()
+
+    // Nothing is in flight in this instant — the tool returned and the next
+    // step has not opened — but the turn is still the one being watched. The
+    // block used to fold here and unfold on the next chunk, which is the
+    // up-and-down the reader saw while the model worked.
+    expect(manager.store.sessions.get('s1')?.running).toBe(false)
+    expect(screenText(tree)).toContain('chat.thoughtStep')
+    expect(screenText(tree)).toContain('先规划一下')
   })
 })
 

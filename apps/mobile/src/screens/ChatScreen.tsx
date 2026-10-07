@@ -28,7 +28,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -478,11 +478,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
     listDistanceFromBottom.current = distanceFromBottom
     listViewportHeight.current = layoutMeasurement.height
-    // A small tolerance prevents minor layout rounding from disabling the
-    // normal follow-tail behavior. Never re-enable it while a finger drag or
-    // momentum scroll is active, because content measurement events may race
-    // with the gesture and move the list in the opposite direction.
-    if (!listInteractionActive.current) syncFollowTail(distanceFromBottom <= 48)
+    // Content growing below the reader is not the reader moving: a streamed
+    // chunk leaves the offset where it was, so the next sample reports a
+    // distance the reader never made. Disarming on that sample and re-arming on
+    // the follow scroll that answers it turned every chunk into a toggle of the
+    // scroll anchor and of the offset it holds — the up-and-down the reader saw
+    // while the model was thinking. Only their own gesture (or the control that
+    // returns them to the tail) hands the offset over, so this side only ever
+    // takes it back, with the small tolerance that keeps layout rounding from
+    // leaving the tail unowned.
+    if (!listInteractionActive.current && distanceFromBottom <= 48) syncFollowTail(true)
   }, [syncFollowTail])
 
   /** The viewport can be known before the first scroll sample arrives. */
@@ -1639,6 +1644,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 <View style={rowStyle}>
                   <TurnProcessBlock
                     turn={item.turn}
+                    steps={item.steps}
+                    summary={item.summary}
+                    toolCallCount={item.toolCallCount}
                     manager={manager}
                     sessionId={sessionId}
                     onLongPress={setMessageAction}
@@ -1660,7 +1668,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             : item.process !== undefined
               ? turnTokenUsage(item.process)
               : entry.usage === undefined ? null : stepTokenUsage(entry.usage)
-            const actions = entry.kind === 'user' || entry.kind === 'assistant'
+            /**
+             * The web hangs its icon row on the turn tail and only once the turn
+             * has closed (`closing === null` renders the tail alone): a message
+             * that is still being written has nothing to copy, rate or fork yet,
+             * and a prompt keeps its own clock row throughout.
+             */
+            const actions = entry.kind === 'user' || (entry.kind === 'assistant' && !item.turn.live)
               ? (
                 <MessageActionRow
                   time={typeof entry.time === 'number' ? entry.time : 0}
@@ -2235,8 +2249,18 @@ function RunningIndicator({ startedAt, divider = false }: {
   )
 }
 
-function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false }: {
+function TurnProcessBlock({ turn, steps, summary, toolCallCount, manager, sessionId, onLongPress, bare = false }: {
   turn: Turn
+  /**
+   * The steps this block holds: one run of a live turn, or — once the turn
+   * settles — its whole trace. The web reads a running turn run by run and
+   * folds the lot into one control when it closes.
+   */
+  steps: TurnProcessStep[]
+  /** This block's own activity: what a live header names it by. */
+  summary: ProcessActivitySummary
+  /** Tool calls inside this block, for the header's accessibility label. */
+  toolCallCount: number
   manager: ConnectionManager
   sessionId: string
   onLongPress: (item: ConversationItem) => void
@@ -2256,7 +2280,13 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
   // work happens, and a collapsed row here reads as "nothing is happening" —
   // exactly the gap that makes a long tool chain look stalled. Once the turn
   // settles it folds back to the answer, and a manual toggle always wins.
-  const open = manual ?? turn.running
+  //
+  // Liveness — not "a step is in flight right now" — is what holds it open. A
+  // turn between steps is still the turn being watched, and closing the block
+  // for the gap between a tool result and the next chunk dropped thousands of
+  // pixels and took them back on the next one: the up-and-down the reader saw
+  // while the model worked.
+  const open = manual ?? turn.live
   /**
    * The header says what the turn is doing, in the web's own two states. While
    * it runs, the newest step category and its one-line detail (`正在运行命令 ·
@@ -2267,7 +2297,6 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
    * which the web never puts on this row — those categories are what the
    * disclosure contains, not a second title.
    */
-  const summary = turn.summary
   const liveLabel = summary.running === undefined
     ? t('chat.step.thinking')
     : stepActivityLabel(summary.running, summary.preparing ? 'preparing' : 'running', t)
@@ -2297,16 +2326,18 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
     <View style={bare ? styles.turnProcessBare : styles.turnProcess}>
       <TouchableOpacity
         style={styles.turnProcessHeader}
-        onPress={() => setManual(value => !(value ?? false))}
+        // Toggling the state the row is actually showing: a live block is open
+        // before the reader ever touches it, so the first tap has to close it.
+        onPress={() => setManual(!open)}
         accessibilityRole="button"
-        accessibilityLabel={turn.toolCallCount > 0 ? t('chat.toolCallSummary', { count: turn.toolCallCount }) : label}
+        accessibilityLabel={toolCallCount > 0 ? t('chat.toolCallSummary', { count: toolCallCount }) : label}
       >
         <Text style={[styles.turnProcessLabel, turn.live && styles.turnProcessLive]} numberOfLines={1}>{title}</Text>
         <View style={open ? styles.turnProcessChevronOpen : undefined}>
           <Icon name="ChevronDownOutline" size={14} color={chat.labelTertiary} />
         </View>
       </TouchableOpacity>
-      {open && turn.process.map(step => step.kind === 'thinking'
+      {open && steps.map(step => step.kind === 'thinking'
         ? (
           <TouchableOpacity
             key={step.key}
@@ -2371,7 +2402,7 @@ function TurnProcessBlock({ turn, manager, sessionId, onLongPress, bare = false 
         ]}
         onClose={() => setCopied(null)}
         onAction={key => {
-          const step = turn.process.find(candidate => candidate.key === copied)
+          const step = steps.find(candidate => candidate.key === copied)
           setCopied(null)
           if (step === undefined || step.kind !== 'thinking') return
           if (key === 'copy') Clipboard.setString(step.text)
@@ -2601,9 +2632,14 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
           style={styles.assistantRow}
           onLongPress={onLongPress}
         >
-          {process !== undefined && (
+          {/* A settled turn's disclosure rides in the answer's own card; a live
+              turn's runs are rows of their own, above the answer they produced. */}
+          {process !== undefined && !process.live && (
             <TurnProcessBlock
               turn={process}
+              steps={process.process}
+              summary={process.summary}
+              toolCallCount={process.toolCallCount}
               manager={manager}
               sessionId={sessionId}
               onLongPress={() => onLongPress()}
@@ -2839,7 +2875,8 @@ const styles = StyleSheet.create({
    * rule under it, then the turn's own rows. It stays 16px clear of the answer
    * below, so the disclosure and the narration read as one column.
    */
-  turnProcess: { alignSelf: 'stretch', marginBottom: spacing(4) },
+  /** A row of its own: the list's own gap is what separates it from its answer. */
+  turnProcess: { alignSelf: 'stretch' },
   /** Embedded in the answer's own row: same geometry, the rule is the only chrome. */
   turnProcessBare: { alignSelf: 'stretch', marginBottom: spacing(4) },
   turnProcessHeader: {

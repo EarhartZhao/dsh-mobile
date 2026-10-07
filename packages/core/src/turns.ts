@@ -65,9 +65,15 @@ export interface Turn {
   /** Rows that still render on their own: prompts, answers, compactions. */
   visible: ConversationItem[]
   /**
-   * Render order for the turn: the prompt, then the process block, then what
-   * followed. Emitting the process block first put a turn's tools above the
-   * question they belong to, which read as the answer being cut in half.
+   * Render order for the turn. While it runs, every step stays where it
+   * happened: a run of reasoning and tool calls, then the answer that run
+   * produced, then the next run — the web's own flow, which is what keeps a
+   * narrated answer above the work that followed it. Emitting one block for the
+   * whole turn first put a turn's tools above the question they belong to.
+   *
+   * A settled turn is rebuilt by {@link settledRows} into the shape the
+   * transcript folds: the prompt, one disclosure holding every step, then
+   * everything that followed.
    */
   rows: TurnRow[]
   /** Tool steps in this turn, for the summary label. */
@@ -104,7 +110,15 @@ export interface Turn {
 }
 
 export type TurnRow =
-  | { kind: 'process' }
+  | {
+      kind: 'process'
+      /** The steps this block holds, in the order they happened. */
+      steps: TurnProcessStep[]
+      /** This block's own activity, so its header can name what it holds. */
+      summary: ProcessActivitySummary
+      /** Tool calls inside this block, for the block's own accessibility label. */
+      toolCallCount: number
+    }
   | { kind: 'item'; item: ConversationItem }
 
 /**
@@ -268,12 +282,78 @@ function stepsOf(item: ConversationItem): TurnProcessStep[] {
   return []
 }
 
+/**
+ * What one range of steps amounts to: the categories ranked by call count, plus
+ * the activity still in flight. The web titles each of its process groups from
+ * exactly this, so a range carries its own answer instead of reading the whole
+ * turn's.
+ * @param steps - the steps of one range, in order.
+ * @returns the range's ranked work and its live activity.
+ */
+function summarizeSteps(steps: TurnProcessStep[]): ProcessActivitySummary {
+  return summarizeActivity(
+    steps.flatMap(step => step.kind === 'tool'
+      ? [activityCall(step.item)]
+      : step.kind === 'preparing' ? [preparingCall(step)] : []),
+    steps
+      .filter((step): step is Extract<TurnProcessStep, { kind: 'thinking' }> => step.kind === 'thinking')
+      .map(step => step.text),
+  )
+}
+
+/**
+ * A settled turn's rows: the prompt, one disclosure holding every step, then
+ * everything that followed it, in order.
+ *
+ * The web stops reading a finished turn's process in place — its runs fold into
+ * one control above the answer — so the phone folds the same way: the
+ * disclosure a reader opens holds the whole trace rather than one run of it.
+ * @param turn - the settled turn, with its rows still in chronological order.
+ * @returns the turn's rows in the folded shape.
+ */
+function settledRows(turn: Turn): TurnRow[] {
+  const items = turn.rows.filter((row): row is Extract<TurnRow, { kind: 'item' }> => row.kind === 'item')
+  if (turn.process.length === 0) return items
+  const first = items.findIndex(row => row.item.kind !== 'user')
+  const at = first === -1 ? items.length : first
+  return [
+    ...items.slice(0, at),
+    { kind: 'process', steps: turn.process, summary: turn.summary, toolCallCount: turn.toolCallCount },
+    ...items.slice(at),
+  ]
+}
+
 /** Split a conversation into turns, each with one process block plus its rows. */
 export function groupTurns(items: ConversationItem[]): Turn[] {
   const turns: Turn[] = []
   let current: Turn | null = null
   /** A `turn/start` seen before its turn's first content row. */
   let pendingStart: number | undefined
+  /** The run of steps the turn is reading right now; an answer closes it. */
+  let run: TurnProcessStep[] = []
+  let runToolCalls = 0
+
+  /**
+   * Close the run the turn is in, so whatever comes next reads after it.
+   *
+   * The web splits a Step's reasoning from its reply and emits them as separate
+   * flow entries: the reasoning joins the run already open, the reply closes it,
+   * and the Step's own tool calls open the next one. A model that narrates its
+   * progress therefore keeps that narration between the work it describes and
+   * the work it went on to do, instead of having every run of the turn hoisted
+   * above it.
+   */
+  const flushRun = (): void => {
+    if (current === null || run.length === 0) return
+    current.rows.push({
+      kind: 'process',
+      steps: run,
+      summary: summarizeSteps(run),
+      toolCallCount: runToolCalls,
+    })
+    run = []
+    runToolCalls = 0
+  }
 
   const open = (item: ConversationItem): Turn => {
     const turn: Turn = {
@@ -311,22 +391,34 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
     }
     // A prompt opens a new turn; anything before the first prompt (a restored
     // greeting, say) still needs a home, so the first item opens one too.
-    if (item.kind === 'user' || current === null) current = open(item)
+    if (item.kind === 'user' || current === null) {
+      // The previous turn's trailing run belongs to that turn, not to the prompt
+      // that just closed it.
+      flushRun()
+      current = open(item)
+    }
 
     current.items.push(item)
-    current.process.push(...stepsOf(item))
-    if (item.kind === 'tool') current.toolCallCount += 1
+    const steps = stepsOf(item)
+    current.process.push(...steps)
+    run.push(...steps)
+    if (item.kind === 'tool') {
+      current.toolCallCount += 1
+      runToolCalls += 1
+    }
     if (isVisible(item)) {
       current.visible.push(item)
-      // The prompt opens the turn's rows; the process block and the answer are
-      // appended once every item has been seen.
-      if (item.kind === 'user') current.rows.push({ kind: 'item', item })
+      // The prompt and the answer each keep a row of their own, in turn order.
+      flushRun()
+      current.rows.push({ kind: 'item', item })
     }
     if (isRunning(item)) current.running = true
     const time = itemTime(item)
     if (time > current.endedAt) current.endedAt = time
     if (time > 0 && (current.startedAt === 0 || time < current.startedAt)) current.startedAt = time
   }
+  // The last turn's final run has no answer after it to close it.
+  flushRun()
 
   turns.forEach((turn, index) => {
     // Measured after the fact: only a closed turn reports elapsed time.
@@ -336,21 +428,13 @@ export function groupTurns(items: ConversationItem[]): Turn[] {
     // Only the newest turn may still be running with no recorded end. An older
     // turn whose closing event sits outside the loaded page is history, not work.
     turn.live = turn.running || (turn.endReason === undefined && index === turns.length - 1)
-    turn.summary = summarizeActivity(
-      turn.process.flatMap(step => step.kind === 'tool'
-        ? [activityCall(step.item)]
-        : step.kind === 'preparing' ? [preparingCall(step)] : []),
-      turn.process
-        .filter((step): step is Extract<TurnProcessStep, { kind: 'thinking' }> => step.kind === 'thinking')
-        .map(step => step.text),
-    )
+    turn.summary = summarizeSteps(turn.process)
     turn.changes = summarizeFileChanges(
       turn.process.flatMap(step => step.kind === 'tool' ? diffsOf(step.item) : []),
     )
-    if (turn.process.length > 0) turn.rows.push({ kind: 'process' })
-    for (const item of turn.visible) {
-      if (item.kind !== 'user') turn.rows.push({ kind: 'item', item })
-    }
+    // A live turn keeps the runs it already read in place; a settled one folds
+    // them into the single disclosure its answer carries.
+    if (!turn.live) turn.rows = settledRows(turn)
   })
 
   return turns

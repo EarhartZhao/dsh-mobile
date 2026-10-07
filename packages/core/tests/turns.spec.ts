@@ -169,6 +169,62 @@ describe('groupTurns', () => {
     expect(rowShape(turns[0]!)).toEqual(['q', 'process'])
   })
 
+  it('keeps a live turn\'s runs where they happened, so a narrated answer stays above the work after it', () => {
+    // The web splits a Step into its reasoning and its reply, and emits the
+    // reply where it happened: the tools that followed belong below it, not
+    // above it. Hoisting the whole turn's process above every answer was what
+    // put "我来查一下…" under work that only came after it was said.
+    const turns = groupTurns(items(
+      user(1, '查一下天津'),
+      assistant(2, '我来查一下天津近五年的经济数据。', '先规划'),
+      tool(3, 'web_search', 'running'),
+      assistant(4, '', '再想想'),
+      tool(5, 'web_fetch', 'running'),
+      assistant(6, '结果如下', ''),
+    ))
+
+    expect(rowShape(turns[0]!)).toEqual(['查一下天津', 'process', '我来查一下天津近五年的经济数据。', 'process', '结果如下'])
+    // Each block answers for itself: that is what its own header prints.
+    const blocks = turns[0]!.rows.filter(row => row.kind === 'process')
+    expect(blocks[0]).toMatchObject({
+      summary: { runningDetail: '先规划' },
+      toolCallCount: 0,
+      steps: [expect.objectContaining({ kind: 'thinking', text: '先规划' })],
+    })
+    expect(blocks[1]).toMatchObject({
+      toolCallCount: 2,
+      steps: [
+        expect.objectContaining({ kind: 'tool' }),
+        expect.objectContaining({ kind: 'thinking', text: '再想想' }),
+        expect.objectContaining({ kind: 'tool' }),
+      ],
+    })
+  })
+
+  it('folds a settled turn\'s runs back into the one disclosure above its answer', () => {
+    const turns = groupTurns(items(
+      user(1, 'q'),
+      assistant(2, 'progress', 'think'),
+      tool(3, 'read'),
+      assistant(4, 'final', 'think again'),
+      turnEnd(5, 1, 9_000, 'completed'),
+    ))
+
+    const turn = turns[0]!
+    expect(turn.live).toBe(false)
+    expect(rowShape(turn)).toEqual(['q', 'process', 'progress', 'final'])
+    const block = turn.rows.find(row => row.kind === 'process')
+    // A settled disclosure holds the whole trace, not one run of it.
+    expect(block).toMatchObject({
+      steps: [
+        expect.objectContaining({ kind: 'thinking' }),
+        expect.objectContaining({ kind: 'tool' }),
+        expect.objectContaining({ kind: 'thinking' }),
+      ],
+      toolCallCount: 1,
+    })
+  })
+
   it('renders an announced-but-undispatched call as a preparing step', () => {
     const turns = groupTurns(items(
       user(1, 'q'),

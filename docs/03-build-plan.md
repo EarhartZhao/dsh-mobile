@@ -77,6 +77,29 @@ Phase 1 和 Phase 2 的协议对接面只有一个：`svc./evt.` subject 约定 
 
 ## Phase 2：dsh-mobile M1/M2（Android 先行）
 
+> 进度（2026-10-07 第十九轮）：**运行中的轮次按 web 的读法逐段渲染，并修掉思考时的三处布局问题。**
+> - 答案位置：`groupTurns` 原先把整轮的工序 block 统一插在答案之前（`rows = [prompt, process, 所有可见项]`），
+>   于是「我来查一下天津近五年的经济数据。」这类**中途旁白**被压到了它后面那些工具调用的下方。web 的读法是
+>   按时间顺序逐段渲染（`conversation-nodes/process-groups.ts`：一个 Step 的 reasoning 归入当前段、reply 单独
+>   成行并结束该段、其后的工具调用开新段），只有轮次结束后才整轮折叠成一个 disclosure。现在 `TurnRow.process`
+>   携带自己那一段的 `steps`/`summary`/`toolCallCount`，运行中的轮次行序为 `[prompt, 段1, 答案1, 段2, 答案2…]`，
+>   轮次结束时再由 `settledRows` 折回「一个 disclosure 装整轮」的老样子（`turn/end` 后仍是答案卡内折叠）。
+> - 运行中的底部按钮：动作行原先只按 `entry.kind` 判断，答案还在流式时就把复制/评分/分支/用量/时间全挂上去了。
+>   web 的图标行挂在轮次尾部，且 `TurnTailNodeView.tsx` 在 `closing === null` 时**只渲染 tail**——还在写的消息
+>   没有可复制、可评分、可分支的东西。现在 assistant 的行要等 `!turn.live` 才出现，用户消息始终保留自己的时间行。
+> - 上下晃动（续第十八轮）：上一轮修掉「跟随滚动 vs 锚点」互抢之后还剩两个来源。① `TurnProcessBlock` 的
+>   展开条件是 `manual ?? turn.running`，而 `turn.running` 只看「此刻有没有 in-flight 项」——模型两个步骤之间的
+>   空档里它会折叠、下一个 chunk 再展开，每次都丢掉再补回上千像素；web 的依据是
+>   `ChatGroupSeat.tsx` 的 `alwaysOpen = presentation?.turnClosed === false`，**是轮次是否活着**说话，不是某一帧
+>   有没有在跑，所以改成 `manual ?? turn.live`。② `onListScroll` 里 `syncFollowTail(distanceFromBottom <= 48)`
+>   会对「内容在下方增长」这一采样解除跟随（chunk 落地时 offset 原地不动，量出来的是读者没做过的位移），
+>   再被 `onContentSizeChange` 的跟随滚动拉回来——每个 chunk 把滚动锚点和 offset 来回切一次。现在这一侧只在
+>   确实贴底（≤48px）时把跟随**收回**，交出去只由手势和「回到底部」控件负责。
+> - 验证：`apps/mobile` typecheck / test（27 套 195 例，新增 ChatScreen「running turn」3 例：逐段行序、运行中
+>   动作行 1 个而 `turn/end` 后 3 个、步骤空档仍保持展开；另加 tail 跟随 1 例：过期采样不丢尾部）/
+>   lint 0 error（222 warnings 基线不变）；`packages/core` test（17 套 133 例，新增 live 逐段与 settled 折叠各 1 例）。
+>   真机复测留待设备（`adb devices` 当时为空）。
+
 > 进度（2026-10-06 第十八轮）：**流式思考时聊天列表不再上下晃动。**
 > - 症结是两个机制同时抢滚动位置：跟随最新一行的滚动用 `FlatList.scrollToEnd`，而它是
 >   `VirtualizedList` 的**估算**（末尾行没测量过就用平均行长），正在流式的行恰恰是整段对话里

@@ -54,10 +54,44 @@ describe('buildTranscript', () => {
     const answer = transcript.rows.findIndex(row => row.kind === 'item' && row.item.key === 'a4')
     // A reasoning-only message and a tool call have no row: both resolve to the
     // turn that shows them, never past the end of the list.
+    // The message has no row of its own (it is empty), so it resolves to the
+    // turn's first row; the tool call is what its run's row holds.
     expect(transcript.rowIndexOfItemKey.get('a2')).toBe(0)
-    expect(transcript.rowIndexOfItemKey.get('t3')).toBe(0)
+    expect(transcript.rowIndexOfItemKey.get('t3')).toBe(1)
     expect(transcript.rowIndexOfItemKey.get('a4')).toBe(answer)
     expect(transcript.rowIndexOfItemKey.get('u1')).toBe(0)
+  })
+
+  it('reads a live turn run by run, with each answer between the runs', () => {
+    const transcript = buildTranscript([
+      user(1, 'q'),
+      assistant(2, 'progress', '先看目录'),
+      tool(3, 'read'),
+      assistant(4, 'answer'),
+    ])
+
+    // The web emits a Step's reasoning, then its reply, then the tools that
+    // followed: the narrated answer keeps the place it was said in instead of
+    // sinking under the whole turn's process.
+    expect(transcript.rows.map(row => row.kind === 'turn' ? 'process' : row.item.key))
+      .toEqual(['u1', 'process', 'a2', 'process', 'a4'])
+  })
+
+  it('folds a settled turn into one disclosure inside its answer', () => {
+    const transcript = buildTranscript([
+      user(1, 'q'),
+      assistant(2, 'progress', '先看目录'),
+      tool(3, 'read'),
+      assistant(4, 'answer'),
+      turnEnd(5, 1, 'completed'),
+    ])
+
+    expect(transcript.rows.map(row => row.kind === 'turn' ? 'process' : row.item.key))
+      .toEqual(['u1', 'a2', 'a4'])
+    // The disclosure rides the answer that opened the turn's visible content,
+    // which is where the web seats the folded control.
+    expect(transcript.rows[1]).toMatchObject({ process: expect.anything() })
+    expect(transcript.rows[0]).not.toHaveProperty('process')
   })
 
   it('gives a turn with no answer its own disclosure row and points tools at it', () => {
