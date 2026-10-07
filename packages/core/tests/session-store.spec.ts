@@ -38,6 +38,59 @@ describe('SessionStore', () => {
     expect(session.lastSeq).toBe(5)
   })
 
+  it('dedupes transient chunks by attempt and index, keeping their successors', () => {
+    const store = new SessionStore()
+    const chunk = (index: number): never => ({
+      type: 'assistant/chunk', seq: 0,
+      data: { transient: true, attemptId: 'attempt-1', index, turn: 1, step: 1, chunk: { type: 'text-delta', index, text: `t${index}` } },
+    }) as never
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: chunk(0) }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: chunk(0) }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: chunk(1) }))
+    // A fresh attempt restarts the numbering: the index alone would collide.
+    store.applyMuxFrame(...mux({
+      type: 'session/event', sessionId: sid,
+      event: {
+        type: 'assistant/chunk', seq: 0,
+        data: { transient: true, attemptId: 'attempt-2', index: 0, turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'again' } },
+      } as never,
+    }))
+    const session = store.sessions.get('s-1')!
+    expect(session.events.map(entry => (entry.event as { data: { index: number } }).data.index)).toEqual([0, 1, 0])
+  })
+
+  it('follows live records past the watermark without rescanning the log', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 4 }))
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 5, type: 'step/start' } as never }))
+    const session = store.sessions.get('s-1')!
+    expect(isLogBehindHost(session)).toBe(false)
+    // The re-opened follow reports a watermark past the last record we hold.
+    store.applyMuxFrame(...mux({ type: 'session/subscribed', sessionId: sid, lastSeq: 9 }))
+    expect(isLogBehindHost(session)).toBe(true)
+    // Records at or below the watermark are replays: they are dropped, and the
+    // Session stays behind until a tail read lands them.
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 9, type: 'turn/end' } as never }))
+    expect(isLogBehindHost(session)).toBe(true)
+    // A record past the watermark is news, and it clears the mark.
+    store.applyMuxFrame(...mux({ type: 'session/event', sessionId: sid, event: { seq: 10, type: 'turn/end' } as never }))
+    expect(isLogBehindHost(session)).toBe(false)
+  })
+
+  it('merges the same history page twice without duplicating records', () => {
+    const store = new SessionStore()
+    const page = [
+      { event: { seq: 1, type: 'user/message' } },
+      { event: { seq: 2, type: 'assistant/message' } },
+    ] as never
+    store.applyHistory('s-1', page)
+    store.applyHistory('s-1', page)
+    const session = store.sessions.get('s-1')!
+    expect(session.events).toHaveLength(2)
+    expect(session.lastSeq).toBe(2)
+    expect(isLogBehindHost(session)).toBe(false)
+  })
+
   it('the subscribed watermark drops already-committed replays', () => {
     const store = new SessionStore()
     // lastSeq=2 means "the host log already holds seq 1-2; pull history for them".

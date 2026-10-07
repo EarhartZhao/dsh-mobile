@@ -149,6 +149,20 @@ function hostRunningOf(session: SessionState): boolean | undefined {
   return session.runningKnown ? session.running : undefined
 }
 
+/**
+ * How long one tail-read attempt stands before another is allowed. The read is
+ * a request, not a state: one that failed (or landed before the Host wrote the
+ * records) has to be retryable.
+ */
+const HEAL_RETRY_MS = 5_000
+
+/**
+ * Frames per second stop being a useful measure in a quiet turn — a long tool
+ * call streams nothing — so a silent stream is only re-read once it has been
+ * quiet this long while the Host still reports the Session as running.
+ */
+const SILENT_STREAM_MS = 30_000
+
 interface Props {
   manager: ConnectionManager
   sessionId: string
@@ -210,9 +224,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   /**
    * The Host watermark whose tail read this screen already triggered, keyed by
    * Session: a page that cannot move the tail would otherwise be asked for
-   * again on every store change.
+   * again on every store change. It carries the attempt's time too, so a read
+   * that failed the first time is tried again rather than written off.
    */
-  const healedSeq = useRef({ sessionId: '', seq: -1 })
+  const healedSeq = useRef({ sessionId: '', seq: -1, at: 0 })
+  /** When a frame for this Session last reached the store (see the stall watch). */
+  const lastFrameAt = useRef(Date.now())
   /** Bumped to re-run the baseline read: what leaving and re-entering does. */
   const [tailEpoch, setTailEpoch] = useState(0)
   /**
@@ -977,10 +994,39 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const session = manager.store.sessions.get(sessionId)
     if (session === undefined || !isLogBehindHost(session)) return
     const healed = healedSeq.current
-    if (healed.sessionId === sessionId && healed.seq >= session.lastSeq) return
-    healedSeq.current = { sessionId, seq: session.lastSeq }
+    const now = Date.now()
+    if (healed.sessionId === sessionId
+      && healed.seq >= session.lastSeq
+      && now - healed.at < HEAL_RETRY_MS) return
+    healedSeq.current = { sessionId, seq: session.lastSeq, at: now }
     setTailEpoch(epoch => epoch + 1)
   }, [manager, sessionId])
+
+  /**
+   * The same heal, forced for a stream that went quiet without saying so.
+   *
+   * `isLogBehindHost` compares the log against a watermark the Host reports,
+   * and a stream that dies mid-turn reports nothing more: the records it
+   * dropped are invisible to that comparison, so the transcript keeps a clock
+   * running over a turn that ended. Silence while the Session still reads as
+   * running is that shape, and re-reading the tail is the cure — it lands the
+   * missing records and re-registers the live follow behind them.
+   */
+  const healSilentStream = useCallback((): void => {
+    const session = manager.store.sessions.get(sessionId)
+    if (session === undefined) return
+    if (isLogBehindHost(session)) {
+      healMissingTail()
+      return
+    }
+    if (!session.running) return
+    if (Date.now() - lastFrameAt.current < SILENT_STREAM_MS) return
+    const healed = healedSeq.current
+    const now = Date.now()
+    if (healed.sessionId === sessionId && now - healed.at < HEAL_RETRY_MS) return
+    healedSeq.current = { sessionId, seq: session.lastSeq, at: now }
+    setTailEpoch(epoch => epoch + 1)
+  }, [healMissingTail, manager, sessionId])
 
   useEffect(() => {
     // Every establish pass — a reconnect, or the bridge restarting under a
@@ -1009,6 +1055,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     let pending = false
     const off = manager.store.on('changed', ({ sessionId: changed }) => {
       if (changed !== undefined && changed !== sessionId) return
+      lastFrameAt.current = Date.now()
       healMissingTail()
       if (pending) return
       pending = true
@@ -1031,6 +1078,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
     if (tailFollowFrame.current !== null) cancelAnimationFrame(tailFollowFrame.current)
   }, [])
+  useEffect(() => {
+    // The heal above hangs off the next frame, and a stream that died at the
+    // end of a turn never sends one. This is the only thing that notices, and
+    // it is two seq comparisons per tick — the whole cost of running it while
+    // a Session sits quietly open.
+    const timer = setInterval(healSilentStream, 2_000)
+    return () => clearInterval(timer)
+  }, [healSilentStream])
   useEffect(() => { void loadModels() }, [loadModels])
 
   /**

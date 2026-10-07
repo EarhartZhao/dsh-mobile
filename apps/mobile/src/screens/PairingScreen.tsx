@@ -12,6 +12,7 @@ import { getInstallationId } from '../installation-id'
 import { colors, fontSize, radius, spacing } from '../theme'
 import type { PairingResult } from '../pairing-store'
 import { installHubAnchor } from '../hub-tls'
+import { describeCaught } from '../log-caught'
 import { useI18n, type TranslationKey } from '../i18n'
 import { Icon } from '../icons'
 
@@ -171,7 +172,7 @@ export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): Re
     } catch (cause) {
       // The code, not just the stack: `nats.ws` puts the reason there and
       // leaves the stack looking identical for every transport failure.
-      console.error('[pairing]', describeError(cause), cause instanceof Error ? cause.stack : cause)
+      console.error(`[pairing] ${describeError(cause)} ${cause instanceof Error ? cause.stack ?? '' : describeCaught(cause)}`)
       setError(pairingErrorMessage(cause, t))
     } finally {
       setBusy(false)
@@ -276,7 +277,7 @@ export function PairingScreen({ onPaired, deviceName, onSystemBack }: Props): Re
         : body.payload
       await pairWith(__DEV__ ? devPayload : body.payload)
     } catch (cause) {
-      console.error('[pairing]', describeError(cause), cause instanceof Error ? cause.stack : cause)
+      console.error(`[pairing] ${describeError(cause)} ${cause instanceof Error ? cause.stack ?? '' : describeCaught(cause)}`)
       setError(pairingErrorMessage(cause, t))
       setBusy(false)
     }

@@ -1,37 +1,14 @@
 /** Durable subagent catalog with read-only history and continuable controls. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
-import { deriveConversation, type ConnectionManager, type ConversationItem, type SessionState } from '@dsh-mobile/core'
+import { deriveConversation, sessionStateFromHistory } from '@dsh-mobile/core'
+import type { ConnectionManager, ConversationItem } from '@dsh-mobile/core'
 import type { HistoryEntry, SubagentCatalog, SubagentListEntry } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { toolDisplayName } from '../ui-labels'
 import { useI18n, type TranslationKey } from '../i18n'
 
 const HISTORY_PAGE = 40
-
-function stateFromEvents(sessionId: string, events: HistoryEntry[]): SessionState {
-  const last = events.at(-1)
-  const lastSeq = last !== undefined && typeof last.event.seq === 'number' ? last.event.seq : -1
-  return {
-    sessionId,
-    events,
-    lastSeq,
-    projections: {},
-    projectionSeqs: {},
-    queue: [],
-    jobs: [],
-    pendingApprovals: new Map(),
-    pendingQuestions: new Map(),
-    running: false,
-    // A subagent read is a page of history, never a live stream, and the panel
-    // has no Host run state to hand down: the log is all it has.
-    runningKnown: false,
-    todos: [],
-    todosSeq: -1,
-    usage: null,
-    usageSeq: -1,
-  }
-}
 
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
 
@@ -113,7 +90,9 @@ export function SubagentPanel({ manager, parentSessionId, catalog, onClose, onOp
   const [backfill, setBackfill] = useState<'idle' | 'running' | 'paused' | 'failed'>('idle')
   const [backfilled, setBackfilled] = useState(0)
   /** Turn boundaries, preparing calls, and unknown-event rows are chrome here. */
-  const items = (selected === null ? [] : deriveConversation(stateFromEvents(selected.id, events)))
+  // A subagent read is a page of history, never a live stream, and the panel
+  // has no Host run state to hand down: the log is all it has.
+  const items = (selected === null ? [] : deriveConversation(sessionStateFromHistory(selected.id, events)))
     .filter(item => item.kind !== 'turn-start' && item.kind !== 'turn-end'
       && item.kind !== 'preparing' && item.kind !== 'unknown')
 

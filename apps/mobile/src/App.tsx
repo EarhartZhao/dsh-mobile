@@ -34,6 +34,7 @@ import { activateHub, clearHubAnchor } from './hub-tls'
 import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateStatus } from './app-update'
 import { inventoryChangedByEvent } from './plugin-inventory'
 import { createManager } from './connection'
+import { warnCaught } from './log-caught'
 import { PairingScreen } from './screens/PairingScreen'
 import { ConnectionSwitcherScreen } from './screens/ConnectionSwitcherScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
@@ -221,7 +222,7 @@ function AppContent(): React.JSX.Element {
     connectionsRef.current = next
     setConnections(next)
     void savePairingState(next).catch((cause: unknown) => {
-      console.warn('[pairing-store] save failed:', cause)
+      warnCaught('[pairing-store] save failed:', cause)
     })
     return next
   }, [])
@@ -332,7 +333,7 @@ function AppContent(): React.JSX.Element {
         const restored = activeProfile(saved)
         if (restored !== null) {
           await activateHub(restored.hub, restored.ca).catch((cause: unknown) => {
-            console.warn('[hub-tls] anchor restore failed:', cause)
+            warnCaught('[hub-tls] anchor restore failed:', cause)
           })
         }
         setBooted(true)
@@ -534,7 +535,7 @@ function AppContent(): React.JSX.Element {
     const trimmed = name.trim()
     setDeviceName(trimmed === '' ? defaultDeviceName() : trimmed)
     void saveDeviceName(trimmed).catch((cause: unknown) => {
-      console.warn('[device-name] save failed:', cause)
+      warnCaught('[device-name] save failed:', cause)
     })
   }, [])
 

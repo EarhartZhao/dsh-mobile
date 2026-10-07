@@ -78,6 +78,19 @@ export interface SessionState {
   usage: UsageView | null
   /** Seq of the `assistant/message` whose usage {@link usage} holds. */
   usageSeq: number
+  /**
+   * Highest seq among the durable records in {@link events} — the counterpart
+   * to the {@link lastSeq} watermark, which also carries the Host's own
+   * reported seq. Kept incrementally because {@link isLogBehindHost} is asked
+   * once per changed frame, and a live turn delivers tens of thousands of them:
+   * rescanning the whole log for the maximum on every frame is what pinned the
+   * App's JS thread at 100% for the length of a long turn.
+   */
+  newestRecordSeq: number
+  /** Seqs present in {@link events}, so page merges dedupe without a rescan. */
+  knownSeqs: Set<number>
+  /** Dedupe index for live transient chunks: `${attemptId}#${index}`. */
+  transientChunkKeys: Set<string>
 }
 
 type StoreEvents = {
@@ -113,7 +126,37 @@ function emptySession(sessionId: string): SessionState {
     todosSeq: -1,
     usage: null,
     usageSeq: -1,
+    newestRecordSeq: -1,
+    knownSeqs: new Set(),
+    transientChunkKeys: new Set(),
   }
+}
+
+/** Record one appended entry in the Session's derived indexes. */
+function indexEntry(session: SessionState, entry: HistoryEntry): void {
+  const seq = eventSeq(entry)
+  if (seq === undefined) return
+  session.knownSeqs.add(seq)
+  // `seq` 0 is a live chunk's placeholder, not a record position, so it never
+  // raises the record mark (see `isLogBehindHost`).
+  if (seq === 0) return
+  if (seq > session.newestRecordSeq) session.newestRecordSeq = seq
+}
+
+/**
+ * A Session view over one page of history, with no live stream behind it.
+ * One-shot readers (the subagent panel) build their transcript from this so
+ * they get the same derived indexes the store maintains.
+ */
+export function sessionStateFromHistory(sessionId: string, events: HistoryEntry[]): SessionState {
+  const session = emptySession(sessionId)
+  for (const entry of events) {
+    session.events.push(entry)
+    indexEntry(session, entry)
+  }
+  const last = events.at(-1)
+  session.lastSeq = last === undefined ? -1 : (eventSeq(last) ?? -1)
+  return session
 }
 
 /** Latest-step token usage extractor (defensive: shimmed wire boundary). */
@@ -214,22 +257,25 @@ export class SessionStore extends Emitter<StoreEvents> {
     for (const entry of entries) {
       this.absorbDerived(session, entry.event)
     }
-    const known = new Set(session.events.map(e => eventSeq(e)).filter((s): s is number => s !== undefined))
+    let added = false
     for (const entry of entries) {
       const seq = eventSeq(entry)
-      if (seq !== undefined && known.has(seq)) continue
-      if (seq !== undefined) known.add(seq)
+      if (seq !== undefined && session.knownSeqs.has(seq)) continue
       session.events.push(entry)
+      indexEntry(session, entry)
+      added = true
     }
     // Seq-less entries are live transient chunks, which are always the newest
     // events: sorting them as -1 hoisted them in front of the whole loaded log,
     // which rendered a running turn's reasoning and cursor *above* the prompt
     // they belong to. They keep their arrival order at the tail instead.
-    session.events.sort((a, b) =>
-      (eventSeq(a) ?? Number.MAX_SAFE_INTEGER) - (eventSeq(b) ?? Number.MAX_SAFE_INTEGER))
-    const last = session.events.at(-1)
-    const lastSeq = last === undefined ? -1 : (eventSeq(last) ?? session.lastSeq)
-    if (lastSeq > session.lastSeq) session.lastSeq = lastSeq
+    if (added) {
+      session.events.sort((a, b) =>
+        (eventSeq(a) ?? Number.MAX_SAFE_INTEGER) - (eventSeq(b) ?? Number.MAX_SAFE_INTEGER))
+    }
+    // The watermark never sits below a record the log already holds: a loaded
+    // page reports its own seqs, and `session/subscribed` reports the Host's.
+    if (session.newestRecordSeq > session.lastSeq) session.lastSeq = session.newestRecordSeq
     if (projections !== undefined) {
       for (const [key, value] of Object.entries(projections.values)) {
         session.projections[key] = value
@@ -280,15 +326,17 @@ export class SessionStore extends Emitter<StoreEvents> {
           const data = frame.event['data']
           const attemptId = isRecord(data) && typeof data['attemptId'] === 'string' ? data['attemptId'] : ''
           const index = isRecord(data) && typeof data['index'] === 'number' ? data['index'] : -1
-          if (attemptId !== '' && index >= 0 && session.events.some(entry => {
-            const event = entry.event
-            return isRecord(event) && event['type'] === 'assistant/chunk' && isRecord(event['data'])
-              && event['data']['transient'] === true && event['data']['attemptId'] === attemptId && event['data']['index'] === index
-          })) return
+          if (attemptId !== '' && index >= 0) {
+            const key = `${attemptId}#${String(index)}`
+            if (session.transientChunkKeys.has(key)) return
+            session.transientChunkKeys.add(key)
+          }
         }
         if (!transient && seq !== undefined && seq <= session.lastSeq) return // replay / duplicate
         this.absorbDerived(session, frame.event)
-        session.events.push({ event: frame.event, ...(frame.view === undefined ? {} : { view: frame.view }) })
+        const entry: HistoryEntry = { event: frame.event, ...(frame.view === undefined ? {} : { view: frame.view }) }
+        session.events.push(entry)
+        indexEntry(session, entry)
         if (!transient && seq !== undefined) session.lastSeq = seq
         break
       }
@@ -469,11 +517,6 @@ function eventSeq(entry: HasSeq): number | undefined {
  */
 export function isLogBehindHost(session: SessionState): boolean {
   if (session.lastSeq < 0) return false
-  let newest: number | undefined
-  for (const entry of session.events) {
-    const seq = eventSeq(entry)
-    if (seq === undefined || seq === 0) continue
-    if (newest === undefined || seq > newest) newest = seq
-  }
-  return newest !== undefined && newest < session.lastSeq
+  if (session.newestRecordSeq < 0) return false
+  return session.newestRecordSeq < session.lastSeq
 }

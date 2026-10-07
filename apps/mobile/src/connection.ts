@@ -3,6 +3,7 @@ import { connect, headers } from 'nats.ws'
 import { ConnectionManager } from '@dsh-mobile/core'
 import type { Profile } from './pairing-store'
 import { activateHub } from './hub-tls'
+import { warnCaught } from './log-caught'
 
 /**
  * One manager per active profile.
@@ -25,7 +26,7 @@ export function createManager(profile: Profile, deviceName: string): ConnectionM
       // otherwise switching to another self-hosted Hub fails its handshake
       // with no way for the user to tell why.
       await activateHub(profile.hub, profile.ca).catch((cause: unknown) => {
-        console.warn('[hub-tls] anchor activation failed:', cause)
+        warnCaught('[hub-tls] anchor activation failed:', cause)
       })
       return connect({
         servers: profile.hub,

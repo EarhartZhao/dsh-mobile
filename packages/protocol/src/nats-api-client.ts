@@ -134,11 +134,19 @@ export class NatsApiClient extends AbstractApiClient {
       for await (const msg of sub) {
         let full: ServerRequest
         let frame: F
+        let payload: unknown
         try {
-          full = serverRequestSchema.parse(JSON.parse(new TextDecoder().decode(msg.data)))
+          const decoded: unknown = JSON.parse(new TextDecoder().decode(msg.data))
+          payload = isRecord(decoded) ? decoded['payload'] : undefined
+          full = serverRequestSchema.parse(decoded)
           frame = this.parseFrame(full.payload, frameSchema)
         } catch (error) {
-          console.error(`[dsh-mobile] dropping malformed frame on ${subject}:`, error)
+          // Printed as text: an `Error` argument makes React Native's LogBox
+          // format the object, and a formatter that throws while formatting
+          // turns one bad frame into an unbounded warning loop that spends the
+          // whole JS thread.
+          console.error(`[dsh-mobile] dropping malformed frame on ${subject}: ${describeThrown(error)}`
+            + ` (payload type: ${frameTypeName(payload)})`)
           continue
         }
         this.onEnvelope(full)
@@ -190,6 +198,35 @@ function abortReason(signal: AbortSignal): Error {
   if (reason instanceof Error) return reason
   if (typeof reason === 'string') return new Error(reason)
   return new Error('This operation was aborted')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/** The frame's own `type` tag, for one-line diagnostics. */
+function frameTypeName(payload: unknown): string {
+  if (!isRecord(payload)) return '(not an object)'
+  const type = payload['type']
+  return typeof type === 'string' ? type : '(no type)'
+}
+
+/**
+ * Print a caught value as text.
+ *
+ * React Native's LogBox formats console arguments for its in-app overlay, and
+ * a formatter that throws on the way in turns one dropped frame into an
+ * unbounded warning loop that spends the whole JS thread.
+ */
+function describeThrown(error: unknown): string {
+  // Zod's `message` is a JSON dump of every issue in a union — long enough to
+  // swamp a terminal, so it is clipped to what identifies the problem.
+  const text = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : (() => { try { return JSON.stringify(error) ?? String(error) } catch { return String(error) } })()
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text
 }
 
 export type { IApiClient }
