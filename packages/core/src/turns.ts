@@ -22,7 +22,7 @@ import {
   type ToolActivity,
 } from './activity.ts'
 import { summarizeFileChanges, type FileChangeSummary, type FileDiffLike } from './file-changes.ts'
-import type { ConversationItem, ToolSubCall } from './conversation.ts'
+import type { ConversationItem, StepTokenUsage, ToolSubCall } from './conversation.ts'
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>
 
@@ -373,6 +373,28 @@ export interface TurnTokenUsage {
   cacheWriteTokens: number
   outputTokens: number
   reasoningTokens?: number
+}
+
+/**
+ * One step's accounting, in the turn's shape.
+ *
+ * The per-row pill rides the answer that owns the turn's disclosure, and a turn
+ * with no reasoning and no tools has no disclosure at all — nothing for
+ * {@link turnTokenUsage} to sum. The answer's own step usage *is* that turn's
+ * usage then, and it belongs on the row just the same.
+ *
+ * @param usage - one `assistant/message` step's usage.
+ * @returns the same buckets, with `totalTokens` added.
+ */
+export function stepTokenUsage(usage: StepTokenUsage): TurnTokenUsage {
+  return {
+    totalTokens: usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.outputTokens,
+    uncachedInputTokens: usage.uncachedInputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+  }
 }
 
 /**

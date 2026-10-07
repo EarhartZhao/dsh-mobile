@@ -28,7 +28,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
+import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn } from '@dsh-mobile/core'
 import type {
   JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
@@ -1648,15 +1648,18 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             }
             const entry = item.item
             const messageId = entry.kind === 'assistant' ? entry.messageId : undefined
-            /**
-             * The turn's billed tokens ride the answer's own action row, the way
-             * the web seats its usage pill in the completion row. Only the row
-             * that owns the turn's answer carries the process, so only it can
-             * sum the turn's usage.
-             */
-            const turnUsage = entry.kind === 'assistant' && item.process !== undefined
+          /**
+           * The turn's billed tokens ride the answer's own action row, the way
+           * the web seats its usage pill in the completion row. Only the row
+           * that owns the turn's answer carries the process, so only it can sum
+           * the turn's usage — and a turn with nothing to disclose has no
+           * process to sum, so its single step's own accounting is the turn's.
+           */
+          const turnUsage = entry.kind !== 'assistant'
+            ? null
+            : item.process !== undefined
               ? turnTokenUsage(item.process)
-              : null
+              : entry.usage === undefined ? null : stepTokenUsage(entry.usage)
             const actions = entry.kind === 'user' || entry.kind === 'assistant'
               ? (
                 <MessageActionRow

@@ -129,6 +129,13 @@ function isObj(value: unknown): value is Record<string, unknown> {
 /**
  * The prompt-side and output buckets of one `assistant/message`.
  *
+ * The event carries the provider's own names: `inputTokens` counts the prompt
+ * tokens that were *not* served from cache, next to `outputTokens` and the two
+ * cache buckets. The harness's token-meter projection renames that first one
+ * `uncachedInputTokens`, so both spellings are accepted — the same screen may
+ * read a live event or a replayed projection sample, and reading only the
+ * projection's alias silently dropped every pill on the phone.
+ *
  * A usage block without its two mandatory figures is not accounting this client
  * can report, so it reads as "no measurement" rather than as zeros — the same
  * rule the session stats fold applies.
@@ -136,7 +143,7 @@ function isObj(value: unknown): value is Record<string, unknown> {
 function stepUsage(data: Record<string, unknown>): StepTokenUsage | null {
   const usage = data['usage']
   if (!isObj(usage)) return null
-  const uncachedInputTokens = usage['uncachedInputTokens']
+  const uncachedInputTokens = usage['inputTokens'] ?? usage['uncachedInputTokens']
   const outputTokens = usage['outputTokens']
   if (typeof uncachedInputTokens !== 'number' || typeof outputTokens !== 'number') return null
   const reasoningTokens = usage['reasoningTokens']

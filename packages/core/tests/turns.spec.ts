@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupTurns, processOwnerItem, turnTail, turnTokenUsage } from '../src/turns.ts'
+import { groupTurns, processOwnerItem, stepTokenUsage, turnTail, turnTokenUsage } from '../src/turns.ts'
 import type { ConversationItem } from '../src/conversation.ts'
 
 function user(seq: number, text: string) {
@@ -310,5 +310,30 @@ describe('turnTokenUsage', () => {
     ))[0]!
 
     expect(turnTokenUsage(turn)).not.toHaveProperty('reasoningTokens')
+  })
+
+  it('states one step\'s accounting in the turn\'s own shape', () => {
+    // A turn with no reasoning and no tools has no process block for the row to
+    // sum, so its single step's usage has to be printable on its own — with the
+    // same total the summed form would print.
+    expect(stepTokenUsage({
+      uncachedInputTokens: 12_454, outputTokens: 108, cacheReadTokens: 0, cacheWriteTokens: 0,
+    })).toEqual({
+      totalTokens: 12_562,
+      uncachedInputTokens: 12_454,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 108,
+    })
+    expect(stepTokenUsage({
+      uncachedInputTokens: 10, outputTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 1, reasoningTokens: 3,
+    })).toEqual({
+      totalTokens: 21,
+      uncachedInputTokens: 10,
+      cacheReadTokens: 6,
+      cacheWriteTokens: 1,
+      outputTokens: 4,
+      reasoningTokens: 3,
+    })
   })
 })

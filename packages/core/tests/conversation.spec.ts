@@ -247,18 +247,29 @@ describe('deriveConversation', () => {
 
   it('reads the step\'s token accounting off the assistant message', () => {
     const store = new SessionStore()
+    // The provider's own field names, as `assistant/message` records them: the
+    // prompt bucket is `inputTokens`. Reading only the token-meter projection's
+    // alias (`uncachedInputTokens`) left every usage pill off on the phone.
     feed(store, 1, 'assistant/message', {
       turn: 1,
       step: 1,
       message: { content: [{ type: 'text', text: 'hi' }] },
+      usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2, totalTokens: 422 },
+    })
+    // A replayed projection sample spells the same bucket the projection's way,
+    // and that too is accounting.
+    feed(store, 2, 'assistant/message', {
+      turn: 2,
+      step: 1,
+      message: { content: [{ type: 'text', text: 'sample' }] },
       usage: { uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2 },
     })
     // A message the host billed nothing for carries no accounting at all, which
     // is what keeps the turn's usage pill off rather than showing zeros.
-    feed(store, 2, 'assistant/message', { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'plain' }] } })
+    feed(store, 3, 'assistant/message', { turn: 3, step: 1, message: { content: [{ type: 'text', text: 'plain' }] } })
     // A partial usage block is not accounting this client can report.
-    feed(store, 3, 'assistant/message', {
-      turn: 3, step: 1, message: { content: [{ type: 'text', text: 'partial' }] }, usage: { outputTokens: 5 },
+    feed(store, 4, 'assistant/message', {
+      turn: 4, step: 1, message: { content: [{ type: 'text', text: 'partial' }] }, usage: { outputTokens: 5 },
     })
 
     const items = deriveConversation(store.sessions.get('s-1')!)
@@ -266,8 +277,12 @@ describe('deriveConversation', () => {
       kind: 'assistant',
       usage: { uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2 },
     })
-    expect(items[1]).not.toHaveProperty('usage')
+    expect(items[1]).toMatchObject({
+      kind: 'assistant',
+      usage: { uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 400, cacheWriteTokens: 7, reasoningTokens: 2 },
+    })
     expect(items[2]).not.toHaveProperty('usage')
+    expect(items[3]).not.toHaveProperty('usage')
   })
 
   it('renders inline user images and compaction markers', () => {
