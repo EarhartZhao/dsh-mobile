@@ -220,8 +220,12 @@ const styles = StyleSheet.create({
   },
   triggerText: { color: chat.labelTertiary, fontSize: fontSize.tiny },
   triggerChevronOpen: { transform: [{ rotate: '180deg' }] },
-  /** A dropdown, not a dialog: no scrim, anchored under the header's own band. */
-  backdrop: { backgroundColor: 'transparent', justifyContent: 'flex-start', paddingTop: 104 },
+  /**
+   * A dropdown, not a dialog: no scrim, anchored just under the band that
+   * carries the trigger — the safe area, the title row, then the row the count
+   * shares with the model.
+   */
+  backdrop: { backgroundColor: 'transparent', justifyContent: 'flex-start', paddingTop: 148 },
   menu: {
     backgroundColor: colors.bgElevated,
     borderRadius: radius.panel,

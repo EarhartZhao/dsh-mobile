@@ -13,7 +13,6 @@ import { I18nProvider, useI18n, type TranslationKey } from './i18n'
 import { DEFAULT_PREFERENCES, loadPreferences, savePreferences, type Preferences } from './preferences'
 import { ModalBackdrop } from './components/ModalBackdrop'
 import { colors, fontSize, spacing } from './theme'
-import { toolDisplayName } from './ui-labels'
 import {
   EMPTY_PAIRING_STATE,
   activeProfile,
@@ -458,8 +457,11 @@ function AppContent(): React.JSX.Element {
       mutateConnections(state => setProfileMachineName(state, pairing.id, machineName))
     })
     const offStoreError = manager.store.on('error', ({ message }) => recordError(message))
-    // Foreground alerts: task settlement + answerable frames (M3 scope: no
-    // system push, foreground banner only).
+    // Foreground alerts: what a settled task says (M3 scope: no system push,
+    // foreground banner only). An approval or a question is *not* a banner
+    // here: the conversation that needs the answer carries its own action bar,
+    // and the list already marks the row — a bar across the top of whichever
+    // screen the reader happens to be on said the same thing twice.
     const offSettled = manager.store.on('jobSettled', ({ job }) => {
       const statusKey: TranslationKey = job.status === 'completed'
         ? 'job.completed'
@@ -469,16 +471,10 @@ function AppContent(): React.JSX.Element {
       const label = job.label.length > 72 ? `${job.label.slice(0, 71)}…` : job.label
       showAlert(t('job.settledMessage', { id: job.id, status: t(statusKey), label }))
     })
-    const offAttention = manager.store.on('attention', ({ kind, summary }) => {
-      showAlert(kind === 'approval'
-        ? t('attention.approval', { summary: toolDisplayName(summary, t) })
-        : t('attention.question', { summary }))
-    })
     manager.start().catch(() => undefined)
     return () => {
       off()
       offSettled()
-      offAttention()
       offManagerError()
       offHealth()
       offInfo()

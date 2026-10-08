@@ -141,6 +141,13 @@ function pressableRendering(
     && node.findAll(child => child.props.children === text).length > 0).at(-1)
 }
 
+/** Every ancestor of one node, innermost first. */
+function ancestorsOf(node: renderer.ReactTestInstance): renderer.ReactTestInstance[] {
+  const chain: renderer.ReactTestInstance[] = []
+  for (let parent = node.parent; parent !== null; parent = parent.parent) chain.push(parent)
+  return chain
+}
+
 /** The composer's own input, found by the send placeholder it carries. */
 function composer(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance | undefined {
   return tree.root.findAll(node =>
@@ -1283,7 +1290,7 @@ describe('ChatScreen composer mode controls', () => {
 describe('ChatScreen header', () => {
   const CWD = '/Users/mac/Documents/code/mine/dsh/deepseek-harness'
 
-  it('opens this conversation\u2019s trajectory, and folds the directory to its tail', async () => {
+  it('opens this conversation\u2019s trajectory, and keeps the whole path a tap away', async () => {
     const { manager } = setupModes({ cwd: CWD })
     const onOpenTrajectory = jest.fn()
     const tree = render(manager, 's1', jest.fn(), { onOpenTrajectory })
@@ -1296,13 +1303,23 @@ describe('ChatScreen header', () => {
     act(() => { trajectory?.props.onPress() })
     expect(onOpenTrajectory).toHaveBeenCalledWith('s1')
 
-    // Folded, the label keeps the two segments that identify the project; the
-    // tap swaps in the whole path.
+    // The header line keeps the two segments that name the project, and the
+    // whole path stays off it — a line that ends in `…/deepseek-harness` is
+    // readable, one that starts at `/Users/mac/Documents` is not.
     expect(screenText(tree)).toContain('chat.directory(…/dsh/deepseek-harness)')
-    act(() => { pressableByLabel(tree, 'chat.directoryFold')?.props.onPress() })
-    expect(screenText(tree)).toContain(`chat.directory(${CWD})`)
-    act(() => { pressableByLabel(tree, 'chat.directoryUnfold')?.props.onPress() })
-    expect(screenText(tree)).toContain('chat.directory(…/dsh/deepseek-harness)')
+    expect(screenText(tree)).not.toContain(`chat.directory(${CWD})`)
+
+    // The tap opens the path's own sheet, where the value copies.
+    act(() => { pressableByLabel(tree, 'chat.directoryOpen')?.props.onPress() })
+    expect(screenText(tree)).toContain('chat.directoryTitle')
+    expect(screenText(tree)).toContain(CWD)
+    expect(screenText(tree)).toContain('chat.directoryTapToCopy')
+
+    // Copying closes the sheet and says so: the whole path is now on the
+    // clipboard, which the screen only does on the way out.
+    act(() => { pressableByLabel(tree, 'common.copy')?.props.onPress() })
+    expect(screenText(tree)).not.toContain('chat.directoryTapToCopy')
+    expect(screenText(tree)).toContain('notice.copied')
   })
 
   it('names the mode without a prefix, and leaves the control off when there is nothing to open', async () => {
@@ -1318,5 +1335,23 @@ describe('ChatScreen header', () => {
     // No callback, no seat: a screen that cannot show a trajectory does not
     // offer one.
     expect(pressableByLabel(tree, 'chat.trajectoryOpen')).toBeUndefined()
+  })
+
+  it('seats the sub-agent count on the model\u2019s own row, at its left', async () => {
+    const { manager } = setupChild('continuable')
+    const tree = render(manager, 'parent')
+    await settle()
+
+    expect(screenText(tree)).toContain('subagent.count.one(1)')
+    const count = pressableByLabel(tree, 'subagent.count.one(1)')
+    const model = pressableByLabel(tree, 'chat.switchModel')
+    expect(count).toBeDefined()
+    expect(model).toBeDefined()
+
+    // One row holds both, and the count leads it — the switcher used to sit
+    // beside the title, where a count nobody asked for took its width.
+    const row = ancestorsOf(count!).find(node => node.findAll(child => child === model).length > 0)
+    expect(row).toBeDefined()
+    expect(row!.findAll(node => node === count || node === model)).toEqual([count, model])
   })
 })

@@ -360,8 +360,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const presetChipRef = useRef<HostInstance | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  /** Whether the header's directory label is showing the whole path. */
-  const [directoryOpen, setDirectoryOpen] = useState(false)
+  /** Whether the header's workspace path is open as its own sheet. */
+  const [pathOpen, setPathOpen] = useState(false)
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
@@ -2162,83 +2162,113 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={handleBack}
-          accessibilityRole="button"
-          accessibilityLabel={t('chat.back')}
-        >
-          <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
-          <Text style={styles.backLabel}>{t('chat.back')}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
-        <SubagentSwitcher
-          rows={subRows}
-          currentSessionId={sessionId}
-          open={lineageOpen}
-          now={subNow}
-          rowsOf={subRowsOf}
-          onToggle={() => { setSubNow(Date.now()); setLineageOpen(open => !open) }}
-          onClose={() => setLineageOpen(false)}
-          onSwitch={id => onOpenSession?.(id)}
-        />
-        {/* The Web's conversation view ring carries Chat and Trajectory as two
-            tabs of one conversation; a phone spends its width on the title, so
-            the second view is a labelled button here. */}
-        {onOpenTrajectory !== undefined && (
+      {/* The fixed top band: the title's row and the two meta rows under it are
+          one surface. The edge belongs at the bottom of the band — on the title
+          row alone it drew a seam through the middle of it. */}
+      <View style={styles.topDock}>
+        <View style={styles.header}>
           <TouchableOpacity
-            style={styles.headerTab}
-            onPress={() => onOpenTrajectory(sessionId)}
+            style={styles.backButton}
+            onPress={handleBack}
             accessibilityRole="button"
-            accessibilityLabel={t('chat.trajectoryOpen')}
+            accessibilityLabel={t('chat.back')}
           >
-            <Text style={styles.headerActionText} numberOfLines={1}>{t('chat.trajectory')}</Text>
+            <Icon name="ChevronLeftOutline" size={22} color={colors.accent} />
+            <Text style={styles.backLabel}>{t('chat.back')}</Text>
           </TouchableOpacity>
-        )}
-        <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
-          <Icon name="SearchOutline" size={20} color={colors.accent} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.headerMenu} onPress={() => setMenuOpen(true)} accessibilityLabel={t('chat.more')}>
-          <Icon name="EllipsisOutline" size={20} color={colors.accent} />
-        </TouchableOpacity>
-      </View>
-      {(() => {
-        const s = manager.store.summaries.find(x => x.sessionId === sessionId)
-        // The parent's own title when this client already holds it — the same
-        // label the switcher lists it under — and a short handle otherwise.
-        // The raw id starts with `session-`, so its first characters identify
-        // nothing.
-        const parentSessionId = s?.parentSessionId
-        const parentTitle = parentSessionId === undefined ? undefined : manager.store.title(parentSessionId)
-        const parentLabel = parentTitle !== undefined && parentTitle.trim() !== ''
-          ? parentTitle
-          : shortSessionId(parentSessionId ?? '')
-        const subagent = s?.origin === 'subagent'
-        const mode = presetLabel === undefined
-          ? undefined
-          : agentPresetLabel(presetLabel, presets.find(preset => preset.id === presetLabel)?.name, t)
-        return (
-          <View style={styles.metaHeader}>
-            <View style={styles.metaText}>
-              {/* The workspace, folded to the segments that identify it: the
-                  whole path is longer than the line, and what a one-line label
-                  truncates is the project's own name. Tapping shows it in
-                  full. */}
-              {s?.cwd !== undefined && (
-                <TouchableOpacity
-                  onPress={() => setDirectoryOpen(open => !open)}
-                  accessibilityRole="button"
-                  accessibilityLabel={directoryOpen ? t('chat.directoryUnfold') : t('chat.directoryFold')}
-                >
-                  <Text style={styles.metaLine} numberOfLines={directoryOpen ? 2 : 1}>
-                    {t('chat.directory', { value: directoryOpen ? s.cwd : foldPath(s.cwd) })}
-                  </Text>
-                </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+          {/* The Web's conversation view ring carries Chat and Trajectory as two
+              tabs of one conversation; a phone spends its width on the title, so
+              the second view is a labelled button here. */}
+          {onOpenTrajectory !== undefined && (
+            <TouchableOpacity
+              style={styles.headerTab}
+              onPress={() => onOpenTrajectory(sessionId)}
+              accessibilityRole="button"
+              accessibilityLabel={t('chat.trajectoryOpen')}
+            >
+              <Text style={styles.headerActionText} numberOfLines={1}>{t('chat.trajectory')}</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
+            <Icon name="SearchOutline" size={20} color={colors.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerMenu} onPress={() => setMenuOpen(true)} accessibilityLabel={t('chat.more')}>
+            <Icon name="EllipsisOutline" size={20} color={colors.accent} />
+          </TouchableOpacity>
+        </View>
+        {(() => {
+          const s = summary
+          // The parent's own title when this client already holds it — the same
+          // label the switcher lists it under — and a short handle otherwise.
+          // The raw id starts with `session-`, so its first characters identify
+          // nothing.
+          const parentSessionId = s?.parentSessionId
+          const parentTitle = parentSessionId === undefined ? undefined : manager.store.title(parentSessionId)
+          const parentLabel = parentTitle !== undefined && parentTitle.trim() !== ''
+            ? parentTitle
+            : shortSessionId(parentSessionId ?? '')
+          const subagent = s?.origin === 'subagent'
+          const mode = presetLabel === undefined
+            ? undefined
+            : agentPresetLabel(presetLabel, presets.find(preset => preset.id === presetLabel)?.name, t)
+          return (
+            <View style={styles.metaHeader}>
+              {/* Who is running this conversation: the children it spawned at the
+                  left, the model it runs on at the right. The switcher used to
+                  share the title's row, where it stole width from the title for a
+                  count that only matters once the reader looks for it. */}
+              <View style={styles.metaRow}>
+                <View style={styles.metaSubagent}>
+                  <SubagentSwitcher
+                    rows={subRows}
+                    currentSessionId={sessionId}
+                    open={lineageOpen}
+                    now={subNow}
+                    rowsOf={subRowsOf}
+                    onToggle={() => { setSubNow(Date.now()); setLineageOpen(open => !open) }}
+                    onClose={() => setLineageOpen(false)}
+                    onSwitch={id => onOpenSession?.(id)}
+                  />
+              {/* A child the client holds no parent row for has no switcher
+                  of its own; the seat still says what this conversation is.
+                  The row below carries the way back to the parent, so this
+                  marker stays a label. */}
+              {subagent && subRows.length === 0 && (
+                <Text style={styles.metaBadge} numberOfLines={1}>{t('chat.subagentBadge')}</Text>
               )}
-              {/* The way back to a subagent's parent, besides the back gesture:
-                  the parent's own header carries the switcher, but the child's
-                  cannot, so this line is the only affordance down here. */}
+                </View>
+                <TouchableOpacity
+                  style={styles.modelChip}
+                  onPress={() => void openModels()}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.switchModel')}
+                >
+                  <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
+                </TouchableOpacity>
+              </View>
+              {/* Where it runs: the workspace, folded to the segments that name
+                  the project, and the mode the conversation was composed with at
+                  the far end. The whole path is a tap away — a header line is not
+                  the place to read `/Users/mac/Documents/code/mine/dsh/…`. */}
+              <View style={styles.metaRow}>
+                {s?.cwd !== undefined && (
+                  <TouchableOpacity
+                    style={styles.directoryLine}
+                    onPress={() => setPathOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chat.directoryOpen')}
+                  >
+                    <Text style={styles.metaLine} numberOfLines={1}>
+                      {t('chat.directory', { value: foldPath(s.cwd) })}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {mode !== undefined && <Text style={styles.modeLabel} numberOfLines={1}>{mode}</Text>}
+              </View>
+              {/* The way back to a subagent's parent, besides the back gesture: a
+                  child's own header carries no switcher, so this line is the only
+                  affordance down here. */}
               {s?.parentSessionId !== undefined && (
                 <TouchableOpacity
                   onPress={() => onOpenSession?.(s.parentSessionId as string)}
@@ -2248,48 +2278,28 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
                 >
                   <Text style={[styles.metaLine, styles.metaLink]} numberOfLines={1}>
                     {t('chat.parentSession', { value: parentLabel })}
-                    {subagent ? t('chat.subagentMeta') : ''}
                   </Text>
                 </TouchableOpacity>
               )}
-              {/* A subagent the client has no parent row for still says so;
-                  the marker used to ride the update line, which is gone. */}
-              {subagent && s?.parentSessionId === undefined && (
-                <Text style={styles.metaLine} numberOfLines={1}>{t('chat.subagentBadge')}</Text>
-              )}
             </View>
-            <View style={styles.metaSide}>
-              {/* The mode rides the directory's own line, at its far end: it
-                  describes the conversation rather than the model, and the two
-                  chips would otherwise stack into a column of their own. */}
-              {mode !== undefined && <Text style={styles.modeLabel} numberOfLines={1}>{mode}</Text>}
-              <TouchableOpacity
-                style={styles.modelChip}
-                onPress={() => void openModels()}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.switchModel')}
-              >
-                <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
-              </TouchableOpacity>
-            </View>
+          )
+        })()}
+        {historyStatus === 'error' && (
+          <View style={styles.historyErrorBar}>
+            <Text style={styles.historyErrorText} numberOfLines={3}>
+              {t('chat.historyFailed', { message: historyError })}
+            </Text>
+            <TouchableOpacity
+              style={styles.historyRetry}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.retry')}
+              onPress={() => void loadHistoryTail()}
+            >
+              <Text style={styles.historyRetryText}>{t('common.retry')}</Text>
+            </TouchableOpacity>
           </View>
-        )
-      })()}
-      {historyStatus === 'error' && (
-        <View style={styles.historyErrorBar}>
-          <Text style={styles.historyErrorText} numberOfLines={3}>
-            {t('chat.historyFailed', { message: historyError })}
-          </Text>
-          <TouchableOpacity
-            style={styles.historyRetry}
-            accessibilityRole="button"
-            accessibilityLabel={t('common.retry')}
-            onPress={() => void loadHistoryTail()}
-          >
-            <Text style={styles.historyRetryText}>{t('common.retry')}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        )}
+      </View>
       {/* The transcript frame carries the web's floating control, so a growing
           input card below never covers it and the reader can always get back
           to the newest message. */}
@@ -2736,6 +2746,31 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
               onOpenSession={id => { setSubOpen(null); onOpenSession?.(id) }}
             />
           )}
+        </ModalBackdrop>
+      </Modal>
+      {/* The workspace path, whole. The header carries its tail, because a line
+          that ends in `/dsh/…` names nothing; the string a reader wants to hand
+          to a terminal is the whole one, and a phone has no ctrl-C — tapping the
+          path is the copy gesture here. */}
+      <Modal transparent visible={pathOpen} animationType="fade" onRequestClose={() => setPathOpen(false)}>
+        <ModalBackdrop onClose={() => setPathOpen(false)}>
+          <View style={styles.pathCard}>
+            <Text style={styles.pathCardTitle}>{t('chat.directoryTitle')}</Text>
+            <TouchableOpacity
+              style={styles.pathCardBody}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.copy')}
+              onPress={() => {
+                if (summary?.cwd === undefined) return
+                Clipboard.setString(summary.cwd)
+                setPathOpen(false)
+                showNotice(t('notice.copied'))
+              }}
+            >
+              <Text style={styles.pathCardValue} selectable>{summary?.cwd ?? ''}</Text>
+            </TouchableOpacity>
+            <Text style={styles.pathCardHint}>{t('chat.directoryTapToCopy')}</Text>
+          </View>
         </ModalBackdrop>
       </Modal>
       <Modal transparent visible={modelMenu !== null} animationType="fade" onRequestClose={() => setModelMenu(null)}>
@@ -3692,13 +3727,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2.5),
+    gap: spacing(2),
+  },
+  /**
+   * The fixed band above the transcript: the title's row, the two meta rows,
+   * and the tail-read failure bar. The transcript scrolls under all of it, so
+   * the edge and the fill belong to the band as a whole rather than to the
+   * title's row, which would draw a seam through the middle of it.
+   */
+  topDock: {
     backgroundColor: chat.bgBase,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    // The transcript scrolls immediately below this row; the edge is what says
-    // the row is fixed and the content is not.
     boxShadow: shadow.edgeDown,
-    gap: spacing(2),
   },
   backButton: { flexDirection: 'row', alignItems: 'center', minWidth: 88, gap: 2 },
   backLabel: { color: colors.accent, fontSize: fontSize.body },
@@ -3746,20 +3787,33 @@ const styles = StyleSheet.create({
   historyRetryText: { color: colors.accent, fontSize: fontSize.small },
   goalPausedHint: { color: colors.warning, fontSize: fontSize.tiny, paddingHorizontal: spacing(2), paddingBottom: spacing(0.5) },
   metaHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing(2),
-    paddingHorizontal: spacing(2),
-    paddingBottom: spacing(0.5),
+    gap: spacing(0.5),
+    paddingHorizontal: spacing(3),
+    paddingTop: spacing(0.5),
+    paddingBottom: spacing(1.5),
   },
-  metaText: { flex: 1, gap: 2 },
-  modelChip: { marginRight: spacing(1) },
+  /**
+   * The band under the title: one row for who runs this conversation (its
+   * children, its model), one for where it runs (the workspace, the mode).
+   * Rows rather than a left column and a right column, so the path gets the
+   * width it was competing for instead of wrapping under the model.
+   */
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
+  metaSubagent: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  metaBadge: { paddingVertical: spacing(1), color: colors.textDim, fontSize: fontSize.tiny },
+  directoryLine: { flexShrink: 1, paddingVertical: spacing(1) },
+  modelChip: { marginLeft: 'auto', paddingVertical: spacing(1), paddingLeft: spacing(2) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
-  metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
+  metaLine: { color: colors.textDim, fontSize: fontSize.tiny },
   metaLink: { color: colors.accent },
-  /** The header's right column: the mode on the directory's line, the model under it. */
-  metaSide: { alignItems: 'flex-end', gap: spacing(1), marginTop: spacing(0.5) },
-  modeLabel: { marginRight: spacing(1), color: colors.textDim, fontSize: fontSize.tiny },
+  /** The mode keeps the directory's line, at its far end with room around it. */
+  modeLabel: {
+    marginLeft: 'auto',
+    paddingVertical: spacing(1),
+    paddingLeft: spacing(2),
+    color: colors.textDim,
+    fontSize: fontSize.tiny,
+  },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
   menuCard: {
     backgroundColor: colors.bgElevated,
@@ -3777,6 +3831,27 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing(6),
     maxHeight: '70%',
     paddingVertical: spacing(2),
+  },
+  /** The workspace path's sheet: one value, its own line, tappable to copy. */
+  pathCard: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.panel,
+    marginHorizontal: spacing(6),
+    paddingVertical: spacing(3),
+  },
+  pathCardTitle: {
+    paddingHorizontal: spacing(4),
+    paddingBottom: spacing(2),
+    color: colors.textDim,
+    fontSize: fontSize.small,
+  },
+  pathCardBody: { paddingHorizontal: spacing(4), paddingVertical: spacing(1) },
+  pathCardValue: { color: colors.text, fontSize: fontSize.small, lineHeight: fontSize.small + 8 },
+  pathCardHint: {
+    paddingHorizontal: spacing(4),
+    paddingTop: spacing(2),
+    color: chat.labelTertiary,
+    fontSize: fontSize.tiny,
   },
   modelGroup: { color: colors.textDim, fontSize: fontSize.tiny, paddingHorizontal: spacing(4), paddingTop: spacing(3), paddingBottom: spacing(1) },
   modelWarning: { color: colors.danger, fontSize: fontSize.small, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
