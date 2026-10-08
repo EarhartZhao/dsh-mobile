@@ -978,6 +978,58 @@ describe('ChatScreen composer triggers', () => {
     expect(hasField(tree, 'plus.searchReferences')).toBe(true)
     expect(screenText(tree)).toContain('plus.noReferences')
   })
+
+  it('stays shut while the reader edits what a pick just wrote', async () => {
+    const { manager } = setup()
+    // One command to pick and one file to mention: the two ways into the
+    // sheet's own tabs.
+    const client = manager.client as unknown as {
+      commands: { list: jest.Mock }
+      references: { files: jest.Mock }
+    }
+    client.commands.list = jest.fn(async () => ({ commands: [{ name: 'compact', description: '压缩上下文' }] }))
+    client.references.files = jest.fn(async () => [{ path: '/w/a.ts', kind: 'file' }])
+    const tree = render(manager)
+    await settle()
+
+    // A typed `/` is a line being written: the pick finishes it in place and
+    // the sheet closes on its own — never through the close handler that
+    // remembers a dismissal.
+    act(() => { composer(tree)?.props.onChangeText('/') })
+    await settle()
+    // The row's own line is `/{name}`, which React renders as two children;
+    // its description is the one string that identifies the row outright.
+    act(() => { pressableRendering(tree, '压缩上下文')?.props.onPress() })
+    await settle()
+    expect(composer(tree)?.props.value).toBe('/compact ')
+    expect(hasField(tree, 'plus.searchCommands')).toBe(false)
+
+    // Deleting the space the insert ended with used to look like a fresh
+    // query, so the sheet came back seeded with the line just picked.
+    act(() => { composer(tree)?.props.onChangeText('/compact') })
+    await settle()
+    expect(hasField(tree, 'plus.searchCommands')).toBe(false)
+    expect(composer(tree)?.props.value).toBe('/compact')
+
+    // Same for a mention, whose own text is what the trigger detector reads.
+    act(() => { composer(tree)?.props.onChangeText('/compact @') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(true)
+    act(() => { pressableRendering(tree, 'a.ts')?.props.onPress() })
+    await settle()
+    expect(composer(tree)?.props.value).toBe('/compact @/w/a.ts ')
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+
+    act(() => { composer(tree)?.props.onChangeText('/compact @/w/a.ts') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+
+    // Suppressing a finished token is not a latch: the next trigger, at its
+    // own offset, still opens its tab.
+    act(() => { composer(tree)?.props.onChangeText('/compact @/w/a.ts and /') })
+    await settle()
+    expect(hasField(tree, 'plus.searchCommands')).toBe(true)
+  })
 })
 
 /**

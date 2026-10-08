@@ -193,6 +193,17 @@ function activeComposerToken(text: string): { prefix: string; trigger: '/' | '@'
   return null
 }
 
+/**
+ * The identity of the trigger at the end of `text`: the character, and the
+ * offset it sits at. A reader who keeps writing *in* that token keeps the key,
+ * which is what lets a dismissed sheet stay dismissed; a trigger somewhere
+ * else — the next `@` after a mention, say — is a new key and opens as usual.
+ */
+function composerTokenKey(text: string): string | null {
+  const token = activeComposerToken(text)
+  return token === null ? null : `${token.trigger}@${text.length - token.prefix.length}`
+}
+
 /** One file or directory the user picked into the composer from the browser. */
 interface InsertedReference {
   path: string
@@ -386,8 +397,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       dismissedTrigger.current = null
       return
     }
-    const key = `${token.trigger}@${text.length - token.prefix.length}`
-    if (dismissedTrigger.current === key) return
+    if (dismissedTrigger.current === composerTokenKey(text)) return
     openPlus(token.trigger === '/' ? 'commands' : 'references', token.query, token.trigger)
   }
 
@@ -399,9 +409,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    */
   const insertAtTrigger = (insert: string): void => {
     const token = sheetTrigger === 'plus' ? null : activeComposerToken(draft)
-    setDraft(token === null
+    const next = token === null
       ? `${draft}${draft === '' || draft.endsWith(' ') ? '' : ' '}${insert}`
-      : `${draft.slice(0, -token.prefix.length)}${insert}`)
+      : `${draft.slice(0, -token.prefix.length)}${insert}`
+    setDraft(next)
+    /**
+     * The pick is what closed the sheet, so it never went through the close
+     * handler that remembers a dismissal — while what it wrote (a mention, or a
+     * command line) is exactly what the trigger detector reads as a query.
+     * Deleting the space the insert ends with, or trimming the mention, would
+     * reopen the sheet on the text just picked; remember the finished token
+     * here too, keyed the way the draft reads without that trailing space.
+     */
+    dismissedTrigger.current = composerTokenKey(next.endsWith(' ') ? next.slice(0, -1) : next)
     composerRef.current?.focus()
   }
 
@@ -2593,10 +2613,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         onClose={() => {
           // Remember which trigger was dismissed: the token is still in the
           // draft, and the next keystroke must not reopen the same sheet.
-          const token = sheetTrigger === 'plus' ? null : activeComposerToken(draft)
-          dismissedTrigger.current = token === null
-            ? null
-            : `${token.trigger}@${draft.length - token.prefix.length}`
+          dismissedTrigger.current = sheetTrigger === 'plus' ? null : composerTokenKey(draft)
           setPlusOpen(false)
         }}
         onPickCommand={pickSheetCommand}
