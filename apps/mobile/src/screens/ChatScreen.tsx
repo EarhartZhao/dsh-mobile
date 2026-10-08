@@ -3956,17 +3956,19 @@ const styles = StyleSheet.create({
   refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
   feedbackBadge: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   /**
-   * The draft surface: the web's 15/25 type (the card carries the same
-   * `font-size` / `line-height` pair, so the draft, the mirror and the backdrop
-   * stay in step) with the web's 14/8 side pads — the 4px the scrollport takes
-   * back on the right — one 36px line box as its floor and the composer's
-   * 336px cap as its ceiling.
+   * The draft surface wears the *prompt's* own type — `userBubbleText`'s 14/22
+   * — so what is being typed already reads as the bubble it is about to
+   * become; the web's composer is one step looser (14/24 off the content
+   * scale), which on a phone makes the draft look larger than the prompt it
+   * turns into. Side pads are the web's 14/8 — the 4px the scrollport takes
+   * back on the right — with one 36px line box as the floor and the composer's
+   * 336px cap as the ceiling.
    *
    * The web's 4px top pad is dropped here: iOS hangs a line box's extra
-   * leading *above* its glyphs, so the same 4px would land the draft ~4pt below
-   * where the browser puts it. Measured against the web at phone width (card
-   * edge → first line's glyph top): the browser puts it at 18px below the card,
-   * and this one lands at 18.3pt — with the 4px pad it was 22.3pt.
+   * leading *above* its glyphs, so the same 4px would land the draft lower than
+   * the browser puts it. Measured at phone width (card edge → first line's
+   * glyph top): the browser puts it at 18px below the card, and this lands at
+   * 17.7pt.
    *
    * No `flex: 1`: the node has to report its *content* height, or the card
    * collapses to the 36px floor and a wrapped draft scrolls out of the top of
@@ -3982,8 +3984,8 @@ const styles = StyleSheet.create({
     paddingLeft: 14,
     paddingRight: 8,
     color: chat.labelPrimary,
-    fontSize: 15,
-    lineHeight: 25,
+    fontSize: 14,
+    lineHeight: 22,
     backgroundColor: 'transparent',
     // The web's `.scroll` is the only scrolling box in the composer and it
     // clips: once the draft passes the 336px cap the text has to stop at the
