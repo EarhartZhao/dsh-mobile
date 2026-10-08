@@ -3878,15 +3878,18 @@ const styles = StyleSheet.create({
   composerAccessory: { paddingTop: 10, paddingHorizontal: 12, gap: spacing(2) },
   /**
    * The web's control row: attach circle left, send circle right, 12px between
-   * controls, and 2px of its own top pad so the row sits slightly low against
-   * the draft while the send circle keeps its own seat.
+   * controls, the row's own 2px top pad and 6px foot — and the card's 12px gap
+   * above it (`InputBar.module.css` `.card { gap: 12px }`, which the web hangs
+   * between the draft and this row). Without that gap the draft sat 12pt closer
+   * to the controls than the browser puts it and the whole card was 12pt short
+   * (measured at phone width: 87pt tall against the web's 101px; 99pt with it).
    */
   composerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     minWidth: 0,
-    paddingTop: 2,
+    paddingTop: 14,
     paddingHorizontal: 8,
     paddingBottom: 6,
   },
@@ -3953,23 +3956,39 @@ const styles = StyleSheet.create({
   refMeta: { color: colors.textDim, fontSize: fontSize.tiny },
   feedbackBadge: { color: colors.textDim, fontSize: fontSize.tiny, marginTop: spacing(0.5) },
   /**
-   * The draft surface: 14/24 type with the web's 4px top pad and 14/8 side pads
-   * (the 4px the scrollport takes back on the right), one 24px line as its floor
-   * and the composer's 14-line cap as its ceiling.
+   * The draft surface: the web's 15/25 type (the card carries the same
+   * `font-size` / `line-height` pair, so the draft, the mirror and the backdrop
+   * stay in step) with the web's 14/8 side pads — the 4px the scrollport takes
+   * back on the right — one 36px line box as its floor and the composer's
+   * 336px cap as its ceiling.
+   *
+   * The web's 4px top pad is dropped here: iOS hangs a line box's extra
+   * leading *above* its glyphs, so the same 4px would land the draft ~4pt below
+   * where the browser puts it. Measured against the web at phone width (card
+   * edge → first line's glyph top): the browser puts it at 18px below the card,
+   * and this one lands at 18.3pt — with the 4px pad it was 22.3pt.
+   *
+   * No `flex: 1`: the node has to report its *content* height, or the card
+   * collapses to the 36px floor and a wrapped draft scrolls out of the top of
+   * the card instead of growing it (the web's `.input` grows under `.scroll`'s
+   * cap the same way).
    */
   input: {
-    flex: 1,
     minWidth: 0,
     flexShrink: 1,
     maxHeight: 336,
     minHeight: 36,
-    paddingTop: 4,
+    paddingTop: 0,
     paddingLeft: 14,
     paddingRight: 8,
     color: chat.labelPrimary,
-    fontSize: 14,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 25,
     backgroundColor: 'transparent',
+    // The web's `.scroll` is the only scrolling box in the composer and it
+    // clips: once the draft passes the 336px cap the text has to stop at the
+    // card's edge instead of drawing over its top border.
+    overflow: 'hidden',
   },
   editCancel: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   /**
