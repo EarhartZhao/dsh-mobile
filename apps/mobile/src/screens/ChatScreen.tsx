@@ -163,6 +163,18 @@ function hostRunningOf(session: SessionState): boolean | undefined {
 const HEAL_RETRY_MS = 5_000
 
 /**
+ * How often the screen looks for a stranded tail read.
+ *
+ * `loading` is the one status whose only exit is the tail read landing, so a
+ * screen left `loading` with no read behind it would spin forever: everything
+ * else the screen waits on — a frame, a reconnect, a connection change — needs
+ * an event, and a read whose result was dropped sends none. Each tick simply
+ * asks again, and because it only fires when nothing is actually out it can
+ * never cancel a read that is still in flight.
+ */
+const HISTORY_STALL_CHECK_MS = 5_000
+
+/**
  * Frames per second stop being a useful measure in a quiet turn — a long tool
  * call streams nothing — so a silent stream is only re-read once it has been
  * quiet this long while the Host still reports the Session as running.
@@ -342,6 +354,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const [historyError, setHistoryError] = useState('')
   /** Guards a landing tail read: only the newest one may touch the screen. */
   const historyRequest = useRef(0)
+  /**
+   * The tail read still out with the Host, as the request id that owns it.
+   *
+   * `loading` is the one status whose only exit is that read landing, so the
+   * screen has to know whether one is actually out there before it can tell a
+   * wait from a strand (see {@link HISTORY_STALL_CHECK_MS}). Zero means nothing is in
+   * flight — it landed, it failed, or it never started.
+   */
+  const historyInFlight = useRef(0)
+  /** The same status as a ref, for the watchdog below, which reads it from a timer. */
+  const historyStatusRef = useRef<'loading' | 'ready' | 'error'>('loading')
   const [draft, setDraft] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
@@ -1235,6 +1258,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     if (!historyReady) return
     const address = subagentReadAddress
     const request = ++historyRequest.current
+    historyInFlight.current = request
+    historyStatusRef.current = 'loading'
     setHistoryStatus('loading')
     setHistoryError('')
     try {
@@ -1258,11 +1283,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       )
       hasMoreRef.current = page.hasMore
       setHasOlderHistory(page.hasMore)
+      historyStatusRef.current = 'ready'
       setHistoryStatus('ready')
     } catch (error) {
       if (request !== historyRequest.current || !mountedRef.current) return
+      historyStatusRef.current = 'error'
       setHistoryStatus('error')
       setHistoryError(error instanceof Error ? error.message : String(error))
+    } finally {
+      // Only the newest read owns the flag: an older one landing after a newer
+      // one started must not make the screen think the wait is over.
+      if (historyInFlight.current === request) historyInFlight.current = 0
     }
   }, [connection, historyReady, manager, sessionId, subagentReadAddress])
 
@@ -1456,11 +1487,42 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       if (refreshTimer !== null) clearTimeout(refreshTimer)
     }
   }, [backfillHistory, healMissingTail, loadHistoryTail, manager, sessionId, refresh, tailEpoch])
-  useEffect(() => () => {
-    mountedRef.current = false
-    if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
-    if (tailFollowFrame.current !== null) cancelAnimationFrame(tailFollowFrame.current)
+  /**
+   * The screen's own liveness latch, written at both ends.
+   *
+   * A hot reload keeps this component's state and runs its effects again, and
+   * this effect used to only ever write `false`: the re-mounted screen then
+   * answered every later read with "this screen is gone", the tail read's
+   * result was dropped, and — because `loading` has no other exit — the
+   * conversation sat under 「正在加载对话…」 for as long as it stayed open. It is
+   * the same latch a real unmount needs, so it is set on the way in as well as
+   * cleared on the way out.
+   */
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
+      if (tailFollowFrame.current !== null) cancelAnimationFrame(tailFollowFrame.current)
+    }
   }, [])
+  /**
+   * The last word on a stranded tail read.
+   *
+   * Everything else that could end this wait needs an event — a frame, a
+   * reconnect, a new connection state — and a screen that never got its answer
+   * gets none of them. This only fires when nothing is actually in flight, so it
+   * can never cancel a read that is still out there, and it lets go the moment
+   * the status does.
+   */
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!mountedRef.current || historyStatusRef.current !== 'loading') return
+      if (historyInFlight.current !== 0) return
+      void loadHistoryTail()
+    }, HISTORY_STALL_CHECK_MS)
+    return () => clearInterval(timer)
+  }, [loadHistoryTail])
   useEffect(() => {
     // The heal above hangs off the next frame, and a stream that died at the
     // end of a turn never sends one. This is the only thing that notices, and
