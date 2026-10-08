@@ -12,6 +12,12 @@
 export type Route =
   | { name: 'list' }
   | { name: 'chat'; sessionId: string }
+  /**
+   * One conversation's trajectory, opened from its own header. A sub-page of
+   * the conversation rather than a peer of it: the lineage above is kept, so
+   * backing out of the trajectory lands on the conversation it belongs to.
+   */
+  | { name: 'trajectory'; sessionId: string }
   | { name: 'settings' }
   | { name: 'plugins' }
   | { name: 'connections' }
@@ -25,12 +31,16 @@ export interface NavState {
 
 export const INITIAL_NAV: NavState = { route: { name: 'list' }, chatTrail: [] }
 
+/** The two routes that show a conversation, and so keep its lineage. */
+const showsConversation = (route: Route): boolean =>
+  route.name === 'chat' || route.name === 'trajectory'
+
 /**
  * Show one screen. Any screen but a conversation drops the lineage: back is a
  * way out of the conversation the reader followed, not a redo stack.
  */
 export function routeTo(state: NavState, route: Route): NavState {
-  return { route, chatTrail: route.name === 'chat' ? state.chatTrail : [] }
+  return { route, chatTrail: showsConversation(route) ? state.chatTrail : [] }
 }
 
 /**
@@ -55,4 +65,20 @@ export function closeChat(state: NavState): NavState {
   return parent === undefined
     ? INITIAL_NAV
     : { route: { name: 'chat', sessionId: parent }, chatTrail: state.chatTrail.slice(0, -1) }
+}
+
+/**
+ * Open one conversation's trajectory. The hop it was opened through stays on
+ * the trail, so leaving the trajectory walks back into the conversation and
+ * only then out to whatever that conversation was opened from.
+ */
+export function openTrajectory(state: NavState, sessionId: string): NavState {
+  return { route: { name: 'trajectory', sessionId }, chatTrail: state.chatTrail }
+}
+
+/** Leave a trajectory: the conversation it belongs to, which is where it opened. */
+export function closeTrajectory(state: NavState): NavState {
+  return state.route.name === 'trajectory'
+    ? { route: { name: 'chat', sessionId: state.route.sessionId }, chatTrail: state.chatTrail }
+    : state
 }

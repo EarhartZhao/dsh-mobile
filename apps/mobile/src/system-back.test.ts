@@ -13,6 +13,7 @@ describe('handleSystemBack', () => {
       lastBackAt: 0,
       goToList,
       goToSettings,
+      closeTrajectory: jest.fn(),
       showPrompt,
       moveToBackground,
     })
@@ -21,6 +22,30 @@ describe('handleSystemBack', () => {
     expect(goToList).toHaveBeenCalledTimes(1)
     expect(showPrompt).not.toHaveBeenCalled()
     expect(moveToBackground).not.toHaveBeenCalled()
+  })
+
+  it('returns from a trajectory to the conversation it belongs to', () => {
+    const closeTrajectory = jest.fn()
+    const goToList = jest.fn()
+    const goToSettings = jest.fn()
+
+    const result = handleSystemBack({
+      route: 'trajectory',
+      now: 10_000,
+      lastBackAt: 0,
+      goToList,
+      goToSettings,
+      closeTrajectory,
+      showPrompt: jest.fn(),
+      moveToBackground: jest.fn(),
+    })
+
+    // The trajectory is a page inside one conversation, so back walks into it
+    // rather than out to the list.
+    expect(result).toEqual({ handled: true, lastBackAt: 0 })
+    expect(closeTrajectory).toHaveBeenCalledTimes(1)
+    expect(goToList).not.toHaveBeenCalled()
+    expect(goToSettings).not.toHaveBeenCalled()
   })
 
   it('returns from the plugin page to settings, one step back', () => {
@@ -33,6 +58,7 @@ describe('handleSystemBack', () => {
       lastBackAt: 0,
       goToList,
       goToSettings,
+      closeTrajectory: jest.fn(),
       showPrompt: jest.fn(),
       moveToBackground: jest.fn(),
     })
@@ -49,6 +75,7 @@ describe('handleSystemBack', () => {
       lastBackAt: 0,
       goToList: jest.fn(),
       goToSettings: jest.fn(),
+      closeTrajectory: jest.fn(),
       showPrompt: jest.fn(),
       moveToBackground: jest.fn(),
     })
@@ -64,6 +91,7 @@ describe('handleSystemBack', () => {
       lastBackAt: 10_000,
       goToList: jest.fn(),
       goToSettings: jest.fn(),
+      closeTrajectory: jest.fn(),
       showPrompt: jest.fn(),
       moveToBackground,
     })
@@ -80,6 +108,7 @@ describe('handleSystemBack', () => {
       lastBackAt: 10_000,
       goToList: jest.fn(),
       goToSettings: jest.fn(),
+      closeTrajectory: jest.fn(),
       showPrompt,
       moveToBackground: jest.fn(),
     })

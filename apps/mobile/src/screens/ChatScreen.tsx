@@ -43,6 +43,7 @@ import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { linkTarget } from '../link-targets'
+import { foldPath } from '../path-label'
 import { markdownCompactStyles, markdownRules, markdownStyles } from '../markdown'
 import { extensionOf } from '../file-kinds'
 import { FilePreviewSheet } from '../components/FilePreviewSheet'
@@ -173,6 +174,8 @@ interface Props {
   sessionId: string
   onBack: () => void
   onOpenSession?: (sessionId: string) => void
+  /** Show one conversation's trajectory — its own record list, without a composer. */
+  onOpenTrajectory?: (sessionId: string) => void
   /** Enter sends the composer; Shift+Enter keeps the newline. Defaults on. */
   enterToSend?: boolean
 }
@@ -280,8 +283,8 @@ function useMarkdownLinkPress(
   return onOpenLink === undefined ? undefined : press
 }
 
-export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToSend = true }: Props): React.JSX.Element {
-  const { locale, t } = useI18n()
+export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTrajectory, enterToSend = true }: Props): React.JSX.Element {
+  const { t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
   const [hasOlderHistory, setHasOlderHistory] = useState(false)
   /**
@@ -357,6 +360,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const presetChipRef = useRef<HostInstance | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  /** Whether the header's directory label is showing the whole path. */
+  const [directoryOpen, setDirectoryOpen] = useState(false)
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [subOpen, setSubOpen] = useState<SubagentCatalog | null>(null)
@@ -2178,6 +2183,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           onClose={() => setLineageOpen(false)}
           onSwitch={id => onOpenSession?.(id)}
         />
+        {/* The Web's conversation view ring carries Chat and Trajectory as two
+            tabs of one conversation; a phone spends its width on the title, so
+            the second view is a labelled button here. */}
+        {onOpenTrajectory !== undefined && (
+          <TouchableOpacity
+            style={styles.headerTab}
+            onPress={() => onOpenTrajectory(sessionId)}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.trajectoryOpen')}
+          >
+            <Text style={styles.headerActionText} numberOfLines={1}>{t('chat.trajectory')}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.headerAction} onPress={() => setSearchOpen(true)} accessibilityLabel={t('chat.searchCurrent')}>
           <Icon name="SearchOutline" size={20} color={colors.accent} />
         </TouchableOpacity>
@@ -2196,20 +2214,27 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         const parentLabel = parentTitle !== undefined && parentTitle.trim() !== ''
           ? parentTitle
           : shortSessionId(parentSessionId ?? '')
+        const subagent = s?.origin === 'subagent'
+        const mode = presetLabel === undefined
+          ? undefined
+          : agentPresetLabel(presetLabel, presets.find(preset => preset.id === presetLabel)?.name, t)
         return (
           <View style={styles.metaHeader}>
             <View style={styles.metaText}>
-              {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.directory', { value: s.cwd })}</Text>}
-              {presetLabel !== undefined && (
-                <Text style={styles.metaLine} numberOfLines={1}>
-                  {t('chat.preset', {
-                    value: agentPresetLabel(
-                      presetLabel,
-                      presets.find(preset => preset.id === presetLabel)?.name,
-                      t,
-                    ),
-                  })}
-                </Text>
+              {/* The workspace, folded to the segments that identify it: the
+                  whole path is longer than the line, and what a one-line label
+                  truncates is the project's own name. Tapping shows it in
+                  full. */}
+              {s?.cwd !== undefined && (
+                <TouchableOpacity
+                  onPress={() => setDirectoryOpen(open => !open)}
+                  accessibilityRole="button"
+                  accessibilityLabel={directoryOpen ? t('chat.directoryUnfold') : t('chat.directoryFold')}
+                >
+                  <Text style={styles.metaLine} numberOfLines={directoryOpen ? 2 : 1}>
+                    {t('chat.directory', { value: directoryOpen ? s.cwd : foldPath(s.cwd) })}
+                  </Text>
+                </TouchableOpacity>
               )}
               {/* The way back to a subagent's parent, besides the back gesture:
                   the parent's own header carries the switcher, but the child's
@@ -2223,17 +2248,30 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 >
                   <Text style={[styles.metaLine, styles.metaLink]} numberOfLines={1}>
                     {t('chat.parentSession', { value: parentLabel })}
+                    {subagent ? t('chat.subagentMeta') : ''}
                   </Text>
                 </TouchableOpacity>
               )}
-              <Text style={styles.metaLine} numberOfLines={1}>
-                {t('chat.updated', { value: new Date(s?.updatedAt ?? Date.now()).toLocaleString(locale, { hour12: false }) })}
-                {s?.origin === 'subagent' ? t('chat.subagentMeta') : ''}
-              </Text>
+              {/* A subagent the client has no parent row for still says so;
+                  the marker used to ride the update line, which is gone. */}
+              {subagent && s?.parentSessionId === undefined && (
+                <Text style={styles.metaLine} numberOfLines={1}>{t('chat.subagentBadge')}</Text>
+              )}
             </View>
-            <TouchableOpacity style={styles.modelChip} onPress={() => void openModels()}>
-              <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
-            </TouchableOpacity>
+            <View style={styles.metaSide}>
+              {/* The mode rides the directory's own line, at its far end: it
+                  describes the conversation rather than the model, and the two
+                  chips would otherwise stack into a column of their own. */}
+              {mode !== undefined && <Text style={styles.modeLabel} numberOfLines={1}>{mode}</Text>}
+              <TouchableOpacity
+                style={styles.modelChip}
+                onPress={() => void openModels()}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.switchModel')}
+              >
+                <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )
       })()}
@@ -2424,235 +2462,241 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           </TouchableOpacity>
         )}
       </View>
-      {planMode !== undefined && <PlanChip mode={planMode} />}
-      <GoalBar
-        goal={goal}
-        onEdit={() => setGoalPrompt('edit')}
-        onPause={() => void goalAction('pause')}
-        onResume={() => void goalAction('resume')}
-        onComplete={() => void goalAction('complete')}
-        onClear={() => void goalAction('clear')}
-      />
-      {goal?.phase === 'paused' && (
-        <Text style={styles.goalPausedHint}>{t('chat.goalPausedTurn')}</Text>
-      )}
-      <TodoStrip todos={todos} />
-      {notice !== null && (
-        <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>
-      )}
-      {jobs.length > 0 && (
-        <JobsStrip jobs={jobs} open={jobsOpen} onToggle={() => setJobsOpen(o => !o)} />
-      )}
-      {queue.length > 0 && (
-        <QueueDock
-          queue={queue}
-          editingId={editingItem?.id ?? null}
-          onEdit={startEdit}
-          onRemove={id => void queueAction(id, 'remove')}
-          onSteer={id => void queueAction(id, 'steer')}
+      {/* The fixed bottom band: the plan, goal, queue and job strips, the stats
+          line and the composer. One surface, wearing the same weak edge as the
+          header on the other side — the transcript scrolls under both, and
+          without an edge the newest row and the first card read as one column. */}
+      <View style={styles.bottomDock}>
+        {planMode !== undefined && <PlanChip mode={planMode} />}
+        <GoalBar
+          goal={goal}
+          onEdit={() => setGoalPrompt('edit')}
+          onPause={() => void goalAction('pause')}
+          onResume={() => void goalAction('resume')}
+          onComplete={() => void goalAction('complete')}
+          onClear={() => void goalAction('clear')}
         />
-      )}
-      {(approvals.length > 0 || questions.length > 0) && (
-        <ActionBar
-          manager={manager}
-          sessionId={sessionId}
-          onAnswerQuestion={answerQuestion}
-          onCancelQuestion={cancelQuestion}
-          onApprovalStale={() => showNotice(t('chat.approvalStale'))}
-        />
-      )}
-      <SessionStatsBar view={statsView} />
-      <View style={styles.composer}>
-        {lightbox !== null && (
-          <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
+        {goal?.phase === 'paused' && (
+          <Text style={styles.goalPausedHint}>{t('chat.goalPausedTurn')}</Text>
         )}
-        {/* The web's composer card: one panel-radius surface holding the draft
-            and its control row, with the attachment and reference chips as the
-            card's own accessory — not separate strips above it. */}
-        <View style={styles.composerCard}>
-          {composerReadOnly !== null ? (
-            <View style={styles.composerNotice}>
-              <Text style={styles.composerNoticeTitle}>
-                {t(composerReadOnly === 'one-shot'
-                  ? 'subagent.readOnly.oneShotTitle'
-                  : 'subagent.readOnly.title')}
-              </Text>
-              <Text style={styles.composerNoticeBody}>
-                {t(composerReadOnly === 'one-shot'
-                  ? 'subagent.readOnly.oneShotBody'
-                  : 'subagent.readOnly.body')}
-              </Text>
-            </View>
-          ) : (
-            <>
-          {editingItem === null && (pendingImages.length > 0 || pendingFiles.length > 0) && (
-            <View style={styles.composerAccessory}>
-              {pendingImages.length > 0 && (
-                <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
-                  {pendingImages.map((image, index) => (
-                    <TouchableOpacity
-                      key={`${image.name ?? 'image'}:${index}`}
-                      style={styles.pendingImageCard}
-                      onPress={() => setLightbox({ source: `data:${image.mediaType};base64,${image.data}`, name: image.name ?? undefined })}
-                    >
-                      <Image source={{ uri: `data:${image.mediaType};base64,${image.data}` }} style={styles.pendingImage} />
+        <TodoStrip todos={todos} />
+        {notice !== null && (
+          <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>
+        )}
+        {jobs.length > 0 && (
+          <JobsStrip jobs={jobs} open={jobsOpen} onToggle={() => setJobsOpen(o => !o)} />
+        )}
+        {queue.length > 0 && (
+          <QueueDock
+            queue={queue}
+            editingId={editingItem?.id ?? null}
+            onEdit={startEdit}
+            onRemove={id => void queueAction(id, 'remove')}
+            onSteer={id => void queueAction(id, 'steer')}
+          />
+        )}
+        {(approvals.length > 0 || questions.length > 0) && (
+          <ActionBar
+            manager={manager}
+            sessionId={sessionId}
+            onAnswerQuestion={answerQuestion}
+            onCancelQuestion={cancelQuestion}
+            onApprovalStale={() => showNotice(t('chat.approvalStale'))}
+          />
+        )}
+        <SessionStatsBar view={statsView} />
+        <View style={styles.composer}>
+          {lightbox !== null && (
+            <ImageLightbox visible source={lightbox.source} name={lightbox.name} onClose={() => setLightbox(null)} />
+          )}
+          {/* The web's composer card: one panel-radius surface holding the draft
+              and its control row, with the attachment and reference chips as the
+              card's own accessory — not separate strips above it. */}
+          <View style={styles.composerCard}>
+            {composerReadOnly !== null ? (
+              <View style={styles.composerNotice}>
+                <Text style={styles.composerNoticeTitle}>
+                  {t(composerReadOnly === 'one-shot'
+                    ? 'subagent.readOnly.oneShotTitle'
+                    : 'subagent.readOnly.title')}
+                </Text>
+                <Text style={styles.composerNoticeBody}>
+                  {t(composerReadOnly === 'one-shot'
+                    ? 'subagent.readOnly.oneShotBody'
+                    : 'subagent.readOnly.body')}
+                </Text>
+              </View>
+            ) : (
+              <>
+            {editingItem === null && (pendingImages.length > 0 || pendingFiles.length > 0) && (
+              <View style={styles.composerAccessory}>
+                {pendingImages.length > 0 && (
+                  <ScrollView horizontal style={styles.pendingImagesRow} contentContainerStyle={styles.pendingImagesContent}>
+                    {pendingImages.map((image, index) => (
                       <TouchableOpacity
-                        style={styles.pendingImageRemove}
-                        hitSlop={8}
-                        onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
+                        key={`${image.name ?? 'image'}:${index}`}
+                        style={styles.pendingImageCard}
+                        onPress={() => setLightbox({ source: `data:${image.mediaType};base64,${image.data}`, name: image.name ?? undefined })}
                       >
-                        <Icon name="CloseOutline" size={11} color="#fff" />
-                      </TouchableOpacity>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-              {pendingFiles.length > 0 && (
-                <ScrollView horizontal style={styles.pendingFilesRow} contentContainerStyle={styles.pendingFilesContent}>
-                  {pendingFiles.map(file => (
-                    <View key={file.id} style={styles.pendingFileCard}>
-                      <View style={styles.pendingFileHeader}>
-                        <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
-                        <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
+                        <Image source={{ uri: `data:${image.mediaType};base64,${image.data}` }} style={styles.pendingImage} />
+                        <TouchableOpacity
+                          style={styles.pendingImageRemove}
+                          hitSlop={8}
+                          onPress={() => setPendingImages(current => current.filter((_, removeIndex) => removeIndex !== index))}
+                        >
                           <Icon name="CloseOutline" size={11} color="#fff" />
                         </TouchableOpacity>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+                {pendingFiles.length > 0 && (
+                  <ScrollView horizontal style={styles.pendingFilesRow} contentContainerStyle={styles.pendingFilesContent}>
+                    {pendingFiles.map(file => (
+                      <View key={file.id} style={styles.pendingFileCard}>
+                        <View style={styles.pendingFileHeader}>
+                          <Text style={styles.pendingFileName} numberOfLines={1}>{file.name}</Text>
+                          <TouchableOpacity hitSlop={8} onPress={() => setPendingFiles(current => current.filter(item => item.id !== file.id))}>
+                            <Icon name="CloseOutline" size={11} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
+                        {file.status === 'uploading' && (
+                          <View style={styles.pendingFileProgress}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.pendingFileStatus}>{t('common.loading')}</Text></View>
+                        )}
+                        {file.status === 'ready' && <Text style={[styles.pendingFileStatus, { color: colors.accent }]}>{t('common.current')}</Text>}
+                        {file.status === 'error' && <Text style={[styles.pendingFileStatus, { color: colors.danger }]} numberOfLines={1}>{file.error ?? t('plus.fileUploadFailed', { message: '' })}</Text>}
                       </View>
-                      <Text style={styles.pendingFileMeta}>{formatBytes(file.bytes)}</Text>
-                      {file.status === 'uploading' && (
-                        <View style={styles.pendingFileProgress}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.pendingFileStatus}>{t('common.loading')}</Text></View>
-                      )}
-                      {file.status === 'ready' && <Text style={[styles.pendingFileStatus, { color: colors.accent }]}>{t('common.current')}</Text>}
-                      {file.status === 'error' && <Text style={[styles.pendingFileStatus, { color: colors.danger }]} numberOfLines={1}>{file.error ?? t('plus.fileUploadFailed', { message: '' })}</Text>}
-                    </View>
-                  ))}
-                </ScrollView>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+            {visibleRefs.length > 0 && (
+              <View style={styles.refRow}>
+                {visibleRefs.map(reference => (
+                  <View key={reference.path} style={styles.refChip}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.refBody}
+                      onPress={() => setPreviewPath(reference.path)}
+                    >
+                      <Text style={styles.refName} numberOfLines={1}>
+                        {reference.path.split(/[\\/]/).at(-1) ?? reference.path}
+                      </Text>
+                      <Text style={styles.refMeta}>
+                        {reference.kind === 'directory' ? t('common.directory') : reference.size === undefined ? '' : formatBytes(reference.size)}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel={t('common.delete')}
+                      onPress={() => removeReference(reference)}
+                      hitSlop={8}
+                    >
+                      <Icon name="CloseOutline" size={14} color={colors.textDim} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+            <TextInput
+              ref={composerRef}
+              style={styles.input}
+              value={draft}
+              onChangeText={onDraftChange}
+              placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
+              placeholderTextColor={chat.labelCaption}
+              multiline
+              // Multiline submit is a TextInput behavior, not a key handler: on
+              // Android a hardware Enter reaches neither onKeyPress nor
+              // preventDefault, and a soft keyboard's return key inserts a
+              // newline for multiline fields. `submitBehavior` makes the input's
+              // own submit path fire onSubmitEditing instead (verified on the
+              // emulator: onKeyPress left the newline in the draft).
+              submitBehavior={enterToSend ? 'submit' : 'newline'}
+              onSubmitEditing={() => { if (enterToSend) void send() }}
+            />
+            {/* The web's control row: the attach circle pins left, the send
+                circle right, and the two never move the draft's own geometry. */}
+            <View style={styles.composerRow}>
+              {editingItem === null && !textOnlyComposer && (
+                <TouchableOpacity
+                  style={styles.addButton}
+                  hitSlop={8}
+                  onPress={() => openPlus('commands', '', 'plus')}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.add')}
+                >
+                  <Icon name="PlusOutlineMedium" size={14} color={chat.labelPrimary} />
+                </TouchableOpacity>
+              )}
+              {editingItem !== null && (
+                <TouchableOpacity style={styles.editCancel} hitSlop={8} onPress={() => { setEditingItem(null); setDraft('') }}>
+                  <Icon name="CloseOutline" size={15} color={chat.labelTertiary} />
+                </TouchableOpacity>
+              )}
+              {/* The Web's composer carries the access mode beside the attach
+                  circle, and the new-task preset seat beside that. Both are the
+                  same controls the conversation menu used to repeat. */}
+              {editingItem === null && !textOnlyComposer && permissionChip !== undefined && (
+                <TouchableOpacity
+                  ref={permissionChipRef}
+                  style={styles.modeChip}
+                  hitSlop={8}
+                  onPress={() => openModeMenu(permissionChipRef.current, () => setPermissionPickerOpen(true))}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.permissionMode', { name: permissionChip })}
+                >
+                  <Text
+                    style={[styles.modeChipText, permissionChipDanger && styles.modeChipDanger]}
+                    numberOfLines={1}
+                  >
+                    {permissionChip}
+                  </Text>
+                  <Icon name="ChevronDownOutline" size={11} color={permissionChipDanger ? colors.danger : chat.labelSecondary} />
+                </TouchableOpacity>
+              )}
+              {editingItem === null && !textOnlyComposer && presetChip !== undefined && (
+                <TouchableOpacity
+                  ref={presetChipRef}
+                  style={styles.modeChip}
+                  hitSlop={8}
+                  onPress={() => openModeMenu(presetChipRef.current, () => setPresetPickerOpen(true))}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.presetMode', { name: presetChip })}
+                >
+                  <Text style={styles.modeChipText} numberOfLines={1}>{presetChip}</Text>
+                  <Icon name="ChevronDownOutline" size={11} color={chat.labelSecondary} />
+                </TouchableOpacity>
+              )}
+              <View style={styles.composerSpacer} />
+              {running ? (
+                <TouchableOpacity
+                  style={styles.sendCircle}
+                  hitSlop={6}
+                  onPress={() => void cancel()}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.stop')}
+                >
+                  <Icon name="StopSolid" size={16} color="#fff" />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.sendCircle, !canSubmit && styles.sendCircleDisabled]}
+                  disabled={!canSubmit}
+                  hitSlop={6}
+                  onPress={() => void send()}
+                  accessibilityRole="button"
+                  accessibilityLabel={editingItem !== null ? t('chat.save') : t('chat.send')}
+                >
+                  <Icon name="SendSolid" size={16} color="#fff" />
+                </TouchableOpacity>
               )}
             </View>
-          )}
-          {visibleRefs.length > 0 && (
-            <View style={styles.refRow}>
-              {visibleRefs.map(reference => (
-                <View key={reference.path} style={styles.refChip}>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.refBody}
-                    onPress={() => setPreviewPath(reference.path)}
-                  >
-                    <Text style={styles.refName} numberOfLines={1}>
-                      {reference.path.split(/[\\/]/).at(-1) ?? reference.path}
-                    </Text>
-                    <Text style={styles.refMeta}>
-                      {reference.kind === 'directory' ? t('common.directory') : reference.size === undefined ? '' : formatBytes(reference.size)}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.delete')}
-                    onPress={() => removeReference(reference)}
-                    hitSlop={8}
-                  >
-                    <Icon name="CloseOutline" size={14} color={colors.textDim} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-          <TextInput
-            ref={composerRef}
-            style={styles.input}
-            value={draft}
-            onChangeText={onDraftChange}
-            placeholder={editingItem !== null ? t('chat.editQueuePlaceholder') : running ? t('chat.queuePlaceholder') : t('chat.sendPlaceholder')}
-            placeholderTextColor={chat.labelCaption}
-            multiline
-            // Multiline submit is a TextInput behavior, not a key handler: on
-            // Android a hardware Enter reaches neither onKeyPress nor
-            // preventDefault, and a soft keyboard's return key inserts a
-            // newline for multiline fields. `submitBehavior` makes the input's
-            // own submit path fire onSubmitEditing instead (verified on the
-            // emulator: onKeyPress left the newline in the draft).
-            submitBehavior={enterToSend ? 'submit' : 'newline'}
-            onSubmitEditing={() => { if (enterToSend) void send() }}
-          />
-          {/* The web's control row: the attach circle pins left, the send
-              circle right, and the two never move the draft's own geometry. */}
-          <View style={styles.composerRow}>
-            {editingItem === null && !textOnlyComposer && (
-              <TouchableOpacity
-                style={styles.addButton}
-                hitSlop={8}
-                onPress={() => openPlus('commands', '', 'plus')}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.add')}
-              >
-                <Icon name="PlusOutlineMedium" size={14} color={chat.labelPrimary} />
-              </TouchableOpacity>
-            )}
-            {editingItem !== null && (
-              <TouchableOpacity style={styles.editCancel} hitSlop={8} onPress={() => { setEditingItem(null); setDraft('') }}>
-                <Icon name="CloseOutline" size={15} color={chat.labelTertiary} />
-              </TouchableOpacity>
-            )}
-            {/* The Web's composer carries the access mode beside the attach
-                circle, and the new-task preset seat beside that. Both are the
-                same controls the conversation menu used to repeat. */}
-            {editingItem === null && !textOnlyComposer && permissionChip !== undefined && (
-              <TouchableOpacity
-                ref={permissionChipRef}
-                style={styles.modeChip}
-                hitSlop={8}
-                onPress={() => openModeMenu(permissionChipRef.current, () => setPermissionPickerOpen(true))}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.permissionMode', { name: permissionChip })}
-              >
-                <Text
-                  style={[styles.modeChipText, permissionChipDanger && styles.modeChipDanger]}
-                  numberOfLines={1}
-                >
-                  {permissionChip}
-                </Text>
-                <Icon name="ChevronDownOutline" size={11} color={permissionChipDanger ? colors.danger : chat.labelSecondary} />
-              </TouchableOpacity>
-            )}
-            {editingItem === null && !textOnlyComposer && presetChip !== undefined && (
-              <TouchableOpacity
-                ref={presetChipRef}
-                style={styles.modeChip}
-                hitSlop={8}
-                onPress={() => openModeMenu(presetChipRef.current, () => setPresetPickerOpen(true))}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.presetMode', { name: presetChip })}
-              >
-                <Text style={styles.modeChipText} numberOfLines={1}>{presetChip}</Text>
-                <Icon name="ChevronDownOutline" size={11} color={chat.labelSecondary} />
-              </TouchableOpacity>
-            )}
-            <View style={styles.composerSpacer} />
-            {running ? (
-              <TouchableOpacity
-                style={styles.sendCircle}
-                hitSlop={6}
-                onPress={() => void cancel()}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.stop')}
-              >
-                <Icon name="StopSolid" size={16} color="#fff" />
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.sendCircle, !canSubmit && styles.sendCircleDisabled]}
-                disabled={!canSubmit}
-                hitSlop={6}
-                onPress={() => void send()}
-                accessibilityRole="button"
-                accessibilityLabel={editingItem !== null ? t('chat.save') : t('chat.send')}
-              >
-                <Icon name="SendSolid" size={16} color="#fff" />
-              </TouchableOpacity>
+              </>
             )}
           </View>
-            </>
-          )}
         </View>
       </View>
       <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
@@ -2741,9 +2785,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 <Text style={styles.modelFailureMessage}>{failure.message}</Text>
               </View>
             ))}
-            <TouchableOpacity style={styles.menuRow} onPress={() => setModelMenu(null)}>
-              <Text style={[styles.menuText, { color: colors.textDim }]}>{t('common.close')}</Text>
-            </TouchableOpacity>
           </ScrollView>
         </ModalBackdrop>
       </Modal>
@@ -3617,6 +3658,17 @@ const styles = StyleSheet.create({
    */
   list: { flex: 1 },
   /**
+   * The fixed bottom band — the strips, the stats line and the composer. Not a
+   * card of its own: it wears one weak edge on top, so the transcript's newest
+   * row stops reading as part of the same column.
+   */
+  bottomDock: {
+    backgroundColor: chat.bgBase,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: chat.borderL2,
+    boxShadow: shadow.edgeUp,
+  },
+  /**
    * The web's `.toBottom`: a 34px circle on the floating fill, 24px in from the
    * composer's own side clearance and 16px above the list's bottom edge, wearing
    * the panel elevation rather than a rule.
@@ -3640,13 +3692,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing(3),
     paddingVertical: spacing(2.5),
+    backgroundColor: chat.bgBase,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+    // The transcript scrolls immediately below this row; the edge is what says
+    // the row is fixed and the content is not.
+    boxShadow: shadow.edgeDown,
     gap: spacing(2),
   },
   backButton: { flexDirection: 'row', alignItems: 'center', minWidth: 88, gap: 2 },
   backLabel: { color: colors.accent, fontSize: fontSize.body },
   headerAction: { width: 36, alignItems: 'center', justifyContent: 'center' },
+  /**
+   * The trajectory's own seat. The icon seats are a fixed 36pt square, but this
+   * one carries a word — `轨迹` fits a square, `Trajectory` does not — so it
+   * takes the width its label needs and gives it back to the title when the
+   * locale is short.
+   */
+  headerTab: { paddingHorizontal: spacing(1), alignItems: 'center', justifyContent: 'center' },
+  headerActionText: { color: colors.accent, fontSize: fontSize.small },
   headerMenu: { width: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
   /**
@@ -3689,10 +3753,13 @@ const styles = StyleSheet.create({
     paddingBottom: spacing(0.5),
   },
   metaText: { flex: 1, gap: 2 },
-  modelChip: { alignSelf: 'flex-end', marginRight: spacing(1), marginVertical: spacing(0.5) },
+  modelChip: { marginRight: spacing(1) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
   metaLink: { color: colors.accent },
+  /** The header's right column: the mode on the directory's line, the model under it. */
+  metaSide: { alignItems: 'flex-end', gap: spacing(1), marginTop: spacing(0.5) },
+  modeLabel: { marginRight: spacing(1), color: colors.textDim, fontSize: fontSize.tiny },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
   menuCard: {
     backgroundColor: colors.bgElevated,

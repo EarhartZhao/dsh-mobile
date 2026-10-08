@@ -185,12 +185,17 @@ const INSETS: Metrics = {
   insets: { top: 0, left: 0, right: 0, bottom: 0 },
 }
 
-function render(manager: ConnectionManager, sessionId = 's1', onBack: () => void = jest.fn()): renderer.ReactTestRenderer {
+function render(
+  manager: ConnectionManager,
+  sessionId = 's1',
+  onBack: () => void = jest.fn(),
+  extra: Partial<React.ComponentProps<typeof ChatScreen>> = {},
+): renderer.ReactTestRenderer {
   let tree!: renderer.ReactTestRenderer
   act(() => {
     tree = renderer.create(
       <SafeAreaProvider initialMetrics={INSETS}>
-        <ChatScreen manager={manager} sessionId={sessionId} onBack={onBack} />
+        <ChatScreen manager={manager} sessionId={sessionId} onBack={onBack} {...extra} />
       </SafeAreaProvider>,
     )
   })
@@ -1153,6 +1158,10 @@ describe('ChatScreen composer triggers', () => {
 function setupModes(overrides: {
   blank?: boolean
   permission?: string
+  /** The session's own workspace, as `session.list` passes it through. */
+  cwd?: string
+  /** The preset the session actually runs, as its header records it. */
+  agentPreset?: string
   options?: { value: string; name: string; description?: string }[]
   presets?: { id: string; name?: string; isDefault?: boolean }[]
 }) {
@@ -1165,6 +1174,8 @@ function setupModes(overrides: {
       blank: overrides.blank ?? false,
       updatedAt: 0,
       running: false,
+      ...(overrides.cwd === undefined ? {} : { cwd: overrides.cwd }),
+      ...(overrides.agentPreset === undefined ? {} : { agentPreset: overrides.agentPreset }),
       ...(overrides.permission === undefined
         ? {}
         : { projections: { asOfSeq: 1, values: { permissions: { currentValue: overrides.permission } } } }),
@@ -1258,5 +1269,54 @@ describe('ChatScreen composer mode controls', () => {
     const other = render(started)
     await settle()
     expect(pressableByLabel(other, 'chat.presetMode(标准)')).toBeUndefined()
+  })
+})
+
+/**
+ * The header's own two readings.
+ *
+ * It used to carry the session's update time; that is what the list's rows are
+ * for, and the seat it spent now opens the conversation's second view. The
+ * workspace label was the whole path on one line, which truncates exactly the
+ * segment that names the project.
+ */
+describe('ChatScreen header', () => {
+  const CWD = '/Users/mac/Documents/code/mine/dsh/deepseek-harness'
+
+  it('opens this conversation\u2019s trajectory, and folds the directory to its tail', async () => {
+    const { manager } = setupModes({ cwd: CWD })
+    const onOpenTrajectory = jest.fn()
+    const tree = render(manager, 's1', jest.fn(), { onOpenTrajectory })
+    await settle()
+
+    // The update line is gone; the trajectory is where it sat.
+    expect(screenText(tree)).not.toContain('chat.updated(')
+    const trajectory = pressableByLabel(tree, 'chat.trajectoryOpen')
+    expect(trajectory).toBeDefined()
+    act(() => { trajectory?.props.onPress() })
+    expect(onOpenTrajectory).toHaveBeenCalledWith('s1')
+
+    // Folded, the label keeps the two segments that identify the project; the
+    // tap swaps in the whole path.
+    expect(screenText(tree)).toContain('chat.directory(…/dsh/deepseek-harness)')
+    act(() => { pressableByLabel(tree, 'chat.directoryFold')?.props.onPress() })
+    expect(screenText(tree)).toContain(`chat.directory(${CWD})`)
+    act(() => { pressableByLabel(tree, 'chat.directoryUnfold')?.props.onPress() })
+    expect(screenText(tree)).toContain('chat.directory(…/dsh/deepseek-harness)')
+  })
+
+  it('names the mode without a prefix, and leaves the control off when there is nothing to open', async () => {
+    const { manager } = setupModes({ cwd: CWD, agentPreset: 'standard' })
+    const tree = render(manager)
+    await settle()
+
+    // The mode is the preset's own name — the word 「预设」 only ever repeated
+    // what the chip beside the composer already says.
+    expect(screenText(tree)).toContain('preset.standard.name')
+    expect(screenText(tree)).not.toContain('chat.preset(')
+
+    // No callback, no seat: a screen that cannot show a trajectory does not
+    // offer one.
+    expect(pressableByLabel(tree, 'chat.trajectoryOpen')).toBeUndefined()
   })
 })

@@ -7,17 +7,62 @@ import { chat, colors, fontSize, radius, shadow, spacing } from '../theme'
 import { useI18n } from '../i18n'
 import { Icon } from '../icons'
 
+/**
+ * How many plan items the folded strip keeps in view.
+ *
+ * Three rows fit under the composer without moving it, and a plan whose head
+ * has scrolled behind the band is the one thing the reader cannot recover from
+ * the transcript.
+ */
+const PLAN_PREVIEW_ITEMS = 3
+
+/**
+ * How long a goal's objective has to be before it is worth folding.
+ *
+ * The strip caps the text at two lines, so anything that could reach a third
+ * gets the control; a one-line objective keeps no chevron it does not need.
+ */
+const GOAL_FOLD_CHARS = 40
+
 export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Element | null {
   const { t } = useI18n()
+  const [open, setOpen] = React.useState(false)
   if (todos.length === 0) return null
   const done = todos.filter(t => t.status === 'completed').length
+  // A plan is usually longer than the band that carries it, and the band sits
+  // under the transcript: folding it keeps the newest answer in view instead of
+  // pushing it off the screen for a list nobody is reading mid-turn.
+  const folded = !open && todos.length > PLAN_PREVIEW_ITEMS
+  const shown = folded ? todos.slice(0, PLAN_PREVIEW_ITEMS) : todos
+  const hidden = todos.length - shown.length
+  const head = (
+    <View style={styles.stripHead}>
+      <Icon name="ChecklistOutline" size={14} color={colors.textDim} />
+      <Text style={styles.stripHeadTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
+      {todos.length > PLAN_PREVIEW_ITEMS && (
+        <Icon
+          name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'}
+          size={12}
+          color={colors.textDim}
+        />
+      )}
+    </View>
+  )
   return (
     <View style={styles.strip}>
-      <View style={styles.stripHead}>
-        <Icon name="ChecklistOutline" size={14} color={colors.textDim} />
-        <Text style={styles.stripHeadTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
-      </View>
-      {todos.map((t, i) => (
+      {todos.length > PLAN_PREVIEW_ITEMS
+        ? (
+          <TouchableOpacity
+            onPress={() => setOpen(current => !current)}
+            accessibilityRole="button"
+            accessibilityLabel={t('plan.todoToggle')}
+            accessibilityState={{ expanded: open }}
+          >
+            {head}
+          </TouchableOpacity>
+        )
+        : head}
+      {shown.map((t, i) => (
         <View key={i} style={styles.todoRow}>
           <View style={styles.todoMark}>
             {t.status === 'completed'
@@ -29,6 +74,9 @@ export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Eleme
           <Text style={[styles.todoText, t.status === 'completed' && styles.todoDone]} numberOfLines={1}>{t.content}</Text>
         </View>
       ))}
+      {hidden > 0 && (
+        <Text style={styles.stripHeadTitle}>{t('plan.todoMore', { count: hidden })}</Text>
+      )}
     </View>
   )
 }
@@ -51,8 +99,15 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onComplete, onClear }
   onClear: () => void
 }): React.JSX.Element | null {
   const { t } = useI18n()
+  const [open, setOpen] = React.useState(false)
   if (goal === null) return null
   const phaseKey = goal.phase === 'active' ? 'goal.active' : goal.phase === 'paused' ? 'goal.paused' : goal.phase === 'blocked' ? 'goal.blocked' : 'goal.complete'
+  // The objective is the model's own paragraph: two lines of it identify the
+  // goal, the rest is what the reader opens the strip for.
+  const foldable = goal.objective.includes('\n') || goal.objective.length > GOAL_FOLD_CHARS
+  const objective = (
+    <Text style={styles.goalObjective} numberOfLines={open ? undefined : 2}>{goal.objective}</Text>
+  )
   return (
     <View style={styles.strip}>
       <View style={styles.goalHeader}>
@@ -65,7 +120,18 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onComplete, onClear }
           <ActionText label={t('goal.clear')} onPress={onClear} danger />
         </View>
       </View>
-      <Text style={styles.goalObjective} numberOfLines={2}>{goal.objective}</Text>
+      {foldable
+        ? (
+          <TouchableOpacity
+            onPress={() => setOpen(current => !current)}
+            accessibilityRole="button"
+            accessibilityLabel={t('goal.expand')}
+            accessibilityState={{ expanded: open }}
+          >
+            {objective}
+          </TouchableOpacity>
+        )
+        : objective}
       {goal.phase === 'active' && goal.activation === 'disarmed' && (
         <Text style={styles.goalHint}>{t('goal.disarmed')}</Text>
       )}

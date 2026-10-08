@@ -1,4 +1,4 @@
-import { INITIAL_NAV, closeChat, openChat, routeTo } from './route'
+import { INITIAL_NAV, closeChat, closeTrajectory, openChat, openTrajectory, routeTo } from './route'
 
 describe('chat lineage', () => {
   it('backs out of a conversation opened from the list into the list', () => {
@@ -43,5 +43,28 @@ describe('chat lineage', () => {
     const settings = routeTo(child, { name: 'settings' })
     expect(settings.chatTrail).toEqual([])
     expect(closeChat(settings)).toEqual(INITIAL_NAV)
+  })
+
+  it('leaves a trajectory for its own conversation, not the list', () => {
+    const chat = openChat(INITIAL_NAV, 'parent')
+    const trajectory = openTrajectory(chat, 'parent')
+    expect(trajectory.route).toEqual({ name: 'trajectory', sessionId: 'parent' })
+    expect(closeTrajectory(trajectory)).toEqual(chat)
+  })
+
+  it('keeps the hop a trajectory was opened over', () => {
+    // Parent → child, then the child's trajectory: back walks child → parent,
+    // exactly as it would have without the trajectory in between.
+    const child = openChat(openChat(INITIAL_NAV, 'parent'), 'child')
+    const trajectory = openTrajectory(child, 'child')
+    expect(trajectory.chatTrail).toEqual(['parent'])
+    const backInChat = closeTrajectory(trajectory)
+    expect(backInChat).toEqual(child)
+    expect(closeChat(backInChat).route).toEqual({ name: 'chat', sessionId: 'parent' })
+  })
+
+  it('keeps the lineage when a trajectory is routed to directly', () => {
+    const child = openChat(openChat(INITIAL_NAV, 'parent'), 'child')
+    expect(routeTo(child, { name: 'trajectory', sessionId: 'child' }).chatTrail).toEqual(['parent'])
   })
 })

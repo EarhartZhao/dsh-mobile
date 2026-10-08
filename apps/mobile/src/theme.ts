@@ -172,6 +172,13 @@ export const shadow = {
   prominent: `0 0 0 0.5px ${chat.stroke}, 0 3px 8px rgba(0, 0, 0, 0.04), 0 0 20px rgba(0, 0, 0, 0.05)`,
   /** The composer card: a wider, fainter glow. */
   soft: `0 0 0 0.5px ${chat.borderL2}, 0 4px 16px rgba(0, 0, 0, 0.03), 0 0 24px rgba(0, 0, 0, 0.03)`,
+  /**
+   * The transcript's own edges: the header's bottom and the composer band's
+   * top. Weaker than the panel tiers on purpose — this is a separator, not a
+   * surface being lifted, and the transcript scrolls right past it.
+   */
+  edgeDown: '0 2px 6px rgba(0, 0, 0, 0.05)',
+  edgeUp: '0 -2px 6px rgba(0, 0, 0, 0.05)',
 } as const
 
 export const radius = {

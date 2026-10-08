@@ -19,7 +19,7 @@ jest.mock('react-native-svg', () => ({
   Rect: () => null,
 }))
 
-import { SessionStatsBar } from './strips'
+import { GoalBar, SessionStatsBar, TodoStrip } from './strips'
 
 /** Every distinct line of text rendered anywhere in the tree. */
 function texts(tree: renderer.ReactTestRenderer): string[] {
@@ -122,5 +122,66 @@ describe('SessionStatsBar', () => {
     })
 
     expect(tree!.toJSON()).toBeNull()
+  })
+})
+
+/** The band's own strips, folded so the composer keeps its room. */
+describe('bottom strips', () => {
+  function mount(element: React.ReactElement): renderer.ReactTestRenderer {
+    let tree!: renderer.ReactTestRenderer
+    act(() => { tree = renderer.create(element) })
+    return tree
+  }
+
+  it('shows three plan rows and the remainder until the reader opens it', () => {
+    const todos = Array.from({ length: 5 }, (_, i) => ({
+      content: `任务 ${i + 1}`,
+      status: (i === 0 ? 'completed' : 'pending') as 'completed' | 'pending',
+    }))
+    const tree = mount(<TodoStrip todos={todos} />)
+
+    expect(texts(tree)).toContain('plan.todoTitle(done=1,total=5)')
+    expect(texts(tree)).toEqual(expect.arrayContaining(['任务 1', '任务 2', '任务 3']))
+    expect(texts(tree)).not.toContain('任务 4')
+    expect(texts(tree)).toContain('plan.todoMore(count=2)')
+
+    press(tree, 'plan.todoToggle')
+    expect(texts(tree)).toEqual(expect.arrayContaining(['任务 4', '任务 5']))
+    expect(texts(tree)).not.toContain('plan.todoMore(count=2)')
+  })
+
+  it('keeps a plan that already fits flat, with no control of its own', () => {
+    const tree = mount(<TodoStrip todos={[{ content: '任务 1', status: 'pending' }]} />)
+
+    expect(texts(tree)).toContain('任务 1')
+    expect(tree.root.findAll(node => node.props.accessibilityLabel === 'plan.todoToggle')).toHaveLength(0)
+  })
+
+  it('folds a long objective to its first two lines and opens on tap', () => {
+    const goal = {
+      id: 'g1', revision: 1, phase: 'active' as const,
+      objective: '把移动端的聊天页按 Web 的样式重做一遍，包含用户消息、助手消息、思考过程与输入框。',
+    }
+    const tree = mount(
+      <GoalBar goal={goal} onEdit={jest.fn()} onPause={jest.fn()} onResume={jest.fn()} onComplete={jest.fn()} onClear={jest.fn()} />,
+    )
+
+    const objective = (): number | undefined => tree.root
+      .findAll(node => node.props.children === goal.objective)
+      .at(-1)?.props.numberOfLines as number | undefined
+    expect(objective()).toBe(2)
+
+    press(tree, 'goal.expand')
+    expect(objective()).toBeUndefined()
+  })
+
+  it('leaves a one-line objective without a fold control', () => {
+    const goal = { id: 'g1', revision: 1, phase: 'active' as const, objective: '修好滚动' }
+    const tree = mount(
+      <GoalBar goal={goal} onEdit={jest.fn()} onPause={jest.fn()} onResume={jest.fn()} onComplete={jest.fn()} onClear={jest.fn()} />,
+    )
+
+    expect(texts(tree)).toContain('修好滚动')
+    expect(tree.root.findAll(node => node.props.accessibilityLabel === 'goal.expand')).toHaveLength(0)
   })
 })

@@ -1,4 +1,4 @@
-export type SystemBackRoute = 'list' | 'chat' | 'settings' | 'plugins' | 'connections' | 'pairing'
+export type SystemBackRoute = 'list' | 'chat' | 'trajectory' | 'settings' | 'plugins' | 'connections' | 'pairing'
 
 interface SystemBackOptions {
   route: SystemBackRoute
@@ -6,6 +6,8 @@ interface SystemBackOptions {
   lastBackAt: number
   goToList: () => void
   goToSettings: () => void
+  /** Leave a trajectory for the conversation it belongs to. */
+  closeTrajectory: () => void
   showPrompt: () => void
   moveToBackground: () => void
 }
@@ -16,6 +18,13 @@ interface SystemBackResult {
 }
 
 export function handleSystemBack(options: SystemBackOptions): SystemBackResult {
+  // A trajectory is a sub-page of one conversation: back walks into that
+  // conversation rather than all the way out to the list.
+  if (options.route === 'trajectory') {
+    options.closeTrajectory()
+    return { handled: true, lastBackAt: 0 }
+  }
+
   // The plugin and connection pages sit one step past settings, so back walks
   // the stack instead of jumping straight to the root. The add-a-connection
   // scanner belongs to the connection list, which is where it came from.

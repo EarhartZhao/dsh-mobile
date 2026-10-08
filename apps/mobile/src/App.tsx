@@ -41,8 +41,18 @@ import { ConnectionSwitcherScreen } from './screens/ConnectionSwitcherScreen'
 import { SessionListScreen } from './screens/SessionListScreen'
 import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
+import { TrajectoryScreen } from './screens/TrajectoryScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
-import { INITIAL_NAV, closeChat, openChat, routeTo, type NavState, type Route } from './route'
+import {
+  INITIAL_NAV,
+  closeChat,
+  closeTrajectory,
+  openChat,
+  openTrajectory,
+  routeTo,
+  type NavState,
+  type Route,
+} from './route'
 import { handleSystemBack } from './system-back'
 
 interface DiagnosticError {
@@ -183,6 +193,10 @@ function AppContent(): React.JSX.Element {
   /** Back out of a conversation: its parent, or the session list. */
   const leaveChat = useCallback(() => {
     setNav(closeChat)
+  }, [])
+  /** Leave a conversation's trajectory for that conversation. */
+  const leaveTrajectory = useCallback(() => {
+    setNav(closeTrajectory)
   }, [])
   const [connState, setConnState] = useState<ConnectionState>('idle')
   const [alert, setAlert] = useState<string | null>(null)
@@ -390,12 +404,13 @@ function AppContent(): React.JSX.Element {
       // at the one it was opened from before that.
       goToList: leaveChat,
       goToSettings: () => goTo({ name: 'settings' }),
+      closeTrajectory: leaveTrajectory,
       showPrompt: showBackExitPrompt,
       moveToBackground,
     })
     lastBackPress.current = result.lastBackAt
     return result.handled
-  }, [goTo, leaveChat, moveToBackground, route.name, showBackExitPrompt])
+  }, [goTo, leaveChat, leaveTrajectory, moveToBackground, route.name, showBackExitPrompt])
 
   const handleHardwareBack = useCallback(() => {
     if (pairing === null || managerRef.current === null) return false
@@ -828,12 +843,19 @@ function AppContent(): React.JSX.Element {
               features={managerRef.current.compatibility?.features ?? []}
               onBack={() => goTo({ name: 'settings' })}
             />
+          ) : route.name === 'trajectory' ? (
+            <TrajectoryScreen
+              manager={managerRef.current}
+              sessionId={route.sessionId}
+              onBack={leaveTrajectory}
+            />
           ) : (
             <ChatScreen
               manager={managerRef.current}
               sessionId={route.sessionId}
               onBack={leaveChat}
               onOpenSession={openSession}
+              onOpenTrajectory={sessionId => setNav(current => openTrajectory(current, sessionId))}
               enterToSend={preferences.enterToSend}
             />
           )}

@@ -243,6 +243,44 @@
 > 复测未做——驱动模拟器要发真实鼠标事件，会打断机器上的其他操作。单测 29 套 236 例全过，
 > typecheck 与 lint（0 error）同过。
 
+> 2026-10-08 追加（轨迹视图 + 顶底分界的弱阴影 + 头部与弹框的收口）：四项交互调整，
+> 前两件是把 Web 的对话页结构补齐，后两件是照 Web 的模态习惯收口。
+>
+> ① **轨迹（Trajectory）**：Web 的对话视图环（`ctx.slots.inject('conversation.view')`）
+> 把「对话」和「轨迹」当一个会话的两个 tab，手机宽度只够放标题，所以第二个视图做成
+> 头部按钮（原「更新时间」那行的位置，用户要求删掉更新时间）。轨迹页是**纯投影**：
+> 订阅与对话页同一个 `changed` 流，50ms 节流后 `groupTurns(deriveConversation(...))`，
+> 不再向宿主另要一份数据；一轮一个 section header（第 N 轮 · 状态 · 用时 · N 次工具调用），
+> 下面是该轮的记录行——**包含对话页根本不渲染的东西**（`tool/call`、只有 reasoning 的
+> assistant 步），这正是轨迹存在的理由。点行展开参数/结果，**没有输入框**（轨迹是用来看
+> 发生过什么的）。Web 的时间概览、检查器和工具栏没有移植：手机放不下，取舍写在
+> `screens/TrajectoryScreen.tsx` 的文件头。路由上它是会话的**子页**（`route.ts` 的
+> `openTrajectory`/`closeTrajectory`，`showsConversation` 保证 chat↔trajectory 不丢谱系），
+> 系统返回键先回到它所属的会话再往上走（`system-back.ts` 的 `closeTrajectory`）。
+>
+> ② **顶底两条固定带的弱阴影**：头部和底部（计划/目标/队列/审批/统计/输入卡）都是固定的，
+> 中间是滚动的会话内容，之前三者是同一个平面，最新一条消息和第一张卡片读起来像同一列。
+> 新增 `shadow.edgeDown`（`0 2px 6px rgba(0,0,0,0.05)`，头部下缘）与 `shadow.edgeUp`
+> （同参数取负，底带上缘），比面板层（`panel`/`soft`）**更弱**——它是分隔线，不是被抬起来
+> 的面；同时给头部补 `backgroundColor: chat.bgBase`（否则滚动内容会从它身下透出来）。
+>
+> ③ **头部信息重排**：目录折成 `…/dsh/deepseek-harness` 这样的两段（新增
+> `src/path-label.ts` 的 `foldPath`，`/` 与短路径原样返回），点一下换整条路径（`numberOfLines`
+> 1 → 2）；模式去掉「预设」二字、挪到目录行的最右侧、与模型 chip 同列（`metaSide`）；
+> 子代理标记从被删掉的更新行挪到自己的一行。
+>
+> ④ **底部多行默认收起**：`TodoStrip` 只留前 3 条 + 「还有 N 项」，标题行可点开合；
+> `GoalBar` 的目标文本默认 2 行（>40 字或含换行才给展开控件）。停靠带在输入卡之下，
+> 长计划会把正在回的消息顶出视口，收起后视口还给会话。
+>
+> ⑤ **模型弹框收口**：删掉弹框末尾的「关闭」行——`ModalBackdrop` 的 scrim 本来就是
+> 点击空白关闭的按压目标，再放一个关闭按钮等于同一个动作两个入口。
+>
+> 验证：`zsh` 下在 `apps/mobile` 跑 `typecheck`（清）、`test`（31 套 255 例全过，
+> 新增 `TrajectoryScreen.test.tsx` 4 例、`strips.test.tsx` 4 例与 ChatScreen 头部 2 例）、
+> `lint`（0 error，220 warning 与基线同量级，均为既有规则）。设备复核未做：驱动模拟器要发
+> 真实鼠标事件，会打断机器上的其他操作。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、
@@ -284,7 +322,8 @@
 | Plan 模式 chip | ✅ /plan 命令 + plan 投影 | ● | 状态 chip 与进入/退出入口已接入 |
 | 上下文用量统计 | ✅ assistant/message.usage + contextBreakdown 投影 | ● | token 用量条已接入 |
 | Compaction 指示 | ✅ compaction 投影 + assistant 摘要 | ● | 压缩/摘要标记已接入 |
-| 会话标题/元信息头 | ✅ projection(title) + summary | ● | cwd、agent preset、父会话和更新时间已展示 |
+| 会话标题/元信息头 | ✅ projection(title) + summary | ● | 目录（可点击展开整条路径）、模式与模型、父会话已展示；更新时间按需求下线，位置让给轨迹入口 |
+| 会话轨迹视图 | ✅ 客户端本地投影（`deriveConversation` + `groupTurns`） | ● | Web 的 conversation.view 第二个 tab；按轮次列出全部记录（含对话页不渲染的工具调用与纯思考步），可展开看参数/结果，无输入框。Web 的时间概览/检查器/工具栏未移植 |
 
 ### C. 执行控制与模型（中价值，契约已有）
 
