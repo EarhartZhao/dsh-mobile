@@ -28,8 +28,16 @@ if (typeof globalThis.crypto.randomUUID !== 'function') {
   };
 }
 
-const { AppRegistry } = require('react-native');
+const { AppRegistry, LogBox } = require('react-native');
 const App = require('./src/App').default;
 const { name: appName } = require('./app.json');
+
+// The in-app overlay is RN's own English furniture — "Open debugger to view
+// warnings." — and it covers the composer every time a warning lands, including
+// on the first bundle of a reload. Its subjects are either third-party noise
+// (@react-native/virtualized-lists' feature-flag subpath import, the extracted
+// `Clipboard` getter) or things this app reports through its own top banner, so
+// the phone keeps the terminal's copy of the warning instead of the overlay.
+LogBox.ignoreAllLogs(true)
 
 AppRegistry.registerComponent(appName, () => App);

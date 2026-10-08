@@ -8,15 +8,6 @@ import { useI18n } from '../i18n'
 import { Icon } from '../icons'
 
 /**
- * How many plan items the folded strip keeps in view.
- *
- * Three rows fit under the composer without moving it, and a plan whose head
- * has scrolled behind the band is the one thing the reader cannot recover from
- * the transcript.
- */
-const PLAN_PREVIEW_ITEMS = 3
-
-/**
  * How long a goal's objective has to be before it is worth folding.
  *
  * The strip caps the text at two lines, so anything that could reach a third
@@ -29,39 +20,32 @@ export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Eleme
   const [open, setOpen] = React.useState(false)
   if (todos.length === 0) return null
   const done = todos.filter(t => t.status === 'completed').length
-  // A plan is usually longer than the band that carries it, and the band sits
-  // under the transcript: folding it keeps the newest answer in view instead of
-  // pushing it off the screen for a list nobody is reading mid-turn.
-  const folded = !open && todos.length > PLAN_PREVIEW_ITEMS
-  const shown = folded ? todos.slice(0, PLAN_PREVIEW_ITEMS) : todos
-  const hidden = todos.length - shown.length
+  // The web's own panel opens closed and the whole list lives behind the
+  // header, so a closed plan is one line — its progress — and nothing else.
+  // The strip sits under the transcript, and a plan that unrolled itself there
+  // pushed the newest answer off the screen for a list nobody reads mid-turn.
+  const shown = open ? todos : []
   const head = (
-    <View style={styles.stripHead}>
+    <View style={[styles.stripHead, shown.length === 0 && styles.stripHeadOnly]}>
       <Icon name="ChecklistOutline" size={14} color={colors.textDim} />
       <Text style={styles.stripHeadTitle}>{t('plan.todoTitle', { done, total: todos.length })}</Text>
-      {todos.length > PLAN_PREVIEW_ITEMS && (
-        <Icon
-          name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'}
-          size={12}
-          color={colors.textDim}
-        />
-      )}
+      <Icon
+        name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'}
+        size={12}
+        color={colors.textDim}
+      />
     </View>
   )
   return (
     <View style={styles.strip}>
-      {todos.length > PLAN_PREVIEW_ITEMS
-        ? (
-          <TouchableOpacity
-            onPress={() => setOpen(current => !current)}
-            accessibilityRole="button"
-            accessibilityLabel={t('plan.todoToggle')}
-            accessibilityState={{ expanded: open }}
-          >
-            {head}
-          </TouchableOpacity>
-        )
-        : head}
+      <TouchableOpacity
+        onPress={() => setOpen(current => !current)}
+        accessibilityRole="button"
+        accessibilityLabel={t('plan.todoToggle')}
+        accessibilityState={{ expanded: open }}
+      >
+        {head}
+      </TouchableOpacity>
       {shown.map((t, i) => (
         <View key={i} style={styles.todoRow}>
           <View style={styles.todoMark}>
@@ -74,9 +58,6 @@ export function TodoStrip({ todos }: { todos: TodoItemView[] }): React.JSX.Eleme
           <Text style={[styles.todoText, t.status === 'completed' && styles.todoDone]} numberOfLines={1}>{t.content}</Text>
         </View>
       ))}
-      {hidden > 0 && (
-        <Text style={styles.stripHeadTitle}>{t('plan.todoMore', { count: hidden })}</Text>
-      )}
     </View>
   )
 }
@@ -425,6 +406,8 @@ const styles = StyleSheet.create({
   },
   stripTitle: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(1.5) },
   stripHead: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5), marginBottom: spacing(1.5) },
+  /** Closed, the header is the whole strip: nothing follows it to space away from. */
+  stripHeadOnly: { marginBottom: 0 },
   stripHeadTitle: { color: colors.textDim, fontSize: fontSize.tiny },
   todoRow: { flexDirection: 'row', gap: spacing(2), marginTop: 2 },
   todoMark: { width: 14, alignItems: 'center', justifyContent: 'center' },

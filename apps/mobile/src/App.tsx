@@ -3,7 +3,7 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { BackHandler, Clipboard, DeviceEventEmitter, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, View } from 'react-native'
+import { BackHandler, Clipboard, DeviceEventEmitter, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native'
 import { TouchableOpacity } from './components/Touchable'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
@@ -317,12 +317,10 @@ function AppContent(): React.JSX.Element {
   }, [])
 
   const showBackExitPrompt = useCallback(() => {
-    const message = t('app.pressBackAgainToExit')
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT)
-    } else {
-      showAlert(message)
-    }
+    // The app has one place a transient line is drawn. The Android toast drew
+    // the same sentence at the other end of the screen, in the platform's own
+    // shape, for a hint that is not platform-specific at all.
+    showAlert(t('app.pressBackAgainToExit'))
   }, [showAlert, t])
 
   const recordError = useCallback((message: string, kind: ConnectionFailureKind = 'unknown') => {
@@ -457,24 +455,9 @@ function AppContent(): React.JSX.Element {
       mutateConnections(state => setProfileMachineName(state, pairing.id, machineName))
     })
     const offStoreError = manager.store.on('error', ({ message }) => recordError(message))
-    // Foreground alerts: what a settled task says (M3 scope: no system push,
-    // foreground banner only). An approval or a question is *not* a banner
-    // here: the conversation that needs the answer carries its own action bar,
-    // and the list already marks the row — a bar across the top of whichever
-    // screen the reader happens to be on said the same thing twice.
-    const offSettled = manager.store.on('jobSettled', ({ job }) => {
-      const statusKey: TranslationKey = job.status === 'completed'
-        ? 'job.completed'
-        : job.status === 'failed' ? 'job.failed' : 'job.settled'
-      // A shell job's label is its whole command line: unclipped it turns the
-      // one-line banner into a wall of text over the whole screen.
-      const label = job.label.length > 72 ? `${job.label.slice(0, 71)}…` : job.label
-      showAlert(t('job.settledMessage', { id: job.id, status: t(statusKey), label }))
-    })
     manager.start().catch(() => undefined)
     return () => {
       off()
-      offSettled()
       offManagerError()
       offHealth()
       offInfo()
@@ -482,7 +465,7 @@ function AppContent(): React.JSX.Element {
       void manager.stop()
       managerRef.current = null
     }
-  }, [pairing, deviceName, mutateConnections, recordError, showAlert, t])
+  }, [pairing, deviceName, mutateConnections, recordError])
 
   useEffect(() => {
     if (connState !== 'online') {
@@ -852,6 +835,7 @@ function AppContent(): React.JSX.Element {
               onBack={leaveChat}
               onOpenSession={openSession}
               onOpenTrajectory={sessionId => setNav(current => openTrajectory(current, sessionId))}
+              onNotice={showAlert}
               enterToSend={preferences.enterToSend}
             />
           )}

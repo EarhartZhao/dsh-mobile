@@ -169,6 +169,16 @@ const HEAL_RETRY_MS = 5_000
  */
 const SILENT_STREAM_MS = 30_000
 
+/**
+ * How many trailing path segments the header's directory line keeps.
+ *
+ * The row below it carries the controls, so the line is the full width of the
+ * band: three segments reach past the project name into the folder that names
+ * the checkout, which is what the extra room is for. The whole path is still
+ * one tap away.
+ */
+const DIRECTORY_SEGMENTS = 3
+
 interface Props {
   manager: ConnectionManager
   sessionId: string
@@ -176,6 +186,12 @@ interface Props {
   onOpenSession?: (sessionId: string) => void
   /** Show one conversation's trajectory — its own record list, without a composer. */
   onOpenTrajectory?: (sessionId: string) => void
+  /**
+   * Where a transient notice goes. The app owns one banner, above every
+   * screen; a strip inside this one's bottom dock said the same thing in a
+   * second place, in a second shape.
+   */
+  onNotice?: (text: string) => void
   /** Enter sends the composer; Shift+Enter keeps the newline. Defaults on. */
   enterToSend?: boolean
 }
@@ -283,7 +299,7 @@ function useMarkdownLinkPress(
   return onOpenLink === undefined ? undefined : press
 }
 
-export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTrajectory, enterToSend = true }: Props): React.JSX.Element {
+export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTrajectory, onNotice, enterToSend = true }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
   const [hasOlderHistory, setHasOlderHistory] = useState(false)
@@ -334,7 +350,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const [jobs, setJobs] = useState<JobView[]>([])
   const [jobsOpen, setJobsOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<{ id: string } | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [todos, setTodos] = useState<TodoItemView[]>([])
   const [statsView, setStatsView] = useState<SessionStatsView | null>(null)
   const [goal, setGoal] = useState<GoalViewLite | null>(null)
@@ -593,7 +608,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       return next
     })
   }
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRef = useRef<FlatList<TranscriptRow>>(null)
   /**
    * One press, one navigation. The header can receive both a touch-up and an
@@ -1103,10 +1117,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   }
 
   const showNotice = useCallback((text: string) => {
-    setNotice(text)
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
-    noticeTimer.current = setTimeout(() => setNotice(null), 4000)
-  }, [])
+    onNotice?.(text)
+  }, [onNotice])
 
   /**
    * A tapped link: URLs leave the app, file references open the workspace
@@ -1520,10 +1532,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       void loadModels()
     }
   }), [loadCommands, loadModels, loadPresets, manager, plusOpen, refreshGoalActivation, sessionId])
-
-  useEffect(() => () => {
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
-  }, [])
 
   /**
    * Picks one browsed path into the draft as an `@` reference and keeps a chip
@@ -2214,6 +2222,26 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
             : agentPresetLabel(presetLabel, presets.find(preset => preset.id === presetLabel)?.name, t)
           return (
             <View style={styles.metaHeader}>
+              {/* Where it runs leads: the workspace on a line of its own, with
+                  the mode the conversation was composed with at its far end.
+                  The path is the one reading that wants width, and the controls
+                  that act on the conversation belong under it, not beside it —
+                  they were squeezing the path into the shell of the row. */}
+              <View style={styles.metaRow}>
+                {s?.cwd !== undefined && (
+                  <TouchableOpacity
+                    style={styles.directoryLine}
+                    onPress={() => setPathOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chat.directoryOpen')}
+                  >
+                    <Text style={styles.metaLine} numberOfLines={1}>
+                      {t('chat.directory', { value: foldPath(s.cwd, DIRECTORY_SEGMENTS) })}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {mode !== undefined && <Text style={styles.modeLabel} numberOfLines={1}>{mode}</Text>}
+              </View>
               {/* Who is running this conversation: the children it spawned at the
                   left, the model it runs on at the right. The switcher used to
                   share the title's row, where it stole width from the title for a
@@ -2246,25 +2274,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
                 >
                   <Text style={styles.modelChipText} numberOfLines={1}>{modelLabel}</Text>
                 </TouchableOpacity>
-              </View>
-              {/* Where it runs: the workspace, folded to the segments that name
-                  the project, and the mode the conversation was composed with at
-                  the far end. The whole path is a tap away — a header line is not
-                  the place to read `/Users/mac/Documents/code/mine/dsh/…`. */}
-              <View style={styles.metaRow}>
-                {s?.cwd !== undefined && (
-                  <TouchableOpacity
-                    style={styles.directoryLine}
-                    onPress={() => setPathOpen(true)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('chat.directoryOpen')}
-                  >
-                    <Text style={styles.metaLine} numberOfLines={1}>
-                      {t('chat.directory', { value: foldPath(s.cwd) })}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-                {mode !== undefined && <Text style={styles.modeLabel} numberOfLines={1}>{mode}</Text>}
               </View>
               {/* The way back to a subagent's parent, besides the back gesture: a
                   child's own header carries no switcher, so this line is the only
@@ -2490,9 +2499,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
           <Text style={styles.goalPausedHint}>{t('chat.goalPausedTurn')}</Text>
         )}
         <TodoStrip todos={todos} />
-        {notice !== null && (
-          <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>
-        )}
         {jobs.length > 0 && (
           <JobsStrip jobs={jobs} open={jobsOpen} onToggle={() => setJobsOpen(o => !o)} />
         )}
@@ -3695,9 +3701,12 @@ const styles = StyleSheet.create({
   /**
    * The fixed bottom band — the strips, the stats line and the composer. Not a
    * card of its own: it wears one weak edge on top, so the transcript's newest
-   * row stops reading as part of the same column.
+   * row stops reading as part of the same column. The top pad belongs to the
+   * band, not the first strip: the edge and the plan rows were touching, and an
+   * edge with no air under it reads as a rule through the strip.
    */
   bottomDock: {
+    paddingTop: spacing(2),
     backgroundColor: chat.bgBase,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: chat.borderL2,
@@ -3793,15 +3802,16 @@ const styles = StyleSheet.create({
     paddingBottom: spacing(1.5),
   },
   /**
-   * The band under the title: one row for who runs this conversation (its
-   * children, its model), one for where it runs (the workspace, the mode).
+   * The band under the title: the workspace's row first, taking the whole
+   * width, then the controls that run the conversation (its children, its
+   * model) under it.
    * Rows rather than a left column and a right column, so the path gets the
    * width it was competing for instead of wrapping under the model.
    */
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(2) },
   metaSubagent: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   metaBadge: { paddingVertical: spacing(1), color: colors.textDim, fontSize: fontSize.tiny },
-  directoryLine: { flexShrink: 1, paddingVertical: spacing(1) },
+  directoryLine: { flex: 1, flexShrink: 1, paddingVertical: spacing(1) },
   modelChip: { marginLeft: 'auto', paddingVertical: spacing(1), paddingLeft: spacing(2) },
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny },
@@ -4268,20 +4278,12 @@ const styles = StyleSheet.create({
   },
   editCancel: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   /**
-   * The composer's own dock cards — the queue, running jobs and notices — wear
-   * the same rounded surface as the input card they float above, the way the
-   * web stacks them: one surface tier, 8px of side clearance, no full-width
-   * rules cutting the transcript in two.
+   * The composer's own dock cards — the queue and the running jobs — wear the
+   * same rounded surface as the input card they float above, the way the web
+   * stacks them: one surface tier, 8px of side clearance, no full-width rules
+   * cutting the transcript in two. Notices are not one of them: they travel to
+   * the app's own banner, which is the only place a transient line is drawn.
    */
-  notice: {
-    marginHorizontal: spacing(2),
-    marginBottom: spacing(2),
-    backgroundColor: chat.hover,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing(3),
-    paddingVertical: spacing(2),
-  },
-  noticeText: { color: chat.labelSecondary, fontSize: 12, lineHeight: 18 },
   dock: {
     marginHorizontal: spacing(2),
     marginBottom: spacing(2),

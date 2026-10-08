@@ -133,7 +133,9 @@ describe('bottom strips', () => {
     return tree
   }
 
-  it('shows three plan rows and the remainder until the reader opens it', () => {
+  it('keeps a plan to its own line until the reader opens it', () => {
+    // The web's panel opens closed: a folded plan is its progress line and
+    // nothing else, and the whole list is one tap behind it.
     const todos = Array.from({ length: 5 }, (_, i) => ({
       content: `任务 ${i + 1}`,
       status: (i === 0 ? 'completed' : 'pending') as 'completed' | 'pending',
@@ -141,20 +143,26 @@ describe('bottom strips', () => {
     const tree = mount(<TodoStrip todos={todos} />)
 
     expect(texts(tree)).toContain('plan.todoTitle(done=1,total=5)')
-    expect(texts(tree)).toEqual(expect.arrayContaining(['任务 1', '任务 2', '任务 3']))
-    expect(texts(tree)).not.toContain('任务 4')
-    expect(texts(tree)).toContain('plan.todoMore(count=2)')
+    expect(texts(tree)).not.toContain('任务 1')
 
     press(tree, 'plan.todoToggle')
-    expect(texts(tree)).toEqual(expect.arrayContaining(['任务 4', '任务 5']))
-    expect(texts(tree)).not.toContain('plan.todoMore(count=2)')
+    expect(texts(tree)).toEqual(expect.arrayContaining(['任务 1', '任务 5']))
+
+    // Tapping the header again folds it back to the one line it started on.
+    press(tree, 'plan.todoToggle')
+    expect(texts(tree)).not.toContain('任务 1')
   })
 
-  it('keeps a plan that already fits flat, with no control of its own', () => {
+  it('folds a one-item plan the same way, header still the way in', () => {
+    // Web parity again: the control is the header, whatever the list's length,
+    // so a reader never has to know how long the plan is to open it.
     const tree = mount(<TodoStrip todos={[{ content: '任务 1', status: 'pending' }]} />)
 
+    expect(texts(tree)).toContain('plan.todoTitle(done=0,total=1)')
+    expect(texts(tree)).not.toContain('任务 1')
+
+    press(tree, 'plan.todoToggle')
     expect(texts(tree)).toContain('任务 1')
-    expect(tree.root.findAll(node => node.props.accessibilityLabel === 'plan.todoToggle')).toHaveLength(0)
   })
 
   it('folds a long objective to its first two lines and opens on tap', () => {

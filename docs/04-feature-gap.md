@@ -318,6 +318,52 @@
 > hairline + 约 2.7pt 阴影、两行元信息与右侧对齐都到位（没有发鼠标/触摸事件）。
 > 有子智能体的会话那一行没在设备上核对——打开它需要点列表。
 
+> 2026-10-08 追加（顶带行列归位 + 下掉任务完成横幅 + 提示统一到顶部 + 计划收一行）：
+> 上一轮的顶带两行化把两行的**内容**放反了，这一轮按用户给的分工摆回去，另外收掉
+> 三处零散提示。
+>
+> ① **顶带两行归位**：第一行**目录**（`foldPath(cwd, 3)`，即三个尾段
+> `…/mine/dsh/deepseek-harness`）+ 最右侧**模式**；第二行左侧**子智能体切换** +
+> 右侧**模型切换**。上一轮是"子智能体 + 模型"在上、"目录 + 模式"在下——用户要的
+> 是"模型切换和子智能体切换放在下面、目录显示再宽一些"，所以把两行整块对调，`directoryLine`
+> 由 `flexShrink: 1` 改成 `flex: 1` 吃掉整行宽度（多出来的宽度给折叠段数从 2 段加到 3 段，
+> 3 段正好跨过项目名进到 checkout 那一级）。
+>
+> ② **下掉任务完成横幅**：`jobSettled` 的 `showAlert` 一并删除（上一轮保留了它，因为
+> "没有别的落点"；用户的结论是不要这个横幅）。i18n 随之删 `job.completed` / `job.settled` /
+> `job.settledMessage`——`job.failed` 留着，`ChatScreen.jobStatusLabel` 还在用它。core 的
+> store 事件不受影响，只是没有 UI 消费者。
+>
+> ③ **提示统一到顶部的一条**：会话页底部原先挂着一条 `styles.notice`（截图里的「已复制」），
+> 而 App 顶部本来就有跨屏幕的 `alertBanner`。改成 `ChatScreen` 接一个 `onNotice` 回调、
+> App 传 `showAlert`，会话页自己的 notice 状态与 4s 计时器整体删掉——全 App 只剩一条
+> 画临时提示的位置。顺带把 Android 的 `ToastAndroid`（双击返回退出提示）也并进同一条，
+> 不再分平台两种形状。
+>
+> ④ **底部那个英文浮条**：截图最底下那条 `Open debugger to view warnings.` 是 RN 的
+> **LogBox 浮层**（Metro 日志里的触发源是 `@react-native/virtualized-lists` 对
+> `ReactNativeFeatureFlags` 私有子路径的 import 报警，以及 RN 0.87 把 `Clipboard` 从 core
+> 摘出去时 `index.js` 的 `warnOnce`）。它是 RN 自带的英文家具、只出现在 dev，而且盖住
+> 正在打的输入卡；`apps/mobile/index.js` 里加 `LogBox.ignoreAllLogs(true)`，警告本身仍
+> 照旧打到 Metro 终端。App 自己的文案全部走 i18n（zh/en 两份字典各 717 键、集合一致），
+> 所以"加载和刷新时显示英文"与"这个怎么显示英文"都是这一条。
+>
+> ⑤ **计划条收成一行**：`TodoStrip` 原来只在超过 3 项时折叠，折叠态还留着**三行**，
+> 点标题只是从 3 行变全部——所以"点击计划没有收起显示一行"。改成跟 Web 的 `TodoPanel`
+> 一样：`collapsed` 初始就是 `true`，收起时**只有标题那一行**（`计划 · done/total` + 箭头，
+> 连 `stripHead` 的 6pt 下边距也去掉），展开才是整份清单；控件永远是标题本身，跟清单
+> 长度无关。i18n 删 `plan.todoMore`。
+>
+> ⑥ **底带上边距**：`styles.bottomDock` 加 `paddingTop: spacing(2)`。阴影/细线是画在
+> 底带**顶边**上的，之前计划条第一行紧贴着它，读起来像一条穿过条的横杠。
+>
+> 验证：`apps/mobile` 的 `typecheck` 清；`test` 31 套 256 例全过（改「计划条」两例为
+> 收一行/再收回去，改头部一例断言两行的**文档顺序**与不同行，目录断言改为三个尾段）；
+> `lint` 0 error（220 warning，与基线同量级）。模拟器（iPhone 17 Pro + Metro）重启 App
+> 做**只读截图**核对：底部不再出现 LogBox 浮条，顶带第一行是
+> `目录 …/mine/dsh/deepseek-harness` + 右侧「标准模式」，第二行右侧 `deepseek-flash`，
+> 底带顶边与输入卡之间留出空隙（没有发鼠标/触摸事件，计划条与「已复制」走单测）。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

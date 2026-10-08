@@ -1293,7 +1293,8 @@ describe('ChatScreen header', () => {
   it('opens this conversation\u2019s trajectory, and keeps the whole path a tap away', async () => {
     const { manager } = setupModes({ cwd: CWD })
     const onOpenTrajectory = jest.fn()
-    const tree = render(manager, 's1', jest.fn(), { onOpenTrajectory })
+    const onNotice = jest.fn()
+    const tree = render(manager, 's1', jest.fn(), { onOpenTrajectory, onNotice })
     await settle()
 
     // The update line is gone; the trajectory is where it sat.
@@ -1303,11 +1304,26 @@ describe('ChatScreen header', () => {
     act(() => { trajectory?.props.onPress() })
     expect(onOpenTrajectory).toHaveBeenCalledWith('s1')
 
-    // The header line keeps the two segments that name the project, and the
-    // whole path stays off it — a line that ends in `…/deepseek-harness` is
-    // readable, one that starts at `/Users/mac/Documents` is not.
-    expect(screenText(tree)).toContain('chat.directory(…/dsh/deepseek-harness)')
+    // The header line keeps the three trailing segments — the row below it
+    // carries the controls, so the path owns the band's width — and the whole
+    // path stays off it: a line that ends in the project's name is readable,
+    // one that starts at `/Users/mac/Documents` is not.
+    expect(screenText(tree)).toContain('chat.directory(…/mine/dsh/deepseek-harness)')
     expect(screenText(tree)).not.toContain(`chat.directory(${CWD})`)
+
+    // The controls that run the conversation sit on the row under this one,
+    // not beside it — sharing the line is what squeezed the path into a shell.
+    const path = pressableByLabel(tree, 'chat.directoryOpen')
+    const model = pressableByLabel(tree, 'chat.switchModel')
+    expect(path).toBeDefined()
+    expect(model).toBeDefined()
+    // Document order is the band's own order: the path's line is drawn first.
+    const band = tree.root.findAll(node => node === path || node === model)
+    expect(band[0]).toBe(path)
+    // And the chip's row is not the path's — the two readings are stacked.
+    const modelRow = ancestorsOf(model!).find(node => node.findAll(child => child === model).length > 0)
+    expect(modelRow).toBeDefined()
+    expect(modelRow!.findAll(node => node === path)).toEqual([])
 
     // The tap opens the path's own sheet, where the value copies.
     act(() => { pressableByLabel(tree, 'chat.directoryOpen')?.props.onPress() })
@@ -1316,10 +1332,11 @@ describe('ChatScreen header', () => {
     expect(screenText(tree)).toContain('chat.directoryTapToCopy')
 
     // Copying closes the sheet and says so: the whole path is now on the
-    // clipboard, which the screen only does on the way out.
+    // clipboard, which the screen only does on the way out. The line travels
+    // to the app's own banner — the screen draws no notice of its own.
     act(() => { pressableByLabel(tree, 'common.copy')?.props.onPress() })
     expect(screenText(tree)).not.toContain('chat.directoryTapToCopy')
-    expect(screenText(tree)).toContain('notice.copied')
+    expect(onNotice).toHaveBeenCalledWith('notice.copied')
   })
 
   it('names the mode without a prefix, and leaves the control off when there is nothing to open', async () => {
