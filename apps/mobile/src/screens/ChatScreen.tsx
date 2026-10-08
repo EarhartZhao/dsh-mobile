@@ -347,6 +347,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     setSheetTab(tab)
     setSheetQuery(query)
     setPlusOpen(true)
+    loadForTab(tab)
+  }
+
+  /**
+   * Fill whichever tab is showing. The sheet keeps its own tab state, so a
+   * reader who opens the attach button and then taps 「引用」 arrives at a tab
+   * nothing ever fetched — every switch back to a tab has to ask for it again.
+   */
+  const loadForTab = (tab: PlusTab): void => {
     if (tab === 'commands') void loadCommands()
     if (tab === 'references') void loadReferences()
     if (tab === 'controls') void loadPresets()
@@ -803,7 +812,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
 
   const loadCommands = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
-    if (client === null || (!force && commandStatus === 'ready')) return
+    if (client === null) {
+      if (force || commandStatus === 'idle') {
+        setCommands([])
+        setCommandStatus('failed')
+        setCommandError(t('chat.loadConnection'))
+      }
+      return
+    }
+    if (!force && commandStatus === 'ready') return
     setCommandStatus('loading')
     setCommandError('')
     try {
@@ -827,7 +844,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
 
   const loadPresets = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
-    if (client === null || (!force && presetStatus === 'ready')) return
+    if (client === null) {
+      if (force || presetStatus === 'idle') {
+        setPresets([])
+        setPresetStatus('failed')
+        setPresetError(t('chat.loadConnection'))
+      }
+      return
+    }
+    if (!force && presetStatus === 'ready') return
     setPresetStatus('loading')
     setPresetError('')
     const roster = await client.catalog.agentPresets().catch(() => null)
@@ -844,7 +869,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
 
   const loadReferences = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
-    if (client === null || (!force && referenceStatus === 'ready')) return
+    if (client === null) {
+      if (force || referenceStatus === 'idle') {
+        setReferences([])
+        setReferenceStatus('failed')
+      }
+      return
+    }
+    if (!force && referenceStatus === 'ready') return
     setReferenceStatus('loading')
     const [fileValues, sessionValues] = await Promise.all([
       client.references.files({ sessionId, query: '' }).catch(() => []),
@@ -1776,6 +1808,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   // Same label the Web conversation header shows: title, else the workspace
   // name, else the id.
   const summary = manager.store.summaries.find(item => item.sessionId === sessionId)
+  /**
+   * The host fixes a session's composition at its first turn: a preset picked
+   * afterwards is refused with `agent-preset/locked`, and the Web answers the
+   * same split — a seat that chooses for a task still blank, and a header that
+   * only reports what a started task already runs. Only a blank session is
+   * still free to switch.
+   */
+  const presetLocked = summary?.blank !== true
+  /**
+   * What the session runs, not what the roster would default to: the row's own
+   * `agentPreset` when the list carried it, else the live projection.
+   */
+  const presetLabel = summary?.agentPreset ?? manager.store.agentPreset(sessionId)
   const title = sessionDisplayTitle({
     title: manager.store.title(sessionId),
     ...(summary?.cwd === undefined ? {} : { cwd: summary.cwd }),
@@ -2410,13 +2455,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         presetError={presetError}
         references={references}
         referenceStatus={referenceStatus}
+        onReloadReferences={() => { void loadReferences(true) }}
+        onTabChange={loadForTab}
         permissions={permissions?.options ?? []}
         permissionValue={permissions?.currentValue}
         planActive={planMode !== undefined && planMode !== 'off'}
         hasGoal={goal !== null}
         presetSelectionEnabled={presetSelectionOn}
+        presetLocked={presetLocked}
         modelLabel={modelLabel}
-        presetLabel={manager.store.summaries.find(item => item.sessionId === sessionId)?.agentPreset}
+        presetLabel={presetLabel}
         pendingImageCount={pendingImages.length}
         pendingFileCount={pendingFiles.length}
         uploadingFileCount={pendingFiles.filter(file => file.status === 'uploading').length}

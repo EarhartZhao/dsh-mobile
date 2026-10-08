@@ -482,6 +482,16 @@ export class SessionStore extends Emitter<StoreEvents> {
     return typeof value === 'string' ? value : undefined
   }
 
+  /**
+   * The preset this session actually runs, as the session's own projection
+   * reports it. A surface that shows it read-only has to read the session, not
+   * the deployment default the roster would offer.
+   */
+  agentPreset(sessionId: string): string | undefined {
+    const value = this.session(sessionId).projections['agentPreset']
+    return typeof value === 'string' ? value : undefined
+  }
+
   private session(sessionId: string): SessionState {
     let existing = this.sessions.get(sessionId)
     if (existing === undefined) {

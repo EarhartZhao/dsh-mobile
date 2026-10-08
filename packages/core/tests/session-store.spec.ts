@@ -365,6 +365,25 @@ describe('SessionStore', () => {
     expect(store.title('s-1')).toBe('renamed-on-web')
   })
 
+  it('reads the preset a session runs from its own projection, not the roster default', () => {
+    const store = new SessionStore()
+    store.applyMuxFrame(...mux({ type: 'session/projection', sessionId: sid, key: 'agentPreset', value: 'ptc', seq: 5 }))
+    store.applyBaseline({
+      summaries: [{
+        sessionId: sid,
+        updatedAt: 1,
+        running: false,
+        blank: false,
+        projections: { asOfSeq: 4, values: { agentPreset: 'standard' } },
+      } as never],
+      workspaces: [],
+    })
+
+    // A baseline row is as stale as its own checkpoint, so the newer live frame wins.
+    expect(store.agentPreset('s-1')).toBe('ptc')
+    expect(store.agentPreset('s-2')).toBeUndefined()
+  })
+
   it('leaves host frames alone when the baseline carries no projections', () => {
     const store = new SessionStore()
     store.applyBaseline({

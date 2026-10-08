@@ -21,6 +21,7 @@ class MainApplication : Application(), ReactApplication {
           add(UpdaterPackage())
           add(AppPackage())
           add(FileOpenerPackage())
+          add(FilePickerPackage())
         },
     )
   }

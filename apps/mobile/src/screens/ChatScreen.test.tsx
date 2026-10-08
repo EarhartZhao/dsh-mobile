@@ -948,4 +948,23 @@ describe('ChatScreen composer triggers', () => {
     expect(hasField(other, 'plus.searchReferences')).toBe(true)
     expect(hasField(other, 'plus.searchCommands')).toBe(false)
   })
+
+  it('fills a tab the reader switched to by hand, instead of leaving it blank', async () => {
+    const { manager } = setup()
+    const tree = render(manager, 's1')
+    await settle()
+
+    // The attach button opens on commands, which fetches only commands.
+    act(() => { pressableByLabel(tree, 'chat.add')?.props.onPress() })
+    await settle()
+    expect(hasField(tree, 'plus.searchCommands')).toBe(true)
+    expect(screenText(tree)).not.toContain('plus.noReferences')
+
+    // Switching tabs has to ask for the tab's own data; the sheet keeps that
+    // state privately, so a tab nothing fetched used to render as blank.
+    act(() => { pressableRendering(tree, 'plus.tab.references')?.props.onPress() })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(true)
+    expect(screenText(tree)).toContain('plus.noReferences')
+  })
 })

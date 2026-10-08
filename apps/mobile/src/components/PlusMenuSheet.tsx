@@ -46,6 +46,13 @@ interface Props {
   presetError: string
   references: PlusReference[]
   referenceStatus: PlusMenuStatus
+  onReloadReferences: () => void
+  /**
+   * A tab the reader switched to by hand. The sheet owns which tab is showing,
+   * but only the screen knows how to fill it: opening on `commands` does not
+   * fetch references, so the switch has to be reported or the tab stays blank.
+   */
+  onTabChange?: (tab: PlusTab) => void
   permissions: { value: string; name: string; description?: string }[]
   permissionValue?: string
   planActive: boolean
@@ -53,6 +60,8 @@ interface Props {
   modelLabel: string
   /** Host policy: false means the saved default governs and a picker would lie. */
   presetSelectionEnabled: boolean
+  /** True once the session has started its first turn, which freezes its preset. */
+  presetLocked: boolean
   presetLabel?: string
   pendingImageCount: number
   pendingFileCount: number
@@ -131,7 +140,10 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
               <TouchableOpacity
                 key={value}
                 style={[styles.tab, tab === value && styles.tabActive]}
-                onPress={() => setTab(value)}
+                onPress={() => {
+                  setTab(value)
+                  if (value !== tab) props.onTabChange?.(value)
+                }}
               >
                 <Text style={[styles.tabText, tab === value && styles.tabTextActive]}>
                   {value === 'commands' ? t('plus.tab.commands') : value === 'attachments' ? t('plus.tab.attachments') : value === 'references' ? t('plus.tab.references') : t('plus.tab.controls')}
@@ -206,7 +218,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                   placeholder={t('plus.searchReferences')}
                   placeholderTextColor={colors.textDim}
                 />
-                <StatusLine status={props.referenceStatus} error={props.referenceStatus === 'failed' ? t('plus.referencesFailed') : ''} onRetry={props.onReloadCommands} />
+                <StatusLine status={props.referenceStatus} error={props.referenceStatus === 'failed' ? t('plus.referencesFailed') : ''} onRetry={props.onReloadReferences} />
                 {filteredReferences.length === 0 && props.referenceStatus === 'ready' && (
                   <Text style={styles.meta}>{t('plus.noReferences')}</Text>
                 )}
@@ -236,14 +248,17 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                 <TouchableOpacity
                   style={styles.item}
                   onPress={props.onPresets}
-                  disabled={!props.presetSelectionEnabled}
+                  disabled={props.presetLocked || !props.presetSelectionEnabled}
                 >
                   <Text style={styles.itemTitle}>{t('plus.agentPresets')}</Text>
                   <Text style={styles.itemSubtitle}>
-                    {!props.presetSelectionEnabled
-                      ? t('plus.presetLockedByHost')
-                      : props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel}
+                    {props.presetLocked
+                      ? props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel
+                      : !props.presetSelectionEnabled
+                          ? t('plus.presetLockedByHost')
+                          : t('plus.presetSeatHint')}
                   </Text>
+                  {props.presetLocked && <Text style={styles.itemMeta}>{t('plus.presetLockedByStart')}</Text>}
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.item} onPress={props.onSubagents}>
                   <Text style={styles.itemTitle}>{t('plus.subagents')}</Text>
@@ -270,7 +285,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                     })}
                   </>
                 )}
-                {props.presets.length > 0 && (
+                {props.presets.length > 0 && !props.presetLocked && (
                   <>
                     <SectionHeader title="Agent presets" />
                     <StatusLine status={props.presetStatus} error={props.presetError} onRetry={props.onPresets} />

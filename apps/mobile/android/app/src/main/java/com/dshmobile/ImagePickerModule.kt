@@ -1,7 +1,9 @@
 package com.dshmobile
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -16,6 +18,8 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableNativeMap
+import com.facebook.react.modules.core.PermissionAwareActivity
+import com.facebook.react.modules.core.PermissionListener
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -74,9 +78,50 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
       promise.reject("NO_ACTIVITY", "当前没有可用的前台页面。")
       return
     }
-    val directory = File(reactContext.cacheDir, "captures").apply { mkdirs() }
-    val captureFile = File.createTempFile("dsh-capture-", ".jpg", directory)
     pendingMaxBytes = maxBytes.toInt().coerceAtLeast(1)
+    // The manifest declares CAMERA for the pairing QR scanner, and Android 11+
+    // refuses ACTION_IMAGE_CAPTURE outright while a declared CAMERA permission
+    // is not granted — the intent never reaches the camera app and the caller
+    // only sees a SecurityException. Ask for the grant first, then delegate.
+    if (reactContext.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+      startCapture(activity, promise)
+      return
+    }
+    val permissionAware = activity as? PermissionAwareActivity
+    if (permissionAware == null) {
+      startCapture(activity, promise)
+      return
+    }
+    permissionAware.requestPermissions(
+      arrayOf(Manifest.permission.CAMERA),
+      CAMERA_PERMISSION_REQUEST_CODE,
+      PermissionListener { requestCode, _, grantResults ->
+        if (requestCode != CAMERA_PERMISSION_REQUEST_CODE) return@PermissionListener false
+        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+          val resumed = reactContext.currentActivity
+          if (resumed == null) {
+            promise.reject("NO_ACTIVITY", "当前没有可用的前台页面。")
+          } else {
+            startCapture(resumed, promise)
+          }
+        } else {
+          promise.reject("CAMERA_DENIED", "没有相机权限，请在系统设置里允许「相机」后重试。")
+        }
+        true
+      },
+    )
+  }
+
+  /** Opens the system camera app for a single still, after the grant is in place. */
+  private fun startCapture(activity: Activity, promise: Promise) {
+    val directory = File(reactContext.cacheDir, "captures").apply { mkdirs() }
+    val captureFile: File
+    try {
+      captureFile = File.createTempFile("dsh-capture-", ".jpg", directory)
+    } catch (error: Exception) {
+      promise.reject("CAMERA_FAILED", "无法创建拍摄缓存。", error)
+      return
+    }
     pending = promise
     pendingCaptureFile = captureFile
     val outputUri = FileProvider.getUriForFile(
@@ -240,6 +285,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     private const val REQUEST_CODE = 4711
     private const val CAPTURE_REQUEST_CODE = 4712
     private const val IMAGES_REQUEST_CODE = 4713
+    private const val CAMERA_PERMISSION_REQUEST_CODE = 4714
     private const val INLINE_BYTES = 384 * 1024
     private const val MAX_DIMENSION = 1280
     private const val JPEG_QUALITY = 68

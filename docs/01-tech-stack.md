@@ -96,7 +96,7 @@ App 的 `nats.ws` 只能走 websocket，两种载体的可用性由构建类型�
 |---|---|---|---|
 | `DshTheme` | `ThemeModule.kt` | `DshThemeModule.mm` | 读写主题模式，写入 `NSUserDefaults` 的 `dsh_theme_mode` |
 | `DshImagePicker` | `ImagePickerModule.kt` | `DshImagePickerModule.mm` | `pickImage` / `pickImages` / `captureImage` |
-| `DshFilePicker` | `FileOpenerModule.kt` | `DshFileModules.mm` | `pickFile`（`UIDocumentPickerViewController`） |
+| `DshFilePicker` | `FilePickerModule.kt` | `DshFileModules.mm` | `pickFile`（Android `ACTION_OPEN_DOCUMENT` / iOS `UIDocumentPickerViewController`） |
 | `DshFileOpener` | `FileOpenerModule.kt` | `DshFileModules.mm` | `openWithApp`：写缓存文件后弹分享/打开面板 |
 
 Android 专属、**不**移植的两个模块：`DshApp.moveTaskToBack`（Android 返回键"再按一次退出"）与 `DshUpdater`（APK 自更新）。JS 侧对两者都做了运行时判空，缺失时静默降级。
