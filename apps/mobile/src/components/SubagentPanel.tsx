@@ -1,6 +1,7 @@
 /** Durable subagent catalog with read-only history and continuable controls. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { deriveConversation, sessionStateFromHistory } from '@dsh-mobile/core'
 import type { ConnectionManager, ConversationItem } from '@dsh-mobile/core'
 import type { HistoryEntry, SubagentCatalog, SubagentListEntry } from '@dsh-mobile/protocol'

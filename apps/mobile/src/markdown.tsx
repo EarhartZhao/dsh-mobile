@@ -9,7 +9,8 @@
  * what a link *means* depends on the surface it was tapped from.
  */
 import React from 'react'
-import { Clipboard, Platform, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Clipboard, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './components/Touchable'
 import { chat, fontSize, radius, spacing } from './theme'
 import { useI18n } from './i18n'
 import { Icon } from './icons'

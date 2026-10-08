@@ -4,7 +4,8 @@
  * inside the app's own dark theme, so it matches the other modals instead.
  */
 import React from 'react'
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Modal, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 

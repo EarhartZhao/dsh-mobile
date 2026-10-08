@@ -4,7 +4,8 @@
  * paste path remains the always-available fallback.
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { BackHandler, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native'
+import { BackHandler, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import { Camera, type CameraRuntimeError, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera'
 import { connect, headers } from 'nats.ws'
 import { redeemPairingCode, type PairingQrPayload } from '@dsh-mobile/protocol'

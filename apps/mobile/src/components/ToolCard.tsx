@@ -8,7 +8,8 @@
  * fallback instead of an empty panel.
  */
 import React, { useState } from 'react'
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { ConnectionManager, ConversationItem, ToolSubCall } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, spacing } from '../theme'
 import { AttachmentImage } from './AttachmentImage'
@@ -175,7 +176,7 @@ export function ToolCard({ item, manager, sessionId, onLongPress, bare = false }
       : null
   return (
     <View style={bare ? styles.cardBare : styles.card}>
-      <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} activeOpacity={0.8} style={bare ? styles.row : styles.header}>
+      <TouchableOpacity onPress={() => setOpen(o => !o)} onLongPress={onLongPress} style={bare ? styles.row : styles.header}>
         {bare ? (
           // The web's ToolRow: one 24px line — a 16px leading glyph, the call's
           // title, the 2px separator, then the detail that truncates. The glyph

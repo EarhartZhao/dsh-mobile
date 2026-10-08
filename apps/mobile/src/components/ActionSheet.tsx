@@ -1,6 +1,7 @@
 /** Bottom action list shared by message actions and other quick menus. */
 import React from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'

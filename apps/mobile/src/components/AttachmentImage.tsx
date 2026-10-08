@@ -1,7 +1,8 @@
 /** Lazy attachment image with an explicit failure state instead of a
  * permanent "loading" placeholder when session.attachment cannot answer. */
 import React, { useEffect, useState } from 'react'
-import { Image, StyleProp, Text, TextStyle, TouchableOpacity, ImageStyle } from 'react-native'
+import { Image, StyleProp, Text, TextStyle, ImageStyle } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { ConnectionManager, ConversationImage } from '@dsh-mobile/core'
 import { useI18n } from '../i18n'
 import { ImageLightbox } from './ImageLightbox'

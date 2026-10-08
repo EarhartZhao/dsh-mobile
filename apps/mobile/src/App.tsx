@@ -3,7 +3,8 @@
  * as simple screen state (two screens); a navigator lands with M3/M4.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { BackHandler, Clipboard, DeviceEventEmitter, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native'
+import { BackHandler, Clipboard, DeviceEventEmitter, DevSettings, Linking, Modal, NativeModules, Platform, ScrollView, StatusBar, StyleSheet, Text, ToastAndroid, View } from 'react-native'
+import { TouchableOpacity } from './components/Touchable'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { CompatibilityResult, ConnectionFailureKind, ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import { APP_VERSION } from '@dsh-mobile/core'

@@ -1,6 +1,7 @@
 /** Pending-question composer, adapted from Web's ui-user-questions flow. */
 import React, { useMemo, useState } from 'react'
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import Markdown from 'react-native-markdown-display'
 import { unknownQuestionIntentKind } from '@dsh-mobile/protocol'
 import { colors, fontSize, radius, spacing } from '../theme'

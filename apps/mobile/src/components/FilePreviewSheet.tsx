@@ -7,7 +7,8 @@
  * application (`host.openPath`) or reveal in its file manager (`file.reveal`).
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, Clipboard, Image, Modal, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import Markdown from 'react-native-markdown-display'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { NatsApiClient } from '@dsh-mobile/protocol'

@@ -4,7 +4,8 @@
  * store 'changed' (throttled).
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { Alert, AppState, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Alert, AppState, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import { presetSelectionEnabled, type DirectoryListing, type SessionSummary } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from '../components/ModalBackdrop'

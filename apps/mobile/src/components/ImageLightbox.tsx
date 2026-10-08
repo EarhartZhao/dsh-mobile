@@ -1,6 +1,7 @@
 /** Full-screen image preview; the scroll container provides pinch zoom. */
 import React from 'react'
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors, fontSize, spacing } from '../theme'
 import { useI18n } from '../i18n'

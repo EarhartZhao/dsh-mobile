@@ -7,7 +7,8 @@
  * another machine is the scanner, one level further in.
  */
 import React, { useState } from 'react'
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { profileTitle, type Profile } from '../pairing-store'
 import { useI18n } from '../i18n'

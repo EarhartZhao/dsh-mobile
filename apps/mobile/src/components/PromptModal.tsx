@@ -1,6 +1,7 @@
 /** Small text-prompt modal (RN has no cross-platform Alert.prompt). */
 import React, { useEffect, useState } from 'react'
-import { Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Modal, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n } from '../i18n'

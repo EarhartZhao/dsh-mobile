@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import type { ConnectionManager, ConnectionState } from '@dsh-mobile/core'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import type { AppUpdateStatus } from '../app-update'

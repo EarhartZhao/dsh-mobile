@@ -1,6 +1,7 @@
 /** Composer-context strips: todo plan, goal bar, usage meter, plan chip. */
 import React from 'react'
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { billedInputTokens, formatCacheHitPercent, formatTokensPerSecond, type ContextBreakdownProjection, type SessionStatsView, type TodoItemView, type UsageView } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, shadow, spacing } from '../theme'
 import { useI18n } from '../i18n'

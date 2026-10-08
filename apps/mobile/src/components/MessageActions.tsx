@@ -12,7 +12,8 @@
  * inert while that turn is still running.
  */
 import React from 'react'
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Modal, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { TurnBranchAnchor, TurnTokenUsage } from '@dsh-mobile/core'
 import type { MobileFeedbackItem, MobileFeedbackRating } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'

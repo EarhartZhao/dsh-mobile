@@ -7,7 +7,8 @@
  * only on the composer row and in the conversation menu now.
  */
 import React, { useEffect, useState } from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { Modal, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { ModalBackdrop } from './ModalBackdrop'
 import { useI18n } from '../i18n'

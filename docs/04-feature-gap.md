@@ -156,6 +156,12 @@
 > 及各自描述，选 `ptc` 后 chip 变为「Agent 模式，当前：PTC 模式」且不发送消息；
 > 已开始的会话只有访问模式 chip，Meta 行读作「预设 标准模式」。
 
+> 2026-10-08 追加（按下态收口）：`components/Touchable.tsx` 是 RN touchable 的薄封装，
+> 默认 `activeOpacity` 从 RN 的 **0.2 提到 0.8**——浅色底上 0.2 会把控件压成近乎透明，
+> 就是「太白」的那一下；26 个文件改从它取 `TouchableOpacity`，一个按下态走全 App。
+> 消息气泡与助手回答行只有长按开操作菜单、点一下什么都不做，仍保留 `activeOpacity={1}`，
+> 不给自己加一下假的反馈。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

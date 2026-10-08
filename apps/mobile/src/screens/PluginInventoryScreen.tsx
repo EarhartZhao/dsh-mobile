@@ -4,7 +4,8 @@
  * Reached from the settings summary row; back returns to settings.
  */
 import React from 'react'
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import type { MobileInventorySnapshot } from '@dsh-mobile/protocol'
 import { useI18n, type TranslationKey } from '../i18n'
 import { colors, fontSize, radius, spacing } from '../theme'

@@ -20,7 +20,8 @@
  *    here is one entry plus one test.
  */
 import React from 'react'
-import { Clipboard, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Clipboard, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import { colors, fontSize, radius, spacing } from '../theme'
 import { useI18n, type TranslationKey } from '../i18n'
 

@@ -13,7 +13,8 @@
  * the same projections the Web's catalog does — this file owns only the shape.
  */
 import React from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { SubagentRow } from '@dsh-mobile/core'
 import { chat, colors, fontSize, radius, spacing } from '../theme'
 import { durationLabel, exactDurationLabel, formatTokenCount } from '../ui-labels'

@@ -8,7 +8,8 @@
  * preview sheet, which reads it through `file.read` / `file.bytes`.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import type { MobileDirectoryEntry } from '@dsh-mobile/protocol'
 import { ModalBackdrop } from './ModalBackdrop'

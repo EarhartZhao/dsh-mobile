@@ -1,6 +1,7 @@
 /** In-conversation search and jump-to-message sheet. */
 import React, { useEffect, useMemo, useState } from 'react'
-import { FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { FlatList, Modal, StyleSheet, Text, TextInput, View } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { ConversationItem } from '@dsh-mobile/core'
 import { ModalBackdrop } from './ModalBackdrop'
 import { colors, fontSize, radius, spacing } from '../theme'

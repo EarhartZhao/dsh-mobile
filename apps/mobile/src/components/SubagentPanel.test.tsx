@@ -4,7 +4,7 @@
  */
 import React from 'react'
 import renderer, { act } from 'react-test-renderer'
-import { TouchableOpacity } from 'react-native'
+import { TouchableOpacity } from './Touchable'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import type { SubagentCatalog } from '@dsh-mobile/protocol'
 
