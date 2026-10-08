@@ -130,6 +130,32 @@
 >（`useLayoutEffect`）就复位，早于新 transcript 的第一次布局，因此进子会话/回父会话都落在
 > 最新一条消息上。
 
+> 2026-10-08 追加（输入框的两枚模式 chip + 控制页下线）：Web 的输入卡左边就带着
+> 「访问模式」和「新任务的 Agent 模式」两个选择器，App 之前把同样的开关塞在 `+` 菜单的
+> 第四个 tab「控制」里，于是同一个开关有两扇门、输入框上却什么都没有。这一轮按 Web 的分工收口：
+> ① **控制 tab 整块删除**（`PlusMenuSheet` 从 4 tab 回到 命令/附件/引用），模型、Plan、
+> 目标、子代理、权限这些都只在它们各自该在的地方（输入框、会话统计条、会话「更多」菜单）；
+> ② **输入框左侧的访问模式 chip**：`permissions` 投影只有 `currentValue`，可切换的名单是
+> **进程级 catalog**，App 早先按投影里的 `options` 找选项，所以这个控件从来没有渲染出来过——
+> 插件新增 `permissionPreset.catalog`（0.2.38，白名单 + `remoteCall`），App 走
+> `mobile-catalog.ts` 宽解析读取，chip 点开是底部弹层（仅可查看 / 工作区内修改 / 完全权限，
+> 后两者里的 danger 值仍先弹确认），选中走 `/permission <value>`；
+> ③ **Agent 模式只属于新对话**：只有 `blank === true` 的会话才渲染第二枚 chip，选中调
+> `agentPresets.select` 且**不发任何消息**；已开始的会话完全不渲染该控件（宿主在首轮就冻结组合、
+> 后来的切换请求会被拒），改由 Meta 行的只读「预设」一行说明本任务跑的是什么，与 Web 的
+> hero seat / header label 分工一致；
+> ④ **预设文案对齐上游**：按 `agent-preset-registry/display` 的 `presetDisplayText` 折法，
+> 宿主没发布名字（`standard`/`ptc`/`minimal`/`cordis`）即内置预设，名字与描述取自字典，
+> 自己声明过名字的预设保留原话；权限 preset 同样按 `displayPermissionPreset` 折，
+> 不再是 kebab 原文；
+> ⑤ **多图选择在 Android 上的真凶**：模块把 Kotlin `List` 直接 resolve 给 RN bridge，
+> 触发 `Cannot convert argument of type class java.util.ArrayList`——图片其实已经读完，
+> 却被自己的 catch 吞成「无法读取所选图片」，于是**每一批**多选都失败；现在用
+> `WritableNativeArray` 逐个 `pushMap`，失败路径也带上原因（真机 vivo V2405A 已验证选图成功）。
+> 模拟器复核（iPhone 17 Pro + Metro）：空白会话上两枚 chip 同时在，Agent 弹层列出四个内置模式
+> 及各自描述，选 `ptc` 后 chip 变为「Agent 模式，当前：PTC 模式」且不发送消息；
+> 已开始的会话只有访问模式 chip，Meta 行读作「预设 标准模式」。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

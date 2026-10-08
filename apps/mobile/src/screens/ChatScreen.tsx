@@ -31,7 +31,8 @@ import {
 import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, shortSessionId, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import { subagentAddress, subagentRows, type SubagentAddress } from '@dsh-mobile/core'
 import type {
-  JobView, MobileFeedbackItem, MobileFeedbackRating, QueuedInboxItem, SubagentCatalog,
+  JobView, MobileAgentPresetEntry, MobileFeedbackItem, MobileFeedbackRating,
+  MobilePermissionPreset, QueuedInboxItem, SubagentCatalog,
 } from '@dsh-mobile/protocol'
 import { presetSelectionEnabled } from '@dsh-mobile/protocol'
 import Markdown from 'react-native-markdown-display'
@@ -39,6 +40,7 @@ import { ActionSheet, type SheetAction } from '../components/ActionSheet'
 import { AttachmentImage } from '../components/AttachmentImage'
 import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
+import { ChoiceSheet } from '../components/ChoiceSheet'
 import { linkTarget } from '../link-targets'
 import { markdownCompactStyles, markdownRules, markdownStyles } from '../markdown'
 import { extensionOf } from '../file-kinds'
@@ -53,7 +55,6 @@ import {
   PlusMenuSheet,
   type PlusCommand,
   type PlusMenuStatus,
-  type PlusPreset,
   type PlusReference,
   type PlusTab,
 } from '../components/PlusMenuSheet'
@@ -63,15 +64,10 @@ import { SubagentSwitcher } from '../components/SubagentSwitcher'
 import { GoalBar, PlanChip, SessionStatsBar, TodoStrip, type GoalViewLite } from '../components/strips'
 import { chat, chatText, colors, fontSize, radius, shadow, spacing } from '../theme'
 import whale from '../assets/running-whale.png'
-import { commonLabel, jobKindLabel, runDurationLabel, stepActivityLabel, toolDisplayName, toolRowVariant } from '../ui-labels'
+import { agentPresetDescription, agentPresetLabel, commonLabel, jobKindLabel, permissionLabel, runDurationLabel, stepActivityLabel, toolDisplayName, toolRowVariant } from '../ui-labels'
 import { sessionReferenceText } from '../session-references'
 import { useI18n, type TranslationKey } from '../i18n'
 import { appendPendingImage, buildPromptContent, formatBytes, type ImageLimitsView, type ImageRejection, type PendingImage } from '../chat-images'
-
-interface PermissionSelectView {
-  options: { value: string; name: string; description?: string }[]
-  currentValue: string
-}
 
 interface PickedFile {
   name: string
@@ -263,7 +259,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [goal, setGoal] = useState<GoalViewLite | null>(null)
   const [goalPrompt, setGoalPrompt] = useState<'create' | 'edit' | null>(null)
   const [planMode, setPlanMode] = useState<string | undefined>(undefined)
-  const [permissions, setPermissions] = useState<PermissionSelectView | undefined>(undefined)
+  /**
+   * The selected permission preset. The `permissions` Session projection
+   * carries only this value — the roster of choices is a process catalog, read
+   * separately into `permissionOptions`, the same split the Web client makes.
+   */
+  const [permissionValue, setPermissionValue] = useState<string | undefined>(undefined)
+  /** Host catalog of switchable presets; null until read, [] when unavailable. */
+  const [permissionOptions, setPermissionOptions] = useState<MobilePermissionPreset[] | null>(null)
+  const [permissionPickerOpen, setPermissionPickerOpen] = useState(false)
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
@@ -300,9 +305,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [commandStatus, setCommandStatus] = useState<PlusMenuStatus>('idle')
   const [commandError, setCommandError] = useState('')
   const [commandPrompt, setCommandPrompt] = useState<{ command: PlusCommand } | null>(null)
-  const [presets, setPresets] = useState<PlusPreset[]>([])
-  const [presetStatus, setPresetStatus] = useState<PlusMenuStatus>('idle')
-  const [presetError, setPresetError] = useState('')
+  const [presets, setPresets] = useState<MobileAgentPresetEntry[]>([])
   /** Host policy: when selection is off, offering a picker promises a choice the host ignores. */
   const [presetSelectionOn, setPresetSelectionOn] = useState(true)
   const [references, setReferences] = useState<PlusReference[]>([])
@@ -358,7 +361,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const loadForTab = (tab: PlusTab): void => {
     if (tab === 'commands') void loadCommands()
     if (tab === 'references') void loadReferences()
-    if (tab === 'controls') void loadPresets()
   }
 
   /**
@@ -722,18 +724,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       setPlanMode((planRaw as { mode: string }).mode)
     } else setPlanMode(undefined)
     const permissionRaw = session.projections['permissions']
-    if (permissionRaw !== null && typeof permissionRaw === 'object') {
-      const raw = permissionRaw as { options?: unknown; currentValue?: unknown }
-      const options = Array.isArray(raw.options)
-        ? raw.options.filter((option): option is PermissionSelectView['options'][number] =>
-            typeof option === 'object' && option !== null &&
-            typeof (option as Record<string, unknown>)['value'] === 'string' &&
-            typeof (option as Record<string, unknown>)['name'] === 'string')
-        : []
-      if (options.length > 0 && typeof raw.currentValue === 'string') {
-        setPermissions({ options, currentValue: raw.currentValue })
-      } else setPermissions(undefined)
-    } else setPermissions(undefined)
+    // Current-value-only by design: the projection says which preset the
+    // Session runs, never what the host can offer. Reading `options` off it
+    // (as an earlier revision did) matched nothing, so the switcher silently
+    // never appeared.
+    const permissionCurrent = permissionRaw !== null && typeof permissionRaw === 'object'
+      ? (permissionRaw as { currentValue?: unknown }).currentValue
+      : undefined
+    setPermissionValue(typeof permissionCurrent === 'string' ? permissionCurrent : undefined)
     const imageRaw = session.projections['imageLimits']
     if (imageRaw !== null && imageRaw !== undefined && typeof imageRaw === 'object') {
       const raw = imageRaw as Record<string, unknown>
@@ -842,30 +840,36 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     }
   }, [commandStatus, manager, sessionId, t])
 
-  const loadPresets = useCallback(async (force = false): Promise<void> => {
+  /**
+   * The preset roster a still-blank conversation can be started under. Read
+   * on demand — a conversation already past its first turn has no seat to
+   * offer, so nothing fetches for it.
+   */
+  const loadPresets = useCallback(async (): Promise<void> => {
     const client = manager.client
-    if (client === null) {
-      if (force || presetStatus === 'idle') {
-        setPresets([])
-        setPresetStatus('failed')
-        setPresetError(t('chat.loadConnection'))
-      }
-      return
-    }
-    if (!force && presetStatus === 'ready') return
-    setPresetStatus('loading')
-    setPresetError('')
+    if (client === null) return
     const roster = await client.catalog.agentPresets().catch(() => null)
-    if (roster === null) {
-      setPresets([])
-      setPresetStatus('failed')
-      setPresetError(t('chat.loadConnection'))
-      return
-    }
+    if (!mountedRef.current || roster === null) return
     setPresets(roster.presets.filter(preset => preset.broken === undefined))
     setPresetSelectionOn(presetSelectionEnabled(roster))
-    setPresetStatus('ready')
-  }, [manager, presetStatus, t])
+  }, [manager])
+
+  /**
+   * The host's permission roster. It is a process catalog, not a per-session
+   * value, so one read per connection serves every conversation. A host whose
+   * bridge predates the mapping answers `mobile-forbidden`: the composer then
+   * carries no switcher rather than offering presets it cannot set.
+   */
+  const loadPermissionOptions = useCallback(async (): Promise<void> => {
+    const client = manager.client
+    if (client === null) return
+    const catalog = await client.catalog.permissionPresets().catch(() => null)
+    if (!mountedRef.current) return
+    setPermissionOptions(catalog === null
+      ? []
+      : catalog.options.filter(option =>
+          typeof option.value === 'string' && typeof option.name === 'string'))
+  }, [manager])
 
   const loadReferences = useCallback(async (force = false): Promise<void> => {
     const client = manager.client
@@ -1272,6 +1276,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     return () => clearInterval(timer)
   }, [healSilentStream])
   useEffect(() => { void loadModels() }, [loadModels])
+  useEffect(() => {
+    // A process catalog, so one read serves every conversation — and a bridge
+    // restart, which is the only thing that can change it, retires the answer
+    // along with the connection that gave it.
+    void loadPermissionOptions()
+    return manager.on('established', () => { void loadPermissionOptions() })
+  }, [loadPermissionOptions, manager])
 
   /**
    * Reads the goal's process-local activation, which the durable `goal`
@@ -1311,8 +1322,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       setCommandStatus('idle')
       if (plusOpen) void loadCommands(true)
     } else if (event === 'agent-preset/selected' && args[0] === sessionId) {
-      setPresets([])
-      setPresetStatus('idle')
+      // The roster does not change with a pick; what the Session runs does.
+      void loadPresets()
       void loadModels()
     } else if (event === 'goal/activation-changed') {
       // The durable projection carries phase only; activation is process-local,
@@ -1326,7 +1337,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     } else if (event === 'llm/adapters-updated' || event === 'credentials/reference-updated') {
       void loadModels()
     }
-  }), [loadCommands, loadModels, manager, plusOpen, refreshGoalActivation, sessionId])
+  }), [loadCommands, loadModels, loadPresets, manager, plusOpen, refreshGoalActivation, sessionId])
 
   useEffect(() => () => {
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
@@ -1751,6 +1762,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }
 
   const selectPermission = (value: string): void => {
+    setPermissionPickerOpen(false)
     if (value === 'danger-full-access') {
       Alert.alert(t('chat.fullAccessTitle'), t('chat.fullAccessMessage'), [
         { text: t('common.cancel'), style: 'cancel' },
@@ -1821,6 +1833,77 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * `agentPreset` when the list carried it, else the live projection.
    */
   const presetLabel = summary?.agentPreset ?? manager.store.agentPreset(sessionId)
+
+  /**
+   * The composer's two mode chips.
+   *
+   * Permission: the projection names the running preset, the catalog names the
+   * switchable ones. A host that answered neither — or one whose bridge has no
+   * catalog mapping — leaves the composer with no chip rather than a control
+   * that cannot set anything.
+   */
+  const permissionCurrent = permissionOptions?.find(option => option.value === permissionValue)
+  const permissionChip = permissionValue === undefined || permissionOptions === null || permissionOptions.length === 0
+    ? undefined
+    : permissionLabel(permissionValue, permissionCurrent?.name ?? permissionValue, t)
+  const permissionChipDanger = permissionValue === 'danger-full-access'
+  const permissionChoices = (permissionOptions ?? []).map(option => ({
+    key: option.value,
+    label: permissionLabel(option.value, option.name, t),
+    ...(option.description === undefined ? {} : { subtitle: option.description }),
+    ...(option.value === 'danger-full-access' ? { danger: true } : {}),
+    current: option.value === permissionValue,
+  }))
+  /**
+   * Agent mode: a seat only while the conversation has run no turn. Once it
+   * has, the host refuses the swap and the header's own line reports what the
+   * task runs — so the chip is not rendered at all, matching the Web's split
+   * between a before-the-fact chip and a read-only label.
+   */
+  /** What this conversation runs, falling back to the host's default seat. */
+  const currentPresetId = presetLabel ?? presets.find(preset => preset.isDefault)?.id
+  const presetChip = presetLocked || !presetSelectionOn || currentPresetId === undefined
+    ? undefined
+    : agentPresetLabel(currentPresetId, presets.find(preset => preset.id === currentPresetId)?.name, t)
+  const presetChoices = presets.map(preset => {
+    // A shipped preset publishes no description of its own; the dictionary
+    // carries it, so the sheet reads the way the Web's hero seat does.
+    const subtitle = agentPresetDescription(preset.id, preset.description, t)
+    return {
+      key: preset.id,
+      label: agentPresetLabel(preset.id, preset.name, t),
+      ...(subtitle === undefined ? {} : { subtitle }),
+      current: preset.id === currentPresetId,
+    }
+  })
+  /**
+   * A roster is read for a blank conversation — the seat it draws is the only
+   * way to pick one — and for a started one that records which preset it runs,
+   * which is the only way to name it. A started conversation with no recorded
+   * preset asks for nothing, the same rule the Web's header label follows.
+   */
+  useEffect(() => {
+    if (presetLocked && presetLabel === undefined) return
+    void loadPresets()
+  }, [loadPresets, presetLabel, presetLocked])
+  /**
+   * Start this conversation under a different agent mode. The host freezes the
+   * composition at the first turn and refuses a later swap, so the only
+   * reachable case is a conversation that has not run one yet.
+   */
+  const selectPreset = (id: string): void => {
+    setPresetPickerOpen(false)
+    if (id === currentPresetId) return
+    void manager.client?.agentPresets.select({ sessionId, agentPreset: id } as never)
+      .then(result => {
+        if (!result.result.ok) showNotice(t('chat.switchFailed', { message: result.result.error.message }))
+        else {
+          void manager.refreshBaseline()
+          void loadCommands(true)
+        }
+      })
+      .catch(() => showNotice(t('chat.switchConnection')))
+  }
   const title = sessionDisplayTitle({
     title: manager.store.title(sessionId),
     ...(summary?.cwd === undefined ? {} : { cwd: summary.cwd }),
@@ -1917,7 +2000,17 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           <View style={styles.metaHeader}>
             <View style={styles.metaText}>
               {s?.cwd !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.directory', { value: s.cwd })}</Text>}
-              {s?.agentPreset !== undefined && <Text style={styles.metaLine} numberOfLines={1}>{t('chat.preset', { value: s.agentPreset })}</Text>}
+              {presetLabel !== undefined && (
+                <Text style={styles.metaLine} numberOfLines={1}>
+                  {t('chat.preset', {
+                    value: agentPresetLabel(
+                      presetLabel,
+                      presets.find(preset => preset.id === presetLabel)?.name,
+                      t,
+                    ),
+                  })}
+                </Text>
+              )}
               {/* The way back to a subagent's parent, besides the back gesture:
                   the parent's own header carries the switcher, but the child's
                   cannot, so this line is the only affordance down here. */}
@@ -1944,24 +2037,6 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           </View>
         )
       })()}
-      {permissions !== undefined && (
-        <ScrollView horizontal style={styles.permissionBar} contentContainerStyle={styles.permissionContent} showsHorizontalScrollIndicator={false}>
-          {permissions.options.map(option => {
-            const active = option.value === permissions.currentValue
-            const danger = option.value === 'danger-full-access'
-            return (
-              <TouchableOpacity
-                key={option.value}
-                style={[styles.chip, active && styles.chipActive, danger && styles.permissionDanger]}
-                disabled={active}
-                onPress={() => selectPermission(option.value)}
-              >
-                <Text style={[styles.chipText, danger && { color: colors.danger }]}>{commonLabel(option.name, t)}</Text>
-              </TouchableOpacity>
-            )
-          })}
-        </ScrollView>
-      )}
       {historyStatus === 'error' && (
         <View style={styles.historyErrorBar}>
           <Text style={styles.historyErrorText} numberOfLines={3}>
@@ -2322,6 +2397,38 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 <Icon name="CloseOutline" size={15} color={chat.labelTertiary} />
               </TouchableOpacity>
             )}
+            {/* The Web's composer carries the access mode beside the attach
+                circle, and the new-task preset seat beside that. Both are the
+                same controls the conversation menu used to repeat. */}
+            {editingItem === null && !textOnlyComposer && permissionChip !== undefined && (
+              <TouchableOpacity
+                style={styles.modeChip}
+                hitSlop={8}
+                onPress={() => setPermissionPickerOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.permissionMode', { name: permissionChip })}
+              >
+                <Text
+                  style={[styles.modeChipText, permissionChipDanger && styles.modeChipDanger]}
+                  numberOfLines={1}
+                >
+                  {permissionChip}
+                </Text>
+                <Icon name="ChevronDownOutline" size={11} color={permissionChipDanger ? colors.danger : chat.labelSecondary} />
+              </TouchableOpacity>
+            )}
+            {editingItem === null && !textOnlyComposer && presetChip !== undefined && (
+              <TouchableOpacity
+                style={styles.modeChip}
+                hitSlop={8}
+                onPress={() => setPresetPickerOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.presetMode', { name: presetChip })}
+              >
+                <Text style={styles.modeChipText} numberOfLines={1}>{presetChip}</Text>
+                <Icon name="ChevronDownOutline" size={11} color={chat.labelSecondary} />
+              </TouchableOpacity>
+            )}
             <View style={styles.composerSpacer} />
             {running ? (
               <TouchableOpacity
@@ -2450,21 +2557,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         commandStatus={commandStatus}
         commandError={commandError}
         onReloadCommands={() => { void loadCommands(true) }}
-        presets={presets}
-        presetStatus={presetStatus}
-        presetError={presetError}
         references={references}
         referenceStatus={referenceStatus}
         onReloadReferences={() => { void loadReferences(true) }}
         onTabChange={loadForTab}
-        permissions={permissions?.options ?? []}
-        permissionValue={permissions?.currentValue}
-        planActive={planMode !== undefined && planMode !== 'off'}
-        hasGoal={goal !== null}
-        presetSelectionEnabled={presetSelectionOn}
-        presetLocked={presetLocked}
-        modelLabel={modelLabel}
-        presetLabel={presetLabel}
         pendingImageCount={pendingImages.length}
         pendingFileCount={pendingFiles.length}
         uploadingFileCount={pendingFiles.filter(file => file.status === 'uploading').length}
@@ -2485,24 +2581,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           setPlusOpen(false)
           insertAtTrigger(reference.insert)
         }}
-        onPermission={value => { setPlusOpen(false); selectPermission(value) }}
-        onTogglePlan={() => { setPlusOpen(false); void runMenuCommand({ name: 'plan', description: t('plus.planSubtitle'), images: true }, planMode === undefined || planMode === 'off' ? '' : 'off') }}
-        onGoal={() => { setPlusOpen(false); setGoalPrompt(goal === null ? 'create' : 'edit') }}
-        onModel={() => { setPlusOpen(false); void openModels() }}
-        onPresets={() => { void loadPresets(true) }}
-        onSelectPreset={preset => {
-          setPlusOpen(false)
-          void manager.client?.agentPresets.select({ sessionId, agentPreset: preset.id } as never)
-            .then(result => {
-              if (!result.result.ok) showNotice(t('chat.switchFailed', { message: result.result.error.message }))
-              else {
-                void manager.refreshBaseline()
-                void loadCommands(true)
-              }
-            })
-            .catch(() => showNotice(t('chat.switchConnection')))
-        }}
-        onSubagents={() => { setPlusOpen(false); void openSubagents() }}
+      />
+      <ChoiceSheet
+        visible={permissionPickerOpen}
+        title={t('chat.permissionTitle')}
+        options={permissionChoices}
+        onClose={() => setPermissionPickerOpen(false)}
+        onSelect={value => { setPermissionPickerOpen(false); selectPermission(value) }}
+      />
+      <ChoiceSheet
+        visible={presetPickerOpen}
+        title={t('chat.presetSeat')}
+        options={presetChoices}
+        onClose={() => setPresetPickerOpen(false)}
+        onSelect={selectPreset}
       />
       <ChatSearchSheet
         visible={searchOpen}
@@ -3400,9 +3492,6 @@ const styles = StyleSheet.create({
   modelChipText: { color: colors.accent, fontSize: fontSize.tiny },
   metaLine: { color: colors.textDim, fontSize: fontSize.tiny, marginBottom: spacing(0.5) },
   metaLink: { color: colors.accent },
-  permissionBar: { flexGrow: 0, flexShrink: 0, height: 46, minHeight: 46, maxHeight: 46, marginBottom: spacing(0.5) },
-  permissionContent: { paddingHorizontal: spacing(2), paddingVertical: spacing(0.5), gap: spacing(1.5), alignItems: 'center' },
-  permissionDanger: { borderColor: colors.danger },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
   menuCard: {
     backgroundColor: colors.bgElevated,
@@ -3733,6 +3822,24 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   composerSpacer: { flex: 1, minWidth: 0 },
+  /**
+   * The composer's mode chips: access mode beside the attach circle, and — on
+   * a conversation that has not started — the agent mode it will run under.
+   */
+  modeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    flexShrink: 1,
+    maxWidth: 160,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(1),
+  },
+  modeChipText: { color: chat.labelSecondary, fontSize: fontSize.tiny, flexShrink: 1 },
+  modeChipDanger: { color: colors.danger },
   /** The 28px attach circle on the selector fill. */
   addButton: {
     width: 28,

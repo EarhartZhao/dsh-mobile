@@ -17,6 +17,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableNativeArray
 import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.modules.core.PermissionAwareActivity
 import com.facebook.react.modules.core.PermissionListener
@@ -184,8 +185,8 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
         try {
           promise.resolve(readImage(uri, pendingMaxBytes))
         } catch (error: Exception) {
-          Log.e(NAME, "Unable to read selected image", error)
-          promise.reject("READ_FAILED", "无法读取所选图片。", error)
+          Log.e(NAME, "Unable to read selected image $uri", error)
+          promise.reject("READ_FAILED", "无法读取所选图片：${error.message ?: error.javaClass.simpleName}", error)
         }
       }
       CAPTURE_REQUEST_CODE -> {
@@ -206,7 +207,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
           ), pendingMaxBytes)
           promise.resolve(result)
         } catch (error: Exception) {
-          promise.reject("CAPTURE_READ_FAILED", "无法读取拍摄的照片。", error)
+          promise.reject("CAPTURE_READ_FAILED", "无法读取拍摄的照片：${error.message ?: error.javaClass.simpleName}", error)
         } finally {
           captureFile.delete()
         }
@@ -224,13 +225,20 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
           if (uris.isEmpty()) data?.data?.let(uris::add)
         }
         if (uris.isEmpty()) {
-          promise.resolve(emptyList<Any>())
+          promise.resolve(WritableNativeArray())
           return
         }
         try {
-          promise.resolve(uris.map { uri -> readImage(uri, pendingMaxBytes) })
+          // A Kotlin list is a plain ArrayList to the bridge, which only takes
+          // its own WritableArray: resolving one threw "Cannot convert argument
+          // of type class java.util.ArrayList" — after the images had already
+          // been read — so every multi-image pick failed with a read error.
+          val images = WritableNativeArray()
+          for (uri in uris) images.pushMap(readImage(uri, pendingMaxBytes))
+          promise.resolve(images)
         } catch (error: Exception) {
-          promise.reject("READ_FAILED", "无法读取所选图片。", error)
+          Log.e(NAME, "Unable to read selected images $uris", error)
+          promise.reject("READ_FAILED", "无法读取所选图片：${error.message ?: error.javaClass.simpleName}", error)
         }
       }
     }
@@ -249,6 +257,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+      Log.e(NAME, "Selected file is not a decodable image: ${bytes.size} bytes, type $mediaType, from $uri")
       throw IllegalArgumentException("所选文件不是可识别的图片。")
     }
     val encoded = if (bytes.size <= INLINE_BYTES) {
@@ -259,7 +268,7 @@ class ImagePickerModule(private val reactContext: ReactApplicationContext) :
         inSampleSize = Integer.highestOneBit(maxSide / MAX_DIMENSION).coerceAtLeast(1)
       }
       val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        ?: throw IllegalArgumentException("无法解析所选图片。")
+        ?: throw IllegalStateException("无法解析所选图片（${bytes.size} 字节，${bounds.outWidth}x${bounds.outHeight}）。")
       val output = ByteArrayOutputStream()
       bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)
       bitmap.recycle()

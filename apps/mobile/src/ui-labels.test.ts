@@ -1,6 +1,7 @@
 import {
-  durationLabel, formatTokenCount, runDurationLabel, stepActivityLabel, toolDisplayName,
-  toolResultSummary, toolRowSummary, toolRowVariant, toolTitleIsGeneric,
+  agentPresetDescription, agentPresetLabel, durationLabel, formatTokenCount, permissionLabel,
+  runDurationLabel, stepActivityLabel, toolDisplayName, toolResultSummary, toolRowSummary,
+  toolRowVariant, toolTitleIsGeneric,
 } from './ui-labels'
 import type { TranslationKey } from './i18n'
 
@@ -34,6 +35,13 @@ const copy: Partial<Record<TranslationKey, string>> = {
   'tools.agentsCount': '{count} 个智能体',
   'tools.jobsCount': '{count} 个后台任务',
   'tools.terminalsCount': '{count} 个终端',
+  'permission.readOnly': '仅可查看',
+  'permission.workspaceWrite': '工作区内修改',
+  'permission.fullAccess': '完全权限',
+  'preset.standard.name': '标准模式',
+  'preset.standard.description': '处理代码、文件和资料，适合大多数任务。',
+  'preset.ptc.name': 'PTC 模式',
+  'preset.minimal.name': '极简模式',
 }
 
 function t(key: TranslationKey, values?: Record<string, string | number>): string {
@@ -146,5 +154,41 @@ describe('durationLabel', () => {
     expect(durationLabel(3_725_000, t)).toBe('1小时02分05秒')
     expect(durationLabel(90_000_000, t)).toBe('1天1小时')
     expect(durationLabel(181_440_000, t)).toBe('2天2小时')
+  })
+})
+
+/**
+ * Both preset pickers take the host's machine value and the host's published
+ * name, exactly as the Web's `displayPermissionPreset` and `presetDisplayText`
+ * do: a preset the client ships resolves through the dictionary, one that
+ * named itself keeps its own words, and a bare identifier still reads as a
+ * label rather than as code.
+ */
+describe('permissionLabel', () => {
+  it('translates a shipped preset whether the host sends the value or its English copy', () => {
+    expect(permissionLabel('read-only', 'read-only', t)).toBe('仅可查看')
+    expect(permissionLabel('workspace-write', 'Workspace Write', t)).toBe('工作区内修改')
+    expect(permissionLabel('danger-full-access', 'danger-full-access', t)).toBe('完全权限')
+  })
+
+  it('keeps a preset that named itself, and title-cases a bare identifier', () => {
+    expect(permissionLabel('read-only', '只读（公司策略）', t)).toBe('只读（公司策略）')
+    expect(permissionLabel('custom-sandbox', 'custom-sandbox', t)).toBe('Custom Sandbox')
+  })
+})
+
+describe('agentPresetLabel', () => {
+  it('resolves a shipped preset through the dictionary, since it publishes no name', () => {
+    expect(agentPresetLabel('standard', undefined, t)).toBe('标准模式')
+    expect(agentPresetLabel('ptc', undefined, t)).toBe('PTC 模式')
+    expect(agentPresetDescription('standard', undefined, t)).toBe('处理代码、文件和资料，适合大多数任务。')
+  })
+
+  it('keeps a preset that publishes its own copy, and falls back to the id', () => {
+    expect(agentPresetLabel('standard', '标准（自定义）', t)).toBe('标准（自定义）')
+    expect(agentPresetDescription('standard', '自定义说明', t)).toBe('自定义说明')
+    expect(agentPresetLabel('my-mode', undefined, t)).toBe('my-mode')
+    expect(agentPresetDescription('my-mode', undefined, t)).toBeUndefined()
+    expect(agentPresetLabel('minimal', undefined, t)).toBe('极简模式')
   })
 })

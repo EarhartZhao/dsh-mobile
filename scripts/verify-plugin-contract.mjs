@@ -97,7 +97,7 @@ function versionSatisfies(version, range) {
 function appMobileMethods(directory) {
   const methods = new Set()
   const files = [
-    'mobile-commands.ts', 'mobile-references.ts', 'mobile-file-uploads.ts',
+    'mobile-commands.ts', 'mobile-references.ts', 'mobile-file-uploads.ts', 'mobile-catalog.ts',
     'mobile-workspace.ts', 'mobile-feedback.ts', 'pairing.ts',
   ]
   for (const file of files) {

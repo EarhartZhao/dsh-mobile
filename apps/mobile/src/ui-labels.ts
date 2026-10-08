@@ -18,6 +18,76 @@ export function commonLabel(value: string, t: LabelTranslate): string {
 }
 
 /**
+ * The shipped permission presets' product labels, ported from the Web's
+ * `PRESET_LABEL_KEYS`: the host publishes machine values (`workspace-write`),
+ * and the client owns the copy for the ones it ships.
+ */
+const permissionLabelKeys: Record<string, TranslationKey> = {
+  'read-only': 'permission.readOnly',
+  'workspace-write': 'permission.workspaceWrite',
+  'danger-full-access': 'permission.fullAccess',
+}
+
+/** The English copy the host may publish as a preset's own name. */
+const permissionDefaultNames: Record<string, string> = {
+  'read-only': 'Read Only',
+  'workspace-write': 'Workspace Write',
+  'danger-full-access': 'Full access',
+}
+
+/**
+ * Render a permission preset the way the Web does (`displayPermissionPreset`):
+ * a shipped preset whose name is still its machine value resolves through the
+ * dictionary, a host-configured preset that named itself keeps that name, and
+ * any other kebab-case identifier reads as title case.
+ */
+export function permissionLabel(value: string, name: string, t: LabelTranslate): string {
+  const key = permissionLabelKeys[value]
+  if (key !== undefined && (name === value || name === permissionDefaultNames[value])) return t(key)
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)
+    ? name.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+    : name
+}
+
+/**
+ * The shipped agent presets' copy, ported from the Web's
+ * `agent-preset-registry/display`: a preset that publishes no name is one the
+ * client ships, so its label and description come from the dictionary and are
+ * translated. A preset that named itself keeps its own words untranslated.
+ */
+const agentPresetKeys: Record<string, { name: TranslationKey; description: TranslationKey }> = {
+  standard: { name: 'preset.standard.name', description: 'preset.standard.description' },
+  ptc: { name: 'preset.ptc.name', description: 'preset.ptc.description' },
+  minimal: { name: 'preset.minimal.name', description: 'preset.minimal.description' },
+  cordis: { name: 'preset.cordis.name', description: 'preset.cordis.description' },
+}
+
+/**
+ * Render one agent preset the way the Web does (`presetDisplayText`).
+ * @param id - the preset's stable id, as the Session records it.
+ * @param name - the name the host published, if the preset declared one.
+ * @param t - active locale lookup.
+ * @returns the localized name of a shipped preset, otherwise its own name or id.
+ */
+export function agentPresetLabel(id: string, name: string | undefined, t: LabelTranslate): string {
+  const keys = name === undefined ? agentPresetKeys[id] : undefined
+  return keys === undefined ? name ?? id : t(keys.name)
+}
+
+/**
+ * The description that belongs with {@link agentPresetLabel}: shipped presets
+ * carry their own copy, and a preset that declared one keeps it.
+ */
+export function agentPresetDescription(
+  id: string,
+  description: string | undefined,
+  t: LabelTranslate,
+): string | undefined {
+  const keys = description === undefined ? agentPresetKeys[id] : undefined
+  return keys === undefined ? description : t(keys.description)
+}
+
+/**
  * Tool-owned row titles, ported one for one from the Web's `TOOL_TITLE_KEYS`
  * (`tool-call-model.ts`): a tool that names its own act keeps that name whatever
  * family it belongs to. Everything else falls back to its variant's title, so a

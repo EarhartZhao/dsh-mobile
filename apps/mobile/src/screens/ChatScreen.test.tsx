@@ -83,7 +83,11 @@ function setup() {
       sessions: { history, models: jest.fn(async () => refusal('stub')) },
       // The composer's own sheets read these the moment a trigger opens one.
       commands: { list: jest.fn(async () => ({ commands: [] })) },
-      catalog: { skills: jest.fn(async () => ({ skills: [] })) },
+      catalog: {
+        skills: jest.fn(async () => ({ skills: [] })),
+        agentPresets: jest.fn(async () => ({ presets: [], authorable: false })),
+        permissionPresets: jest.fn(async () => ({ options: [], defaultOptions: [], defaultPreset: 'workspace-write' })),
+      },
       references: { files: jest.fn(async () => []), sessions: jest.fn(async () => []) },
     },
   } as unknown as ConnectionManager
@@ -806,6 +810,13 @@ function setupChild(mode: 'one-shot' | 'continuable') {
     client: {
       sessions: { history, models: jest.fn(async () => refusal('stub')) },
       subagents: { history: subagentHistory, list: jest.fn(async () => refusal('stub')) },
+      // The screen reads the process catalogs on mount, whichever Session it
+      // opened: the real client always carries this face.
+      catalog: {
+        skills: jest.fn(async () => ({ skills: [] })),
+        agentPresets: jest.fn(async () => ({ presets: [], authorable: false })),
+        permissionPresets: jest.fn(async () => ({ options: [], defaultOptions: [], defaultPreset: 'workspace-write' })),
+      },
     },
   } as unknown as ConnectionManager
   return { manager, history, subagentHistory }
@@ -966,5 +977,126 @@ describe('ChatScreen composer triggers', () => {
     await settle()
     expect(hasField(tree, 'plus.searchReferences')).toBe(true)
     expect(screenText(tree)).toContain('plus.noReferences')
+  })
+})
+
+/**
+ * The composer's two mode controls.
+ *
+ * Access mode belongs in the composer, as it does on the Web. The previous
+ * attempt drew it from the `permissions` projection's own `options`, which the
+ * host never sends — that projection carries the selected value only, and the
+ * roster is a separate process catalog — so the control was silently absent.
+ * Agent mode is a seat for a conversation that has not run yet, and nothing
+ * else: the host freezes the composition at the first turn.
+ */
+function setupModes(overrides: {
+  blank?: boolean
+  permission?: string
+  options?: { value: string; name: string; description?: string }[]
+  presets?: { id: string; name?: string; isDefault?: boolean }[]
+}) {
+  const execute = jest.fn(async () => ({ result: { kind: 'success', text: '' } }))
+  const selectPreset = jest.fn(async () => ({ result: { ok: true, value: {} } }))
+  const store = new SessionStore()
+  store.applyBaseline({
+    summaries: [{
+      sessionId: 's1',
+      blank: overrides.blank ?? false,
+      updatedAt: 0,
+      running: false,
+      ...(overrides.permission === undefined
+        ? {}
+        : { projections: { asOfSeq: 1, values: { permissions: { currentValue: overrides.permission } } } }),
+    }],
+    workspaces: [],
+  } as never)
+  const manager = {
+    store,
+    compatibility: { pluginVersion: '0.2.38', mobileApi: 2, features: [] },
+    refreshBaseline: jest.fn(async () => undefined),
+    on: jest.fn(() => () => undefined),
+    client: {
+      sessions: { history: jest.fn(async () => okPage()), models: jest.fn(async () => refusal('stub')) },
+      commands: { list: jest.fn(async () => ({ commands: [] })), execute },
+      catalog: {
+        skills: jest.fn(async () => ({ skills: [] })),
+        agentPresets: jest.fn(async () => ({
+          presets: overrides.presets ?? [], authorable: false, modeSelectionEnabled: true,
+        })),
+        permissionPresets: jest.fn(async () => ({
+          options: overrides.options ?? [], defaultOptions: [], defaultPreset: 'workspace-write',
+        })),
+      },
+      references: { files: jest.fn(async () => []), sessions: jest.fn(async () => []) },
+      agentPresets: { select: selectPreset },
+    },
+  } as unknown as ConnectionManager
+  return { manager, execute, selectPreset }
+}
+
+describe('ChatScreen composer mode controls', () => {
+  // What the host actually publishes: the machine value in both places. The
+  // product labels («仅可查看» and friends) live in the client's dictionary,
+  // which is why `mockT` surfaces the key rather than the copy.
+  const OPTIONS = [
+    { value: 'workspace-write', name: 'workspace-write' },
+    { value: 'read-only', name: 'read-only' },
+    { value: 'danger-full-access', name: 'danger-full-access' },
+  ]
+
+  it('shows the access mode beside the composer and switches it through the command', async () => {
+    const { manager, execute } = setupModes({ permission: 'workspace-write', options: OPTIONS })
+    const tree = render(manager)
+    await settle()
+
+    // The chip names the projection's value, resolved through the catalog.
+    expect(pressableByLabel(tree, 'chat.permissionMode(permission.workspaceWrite)')).toBeDefined()
+
+    act(() => { pressableByLabel(tree, 'chat.permissionMode(permission.workspaceWrite)')?.props.onPress() })
+    await settle()
+    // Both the current mode and the ones it can switch to are offered; the
+    // values are the host's names, never a locally invented label.
+    expect(screenText(tree)).toContain('chat.permissionTitle')
+    expect(pressableByLabel(tree, 'permission.readOnly')).toBeDefined()
+    expect(pressableByLabel(tree, 'permission.fullAccess')).toBeDefined()
+
+    act(() => { pressableByLabel(tree, 'permission.readOnly')?.props.onPress() })
+    await settle()
+    expect(execute).toHaveBeenCalledWith({ sessionId: 's1', line: '/permission read-only' })
+  })
+
+  it('leaves the composer without a switcher when the host offers no catalog', async () => {
+    // A bridge older than the catalog mapping answers nothing here; a control
+    // that cannot set anything must not take a seat in the composer.
+    const { manager } = setupModes({ permission: 'workspace-write' })
+    const tree = render(manager)
+    await settle()
+
+    expect(pressableByLabel(tree, 'chat.permissionMode(workspace-write)')).toBeUndefined()
+  })
+
+  it('offers agent mode on a conversation that has not started, and nowhere else', async () => {
+    const presets = [{ id: 'standard', name: '标准', isDefault: true }, { id: 'ptc', name: 'PTC' }]
+    const manager = setupModes({ blank: true, presets }).manager
+    const tree = render(manager)
+    await settle()
+
+    expect(pressableByLabel(tree, 'chat.presetMode(标准)')).toBeDefined()
+    act(() => { pressableByLabel(tree, 'chat.presetMode(标准)')?.props.onPress() })
+    await settle()
+    expect(screenText(tree)).toContain('chat.presetSeat')
+
+    act(() => { pressableByLabel(tree, 'PTC')?.props.onPress() })
+    await settle()
+    expect((manager.client as unknown as { agentPresets: { select: jest.Mock } }).agentPresets.select)
+      .toHaveBeenCalledWith({ sessionId: 's1', agentPreset: 'ptc' })
+
+    // The same roster on a started conversation: the host refuses the swap
+    // there, so the seat is gone and only the header's line reports the mode.
+    const started = setupModes({ blank: false, presets }).manager
+    const other = render(started)
+    await settle()
+    expect(pressableByLabel(other, 'chat.presetMode(标准)')).toBeUndefined()
   })
 })

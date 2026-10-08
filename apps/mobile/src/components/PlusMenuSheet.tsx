@@ -1,4 +1,11 @@
-/** Mobile composer plus-menu: commands, attachments, references, and controls. */
+/**
+ * Mobile composer plus-menu: commands, attachments and references.
+ *
+ * The Web's composer reaches the model, plan, goal, subagent and permission
+ * surfaces through its own control row and header; this sheet used to mirror
+ * them in a fourth tab, which left two doors to the same switch. They live
+ * only on the composer row and in the conversation menu now.
+ */
 import React, { useEffect, useState } from 'react'
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
 import { colors, fontSize, radius, spacing } from '../theme'
@@ -10,12 +17,6 @@ export interface PlusCommand {
   description: string
   hint?: string
   images?: boolean
-}
-
-export interface PlusPreset {
-  id: string
-  name?: string
-  description?: string
 }
 
 export interface PlusReference {
@@ -30,7 +31,7 @@ export interface PlusReference {
 export type PlusMenuStatus = 'idle' | 'loading' | 'ready' | 'failed'
 
 /** One tab of the sheet; the composer's `/` and `@` triggers pick a start tab. */
-export type PlusTab = 'commands' | 'attachments' | 'references' | 'controls'
+export type PlusTab = 'commands' | 'attachments' | 'references'
 
 interface Props {
   visible: boolean
@@ -41,9 +42,6 @@ interface Props {
   commandStatus: PlusMenuStatus
   commandError: string
   onReloadCommands: () => void
-  presets: PlusPreset[]
-  presetStatus: PlusMenuStatus
-  presetError: string
   references: PlusReference[]
   referenceStatus: PlusMenuStatus
   onReloadReferences: () => void
@@ -53,16 +51,6 @@ interface Props {
    * fetch references, so the switch has to be reported or the tab stays blank.
    */
   onTabChange?: (tab: PlusTab) => void
-  permissions: { value: string; name: string; description?: string }[]
-  permissionValue?: string
-  planActive: boolean
-  hasGoal: boolean
-  modelLabel: string
-  /** Host policy: false means the saved default governs and a picker would lie. */
-  presetSelectionEnabled: boolean
-  /** True once the session has started its first turn, which freezes its preset. */
-  presetLocked: boolean
-  presetLabel?: string
   pendingImageCount: number
   pendingFileCount: number
   uploadingFileCount: number
@@ -72,24 +60,6 @@ interface Props {
   onPickImages: () => void
   onPickFile: () => void
   onInsertReference: (reference: PlusReference) => void
-  onPermission: (value: string) => void
-  onTogglePlan: () => void
-  onGoal: () => void
-  onModel: () => void
-  onPresets: () => void
-  onSelectPreset: (preset: PlusPreset) => void
-  onSubagents: () => void
-}
-
-function SectionHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }): React.JSX.Element {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {action !== undefined && (
-        <TouchableOpacity onPress={onAction}><Text style={styles.sectionAction}>{action}</Text></TouchableOpacity>
-      )}
-    </View>
-  )
 }
 
 function StatusLine({ status, error, onRetry }: { status: PlusMenuStatus; error: string; onRetry: () => void }): React.JSX.Element | null {
@@ -136,7 +106,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
             <TouchableOpacity onPress={props.onClose}><Text style={styles.close}>{t('common.close')}</Text></TouchableOpacity>
           </View>
           <View style={styles.tabs}>
-            {(['commands', 'attachments', 'references', 'controls'] as const).map(value => (
+            {(['commands', 'attachments', 'references'] as const).map(value => (
               <TouchableOpacity
                 key={value}
                 style={[styles.tab, tab === value && styles.tabActive]}
@@ -146,7 +116,7 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                 }}
               >
                 <Text style={[styles.tabText, tab === value && styles.tabTextActive]}>
-                  {value === 'commands' ? t('plus.tab.commands') : value === 'attachments' ? t('plus.tab.attachments') : value === 'references' ? t('plus.tab.references') : t('plus.tab.controls')}
+                  {value === 'commands' ? t('plus.tab.commands') : value === 'attachments' ? t('plus.tab.attachments') : t('plus.tab.references')}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -231,74 +201,6 @@ export function PlusMenuSheet(props: Props): React.JSX.Element {
                 ))}
               </>
             )}
-            {tab === 'controls' && (
-              <>
-                <TouchableOpacity style={styles.item} onPress={props.onModel}>
-                  <Text style={styles.itemTitle}>{t('plus.model')}</Text>
-                  <Text style={styles.itemSubtitle}>{`${t('common.current')} ${props.modelLabel}`}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.item} onPress={props.onTogglePlan}>
-                  <Text style={styles.itemTitle}>{props.planActive ? t('plus.planOff') : t('plus.planOn')}</Text>
-                  <Text style={styles.itemSubtitle}>{t('plus.planSubtitle')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.item} onPress={props.onGoal}>
-                  <Text style={styles.itemTitle}>{props.hasGoal ? t('plus.goalEdit') : t('plus.goalCreate')}</Text>
-                  <Text style={styles.itemSubtitle}>{t('plus.goalSubtitle')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.item}
-                  onPress={props.onPresets}
-                  disabled={props.presetLocked || !props.presetSelectionEnabled}
-                >
-                  <Text style={styles.itemTitle}>{t('plus.agentPresets')}</Text>
-                  <Text style={styles.itemSubtitle}>
-                    {props.presetLocked
-                      ? props.presetLabel === undefined ? t('plus.noPreset') : props.presetLabel
-                      : !props.presetSelectionEnabled
-                          ? t('plus.presetLockedByHost')
-                          : t('plus.presetSeatHint')}
-                  </Text>
-                  {props.presetLocked && <Text style={styles.itemMeta}>{t('plus.presetLockedByStart')}</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.item} onPress={props.onSubagents}>
-                  <Text style={styles.itemTitle}>{t('plus.subagents')}</Text>
-                  <Text style={styles.itemSubtitle}>{t('plus.subagentsSubtitle')}</Text>
-                </TouchableOpacity>
-                {props.permissions.length > 0 && (
-                  <>
-                    <SectionHeader title={t('plus.permissionPresets')} />
-                    {props.permissions.map(permission => {
-                      const active = permission.value === props.permissionValue
-                      const danger = permission.value === 'danger-full-access'
-                      return (
-                        <TouchableOpacity
-                          key={permission.value}
-                          style={[styles.item, active && styles.itemActive]}
-                          disabled={active}
-                          onPress={() => props.onPermission(permission.value)}
-                        >
-                          <Text style={[styles.itemTitle, danger && styles.danger]}>{permission.name}</Text>
-                          {permission.description !== undefined && <Text style={styles.itemSubtitle}>{permission.description}</Text>}
-                          {active && <Text style={styles.meta}>{t('common.current')}</Text>}
-                        </TouchableOpacity>
-                      )
-                    })}
-                  </>
-                )}
-                {props.presets.length > 0 && !props.presetLocked && (
-                  <>
-                    <SectionHeader title="Agent presets" />
-                    <StatusLine status={props.presetStatus} error={props.presetError} onRetry={props.onPresets} />
-                    {props.presets.map(preset => (
-                      <TouchableOpacity key={preset.id} style={styles.item} onPress={() => props.onSelectPreset(preset)}>
-                        <Text style={styles.itemTitle}>{preset.name ?? preset.id}</Text>
-                        {preset.description !== undefined && <Text style={styles.itemSubtitle} numberOfLines={2}>{preset.description}</Text>}
-                      </TouchableOpacity>
-                    ))}
-                  </>
-                )}
-              </>
-            )}
           </ScrollView>
         </View>
       </ModalBackdrop>
@@ -350,14 +252,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2),
     marginBottom: spacing(1),
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: spacing(2),
-  },
-  sectionTitle: { color: colors.textDim, fontSize: fontSize.tiny, fontWeight: '600' },
-  sectionAction: { color: colors.accent, fontSize: fontSize.tiny },
   item: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -365,7 +259,6 @@ const styles = StyleSheet.create({
     padding: spacing(2.5),
     gap: spacing(1),
   },
-  itemActive: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
   itemTitle: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
   itemSubtitle: { color: colors.textDim, fontSize: fontSize.tiny },
   itemMeta: { color: colors.textDim, fontSize: fontSize.tiny, opacity: 0.7 },
@@ -374,5 +267,4 @@ const styles = StyleSheet.create({
   failedRow: { flexDirection: 'row', gap: spacing(2), alignItems: 'center' },
   error: { flex: 1, color: colors.danger, fontSize: fontSize.tiny },
   retry: { color: colors.accent, fontSize: fontSize.small },
-  danger: { color: colors.danger },
 })

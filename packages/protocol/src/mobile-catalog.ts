@@ -41,9 +41,28 @@ export interface MobileAgentPresetRoster {
   modeSelectionEnabled?: boolean
 }
 
+/**
+ * One switchable permission preset. The Session projection carries only the
+ * selected value, so names and descriptions come from this catalog — the same
+ * split the Web client makes between its projection and its catalog remote.
+ */
+export interface MobilePermissionPreset {
+  value: string
+  name: string
+  description?: string
+}
+
+/** The process-wide permission roster a host offers current-session UI. */
+export interface MobilePermissionCatalog {
+  options: MobilePermissionPreset[]
+  defaultOptions: MobilePermissionPreset[]
+  defaultPreset: string
+}
+
 export interface MobileCatalog {
   skills(payload: { sessionId: string }): Promise<{ skills: MobileSkillEntry[] }>
   agentPresets(): Promise<MobileAgentPresetRoster>
+  permissionPresets(): Promise<MobilePermissionCatalog>
 }
 
 /**
@@ -68,5 +87,6 @@ export function createMobileCatalog(
   return {
     skills: payload => call('skill.list', payload),
     agentPresets: () => call('agentPreset.list', {}),
+    permissionPresets: () => call('permissionPreset.catalog', {}),
   }
 }
