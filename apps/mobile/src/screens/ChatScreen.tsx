@@ -29,6 +29,7 @@ import {
   type HostInstance,
 } from 'react-native'
 import { TouchableOpacity } from '../components/Touchable'
+import type { NoticeLevel } from '../components/NoticeToast'
 import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, shortSessionId, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import { subagentAddress, subagentRows, type SubagentAddress } from '@dsh-mobile/core'
 import type {
@@ -191,6 +192,20 @@ const SILENT_STREAM_MS = 30_000
  */
 const DIRECTORY_SEGMENTS = 3
 
+/**
+ * Whether one failure is the Host refusing a Session another DSH already owns.
+ *
+ * The Host names it `session/writer-held`, and a plugin new enough to carry
+ * that name in its own vocabulary passes the code on. One that predates it
+ * projects the refusal as `internal` with the Host's name glued to the front of
+ * the message (`session/writer-held: session "…" is already owned…`) — which is
+ * the shape every released plugin sends today, so the bare code test would miss
+ * exactly the phones the App has to work on.
+ */
+function namesWriterContention(error: { code: string; message: string }): boolean {
+  return error.code === 'session/writer-held' || error.message.startsWith('session/writer-held')
+}
+
 interface Props {
   manager: ConnectionManager
   sessionId: string
@@ -202,8 +217,11 @@ interface Props {
    * Where a transient notice goes. The app owns one banner, above every
    * screen; a strip inside this one's bottom dock said the same thing in a
    * second place, in a second shape.
+   *
+   * The level is what the banner hangs its lifetime on: a refusal is worth
+   * reading twice as long as a confirmation.
    */
-  onNotice?: (text: string) => void
+  onNotice?: (text: string, level?: NoticeLevel) => void
   /** Enter sends the composer; Shift+Enter keeps the newline. Defaults on. */
   enterToSend?: boolean
 }
@@ -554,7 +572,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
         appendImage(image)
       }
     } catch (error) {
-      showNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -568,7 +586,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const chooseFile = async (): Promise<void> => {
     const picker = NativeModules.DshFilePicker as { pickFile(): Promise<PickedFile | null> } | undefined
     if (picker?.pickFile === undefined) {
-      showNotice(t('plus.filePickerUnavailable'))
+      failNotice(t('plus.filePickerUnavailable'))
       return
     }
     let uploadId: string | null = null
@@ -576,12 +594,12 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       const selected = await picker.pickFile()
       if (selected == null) return
       if (selected.name.trim() === '' || selected.data.trim() === '') {
-        showNotice(t('plus.fileUploadFailed', { message: 'invalid file picker result' }))
+        failNotice(t('plus.fileUploadFailed', { message: 'invalid file picker result' }))
         return
       }
       const bytes = selected.size ?? Math.floor(selected.data.length * 3 / 4)
       if (bytes > MAX_MOBILE_FILE_BYTES) {
-        showNotice(t('plus.fileTooLarge', { size: formatBytes(MAX_MOBILE_FILE_BYTES) }))
+        failNotice(t('plus.fileTooLarge', { size: formatBytes(MAX_MOBILE_FILE_BYTES) }))
         return
       }
       uploadId = `${selected.name}:${Date.now()}:${Math.random()}`
@@ -595,7 +613,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
         : file))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      showNotice(t('plus.fileUploadFailed', { message }))
+      failNotice(t('plus.fileUploadFailed', { message }))
       if (uploadId !== null) setPendingFiles(current => current.map(file => file.id === uploadId ? { ...file, status: 'error', error: message } : file))
     }
   }
@@ -608,7 +626,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       } | undefined
       return await picker?.[method](imageLimits?.maxImageBytes ?? 20 * 1024 * 1024)
     } catch (error) {
-      showNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(t('chat.selectImagesFailed', { message: error instanceof Error ? error.message : String(error) }))
       return null
     }
   }
@@ -627,7 +645,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const appendImage = (image: PendingImage): void => {
     setPendingImages(current => {
       const { next, rejection } = appendPendingImage(current, image, imageLimits)
-      if (rejection !== null) showNotice(rejectionNotice(rejection))
+      if (rejection !== null) failNotice(rejectionNotice(rejection))
       return next
     })
   }
@@ -1139,9 +1157,42 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     await manager.client?.sessions.selectModel({ sessionId, provider, model, reasoningEffort } as never).catch(() => undefined)
   }
 
-  const showNotice = useCallback((text: string) => {
-    onNotice?.(text)
+  /**
+   * Say one thing. `level` defaults to a confirmation; every failure below
+   * names itself as one, which is what buys it the longer countdown.
+   */
+  const showNotice = useCallback((text: string, level: NoticeLevel = 'info') => {
+    onNotice?.(text, level)
   }, [onNotice])
+  /** The same sink, for the call sites that are always a failure. */
+  const failNotice = useCallback((text: string) => {
+    onNotice?.(text, 'error')
+  }, [onNotice])
+  /**
+   * One failed write, in words a reader can act on.
+   *
+   * `session/writer-held` is the Host refusing to adopt a Session another DSH
+   * already has open — the desktop app, another `dsh web`, a terminal — and its
+   * own wording ("is already owned by an active write handle") names the
+   * mechanism instead of the cure. The Web answers this refusal with recovery
+   * copy, so this does too; every other code keeps the Host's own message,
+   * which is the one thing that names what actually went wrong.
+   */
+  const failureText = useCallback((key: TranslationKey, error: { code: string; message: string }): string =>
+    t(key, { message: namesWriterContention(error) ? t('chat.sessionInUse') : error.message }),
+  [t])
+  /**
+   * The same reading, for a failure the carrier *threw* rather than answered.
+   * A prompt with attachments goes through the file carrier, which raises a
+   * `MobileRemoteError` carrying the Host's code instead of returning a refused
+   * result envelope — same refusal, code on the error rather than in the body.
+   */
+  const thrownText = useCallback((key: TranslationKey, error: unknown): string => {
+    const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : ''
+    return failureText(key, { code, message: error instanceof Error ? error.message : String(error) })
+  }, [failureText])
 
   /**
    * A tapped link: URLs leave the app, file references open the workspace
@@ -1157,9 +1208,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       return
     }
     void Linking.openURL(target.url).catch(() => {
-      showNotice(t('chat.linkFailed', { url: target.url }))
+      failNotice(t('chat.linkFailed', { url: target.url }))
     })
-  }, [showNotice, t])
+  }, [failNotice, t])
 
   // Held as a value rather than read off the manager inside the callback, so a
   // reconnect re-runs the read: an empty transcript must not outlive the
@@ -1332,10 +1383,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       const oldest = oldestSeq(manager.store.sessions.get(sessionId))
       return oldest === undefined || oldest >= beforeSeq ? null : true
     } catch (error) {
-      showNotice(t('chat.historyFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(t('chat.historyFailed', { message: error instanceof Error ? error.message : String(error) }))
       return null
     }
-  }, [manager, sessionId, showNotice, subagentReadAddress, t])
+  }, [failNotice, manager, sessionId, subagentReadAddress, t])
 
   /**
    * Pull the rest of the log, one page at a time.
@@ -1664,9 +1715,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     if (rating === null) {
       if (current === undefined) return
       const removed = await client.feedback.delete({ sessionId, messageId, ifVersion: current.version }).catch(() => null)
-      if (removed === null) { showNotice(t('notice.connectionUnavailable')); return }
+      if (removed === null) { failNotice(t('notice.connectionUnavailable')); return }
       if (!removed.ok) {
-        showNotice(t('notice.feedbackFailed', { message: removed.error.code }))
+        failNotice(t('notice.feedbackFailed', { message: removed.error.code }))
         await loadFeedback()
         return
       }
@@ -1686,9 +1737,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
         sessionId, messageId, rating, ifVersion: result.error.current?.version ?? null,
       }).catch(() => null)
     }
-    if (result === null) { showNotice(t('notice.connectionUnavailable')); return }
+    if (result === null) { failNotice(t('notice.connectionUnavailable')); return }
     if (!result.ok) {
-      showNotice(t('notice.feedbackFailed', { message: result.error.code }))
+      failNotice(t('notice.feedbackFailed', { message: result.error.code }))
       await loadFeedback()
       return
     }
@@ -1702,7 +1753,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     const readyFiles = pendingFiles.filter(file => file.status === 'ready' && file.receiptId !== undefined)
     if (client === null || (text === '' && pendingImages.length === 0 && readyFiles.length === 0)) return
     if (editingItem !== null && readyFiles.length > 0) {
-      showNotice(t('plus.fileUploadFailed', { message: 'queued edits do not support file attachments' }))
+      failNotice(t('plus.fileUploadFailed', { message: 'queued edits do not support file attachments' }))
       return
     }
     Keyboard.dismiss()
@@ -1729,7 +1780,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     const child = subagentReadAddress
     if (child !== null && child.mode === 'continuable') {
       if (readyFiles.length > 0) {
-        showNotice(t('chat.subagentNoFiles'))
+        failNotice(t('chat.subagentNoFiles'))
         setDraft(text)
         return
       }
@@ -1744,9 +1795,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
           ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
         } as never)
         if (result.result.ok) sent = true
-        else showNotice(t('chat.sendFailed', { message: result.result.error.message }))
+        else failNotice(failureText('chat.sendFailed', result.result.error))
       } catch (error) {
-        showNotice(t('chat.sendFailed', { message: error instanceof Error ? error.message : String(error) }))
+        failNotice(thrownText('chat.sendFailed', error))
       }
       if (!sent) {
         setDraft(text)
@@ -1768,11 +1819,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       }
     } catch (error) {
       result = null
-      showNotice(t('chat.sendFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(thrownText('chat.sendFailed', error))
     }
     if (result === null || !result.result.ok) {
       setDraft(text) // put the draft back on failure
-      if (result !== null && !result.result.ok) showNotice(t('chat.sendFailed', { message: result.result.error.message }))
+      if (result !== null && !result.result.ok) failNotice(failureText('chat.sendFailed', result.result.error))
       return
     }
     setPendingImages([])
@@ -1787,10 +1838,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     if (client === null) return
     try {
       const response = await client.commands.execute({ sessionId, line: command })
-      if (response.result.kind === 'error') showNotice(t('chat.commandFailed', { message: response.result.text }))
+      if (response.result.kind === 'error') failNotice(t('chat.commandFailed', { message: response.result.text }))
       else if (response.result.text !== undefined && response.result.text !== '') showNotice(response.result.text)
     } catch (error) {
-      showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -1798,7 +1849,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     const client = manager.client
     if (client === null) return
     if (pendingFiles.length > 0) {
-      showNotice(t('chat.commandRejectsFiles', { command: command.name }))
+      failNotice(t('chat.commandRejectsFiles', { command: command.name }))
       return
     }
     showNotice(t('chat.executing', { command: command.name }))
@@ -1818,30 +1869,30 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
           })),
         })
         if (result.result.kind === 'error') {
-          showNotice(t('chat.commandFailed', { message: result.result.text }))
+          failNotice(t('chat.commandFailed', { message: result.result.text }))
           return
         }
         setPendingImages([])
         if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
         return
       } catch (error) {
-        showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
+        failNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
         return
       }
     }
     if (command.images !== true && pendingImages.length > 0) {
-      showNotice(t('chat.commandRejectsImages', { command: command.name }))
+      failNotice(t('chat.commandRejectsImages', { command: command.name }))
       return
     }
     try {
       const result = await client.commands.execute({ sessionId, line: text })
       if (result.result.kind === 'error') {
-        showNotice(t('chat.commandFailed', { message: result.result.text }))
+        failNotice(t('chat.commandFailed', { message: result.result.text }))
         return
       }
       if (result.result.text !== undefined && result.result.text !== '') showNotice(result.result.text)
     } catch (error) {
-      showNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
+      failNotice(t('chat.commandFailed', { message: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -1916,11 +1967,11 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     const result = await client?.sessions.fork({ sessionId, atSeq: seq } as never).catch(() => null)
     const rpc = result?.result
     if (rpc === undefined) {
-      showNotice(t('notice.connectionUnavailable'))
+      failNotice(t('notice.connectionUnavailable'))
       return
     }
     if (!rpc.ok) {
-      showNotice(t('notice.forkFailed', { message: rpc.error.message }))
+      failNotice(t('notice.forkFailed', { message: rpc.error.message }))
       return
     }
     const childId = rpc.value.sessionId
@@ -1947,7 +1998,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     if (client === null) return
     const created = await client.sessions.create({} as never)
     if (!created.result.ok) {
-      showNotice(t('notice.createdSessionFailed', { message: created.result.error.message }))
+      failNotice(t('notice.createdSessionFailed', { message: created.result.error.message }))
       return
     }
     const newSessionId = created.result.value.sessionId
@@ -1973,7 +2024,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     const text = item.kind === 'user' ? item.text : messageText(item)
     if (text.trim() !== '') content.unshift({ type: 'text', text })
     if (content.length === 0) {
-      showNotice(t('notice.noResendContent'))
+      failNotice(t('notice.noResendContent'))
       return
     }
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -1985,7 +2036,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
       ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
     } as never)
     if (!sent.result.ok) {
-      showNotice(t('notice.resendFailed', { message: sent.result.error.message }))
+      failNotice(failureText('notice.resendFailed', sent.result.error))
       return
     }
     showNotice(t('notice.resent'))
@@ -2153,13 +2204,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
     if (id === currentPresetId) return
     void manager.client?.agentPresets.select({ sessionId, agentPreset: id } as never)
       .then(result => {
-        if (!result.result.ok) showNotice(t('chat.switchFailed', { message: result.result.error.message }))
+        if (!result.result.ok) failNotice(t('chat.switchFailed', { message: result.result.error.message }))
         else {
           void manager.refreshBaseline()
           void loadCommands(true)
         }
       })
-      .catch(() => showNotice(t('chat.switchConnection')))
+      .catch(() => failNotice(t('chat.switchConnection')))
   }
   /**
    * Open a mode menu under its own chip. The measurement is what lets the panel
@@ -2508,7 +2559,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
                   onRate={next => void rateMessage(entry, next)}
                   onBranch={() => {
                     if (item.branch?.seq === undefined) {
-                      showNotice(t('actions.branchUnavailable'))
+                      failNotice(t('actions.branchUnavailable'))
                       return
                     }
                     void forkAtSeq(item.branch.seq)

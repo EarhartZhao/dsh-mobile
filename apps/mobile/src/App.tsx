@@ -42,6 +42,7 @@ import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { TrajectoryScreen } from './screens/TrajectoryScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
+import { NoticeToast, type NoticeLevel } from './components/NoticeToast'
 import {
   INITIAL_NAV,
   closeChat,
@@ -198,7 +199,12 @@ function AppContent(): React.JSX.Element {
     setNav(closeTrajectory)
   }, [])
   const [connState, setConnState] = useState<ConnectionState>('idle')
-  const [alert, setAlert] = useState<string | null>(null)
+  /**
+   * The one notice on screen, with the level that decides how long it stands.
+   * `id` is what makes a second notice replace the first rather than edit it:
+   * the toast is keyed by it, so its own opened/closed state starts over.
+   */
+  const [notice, setNotice] = useState<{ text: string; level: NoticeLevel; id: number } | null>(null)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [themeMode, setThemeMode] = useState<ThemeMode>('system')
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES)
@@ -225,7 +231,8 @@ function AppContent(): React.JSX.Element {
   // `retrying` is set while the downloader is resuming after a stall.
   const [updateProgress, setUpdateProgress] = useState<{ received: number, total: number, retrying: boolean } | null>(null)
   const managerRef = useRef<ConnectionManager | null>(null)
-  const alertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Counts notices, so a repeat of the same text is still a new one. */
+  const noticeSeq = useRef(0)
   const lastBackPress = useRef(0)
   /** The launch-time release check runs once, however often `t` is rebuilt. */
   const bootUpdateChecked = useRef(false)
@@ -251,11 +258,16 @@ function AppContent(): React.JSX.Element {
     return next
   }, [])
 
-  const showAlert = useCallback((text: string) => {
-    setAlert(text)
-    if (alertTimer.current !== null) clearTimeout(alertTimer.current)
-    alertTimer.current = setTimeout(() => setAlert(null), 5000)
+  /**
+   * Say one thing, once. The toast owns its own countdown — including the
+   * longer one a tap on it buys — so the shell only has to name the message and
+   * whether it is a failure.
+   */
+  const showAlert = useCallback((text: string, level: NoticeLevel = 'info') => {
+    noticeSeq.current += 1
+    setNotice({ text, level, id: noticeSeq.current })
   }, [])
+  const dismissNotice = useCallback(() => setNotice(null), [])
 
   /** Size of a finished APK already sitting in the cache, or null. */
   const refreshDownloadedUpdate = useCallback(async (version: string): Promise<void> => {
@@ -299,7 +311,7 @@ function AppContent(): React.JSX.Element {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setUpdateCheck({ kind: 'error', message })
-      if (mode === 'manual') showAlert(t('update.checkFailed', { message }))
+      if (mode === 'manual') showAlert(t('update.checkFailed', { message }), 'error')
     } finally {
       clearTimeout(timeout)
     }
@@ -589,7 +601,7 @@ function AppContent(): React.JSX.Element {
         showAlert(snapshot === null ? t('diagnostics.unavailable') : t('diagnostics.testPassed'))
       })
       .catch(cause => {
-        showAlert(t('diagnostics.testFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+        showAlert(t('diagnostics.testFailed', { message: cause instanceof Error ? cause.message : String(cause) }), 'error')
       })
       .finally(() => setHealthLoading(false))
   }, [showAlert, t])
@@ -599,7 +611,7 @@ function AppContent(): React.JSX.Element {
     if (target === null) return
     const updater = updaterModule()
     if (updater === undefined) {
-      showAlert(t('update.unavailable'))
+      showAlert(t('update.unavailable'), 'error')
       return
     }
     setUpdatePhase('downloading')
@@ -622,7 +634,7 @@ function AppContent(): React.JSX.Element {
         ? t('update.installPermission')
         : typeof message === 'string' && message !== ''
           ? t('update.failedDetail', { message })
-          : t('update.failed'))
+          : t('update.failed'), 'error')
     } finally {
       // Never overwrite a pause or a cancel that landed while the promise was
       // in flight.
@@ -702,15 +714,15 @@ function AppContent(): React.JSX.Element {
     const client = manager?.client
     if (connState !== 'online' || manager === null || client === null || client === undefined) {
       setPendingNewSession(true)
-      showAlert(t('link.connectionUnavailable'))
+      showAlert(t('link.connectionUnavailable'), 'error')
       return
     }
     try {
       const result = await client.sessions.create({} as never)
       if (result.result.ok) openSession(result.result.value.sessionId)
-      else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
+      else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }), 'error')
     } catch (cause) {
-      showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+      showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }), 'error')
     }
   }, [connState, openSession, showAlert, t])
 
@@ -729,9 +741,9 @@ function AppContent(): React.JSX.Element {
       try {
         const result = await client.sessions.create({} as never)
         if (result.result.ok) openSession(result.result.value.sessionId)
-        else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }))
+        else showAlert(t('link.newSessionFailed', { message: String(result.result.error.message ?? '') }), 'error')
       } catch (cause) {
-        showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+        showAlert(t('link.newSessionFailed', { message: cause instanceof Error ? cause.message : String(cause) }), 'error')
       }
     }
     void createSession()
@@ -754,13 +766,6 @@ function AppContent(): React.JSX.Element {
               <Text style={styles.bannerText}>
                 {connState === 'reconnecting' || connState === 'connecting' ? t('connection.connecting') : t('connection.state', { state: t(connectionStateKey(connState)) })}
               </Text>
-            </View>
-          )}
-          {alert !== null && (
-            <View style={styles.alertBanner}>
-              {/* Any notice can carry a tool's own text, so the banner caps
-                  itself instead of letting one grow over the screen. */}
-              <Text style={styles.alertText} numberOfLines={2} ellipsizeMode="tail">{alert}</Text>
             </View>
           )}
           {route.name === 'list' ? (
@@ -837,6 +842,17 @@ function AppContent(): React.JSX.Element {
               onOpenTrajectory={sessionId => setNav(current => openTrajectory(current, sessionId))}
               onNotice={showAlert}
               enterToSend={preferences.enterToSend}
+            />
+          )}
+          {/* Last, so it paints over whichever screen is under it — the point
+              of a notice is that it costs the screen behind it nothing. */}
+          {notice !== null && (
+            <NoticeToast
+              key={notice.id}
+              text={notice.text}
+              level={notice.level}
+              onDismiss={dismissNotice}
+              onCopied={() => showAlert(t('notice.copied'))}
             />
           )}
         </>
@@ -1007,14 +1023,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   bannerText: { color: colors.warning, fontSize: fontSize.small },
-  alertBanner: {
-    backgroundColor: colors.bgBubbleUser,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.accent,
-    paddingVertical: spacing(2),
-    paddingHorizontal: spacing(4),
-  },
-  alertText: { color: colors.text, fontSize: fontSize.small },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center' },
   settingsMeta: { color: colors.textDim, fontSize: 11 },
   diagnosticError: { color: colors.warning, fontSize: 11, marginTop: 4 },

@@ -416,6 +416,13 @@ const zh = {
   'chat.goalPausedTurn': '目标已暂停，当前轮次已中止。',
   'chat.modelRouteUnavailable': '当前模型路由不可用，请选择其他可用模型。',
   'chat.sendFailed': '发送失败：{message}',
+  /**
+   * The Host's refusal when another DSH already holds the session's write
+   * lease. The Web answers `session/writer-held` with the same recovery copy,
+   * because the raw error names the mechanism ("an active write handle") and
+   * not the fix (quit the other DSH).
+   */
+  'chat.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 DSH 后重试。',
   'chat.subagentNoFiles': '子智能体消息暂不支持上传的文件。',
   'chat.commandFailed': '命令失败：{message}',
   'chat.executing': '执行中：/{command}',
@@ -1160,6 +1167,7 @@ const en: Partial<Record<keyof typeof zh, string>> = {
   'chat.goalPausedTurn': 'The goal is paused and the current turn was interrupted.',
   'chat.modelRouteUnavailable': 'The current model route is unavailable. Choose another model.',
   'chat.sendFailed': 'Send failed: {message}',
+  'chat.sessionInUse': 'This session is already in use, possibly by another running DSH instance (such as dsh web or the desktop app). Quit other running DSH instances and try again.',
   'chat.subagentNoFiles': 'Subagent messages do not support uploaded files yet.',
   'chat.commandFailed': 'Command failed: {message}',
   'chat.executing': 'Running: /{command}',

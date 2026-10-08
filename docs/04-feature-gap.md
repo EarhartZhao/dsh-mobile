@@ -404,6 +404,51 @@
 > runtime-context / skill-catalog`，随后「第 1 步」的 `#6 助手` 带 `输入 166 输出 27`；
 > 长会话页显示「第 14 步」等分组与 `#N`、状态点、`已完成 · 0 秒 · 13:32:20`，展开态正文完整。
 
+> 2026-10-08 追加（提示改成顶部悬浮卡 + 发送失败文案对齐 Web）：
+>
+> ① **提示框从跨屏横幅改成悬浮卡**（`components/NoticeToast.tsx`，新文件）。原来那条
+> 横幅是插进布局里的：它一出现就把整屏往下推，而且 `numberOfLines={2}` 恰好把最长的失败
+> 截在最有用的地方——用户截的图就是 `发送失败：session/writer-held: session "session-6abf24b4-…`
+> 这样一句以省略号结尾的话。现在是一条**绝对定位的卡**：离顶部和左右各留边距，
+> 浮在**当前屏幕之上**，不为它移动任何东西。
+>
+> ② **一行 / 3s 与 5s / 点击展开 / 长按复制 / 关闭按钮 / 点击重置**：默认
+> `numberOfLines={1}`（`ellipsizeMode="tail"`）；**确认类**（`info`）3s、**失败类**
+> （`error`）5s，等级由 `ChatScreen` 的 `onNotice(text, level)` 第二参传出，失败路径全部
+> 走 `failNotice`；点一下展开成 `ScrollView`（`maxHeight: 260`）读全文，**长按复制**并
+> 回一句「已复制」；展开后卡片**下方**出现 × 关闭按钮（不做在卡内——卡片本身是
+> 一个按压面：点开、长按复制，卡内再放按钮只会和这两个打架）；展开态计时 5s，
+> **每点一次重置**（`taps` 计数进 effect 依赖），读者读到一半不会丢。
+>
+> ③ **状态栏那一步要自己迈**：绝对定位的子元素对齐的是屏幕边，不认父容器
+> （`SafeAreaView`）的 padding——真机上卡片正好压在时钟上，第一行就是被吃掉的那一行。
+> 所以 `NoticeToast` 从 `react-native-safe-area-context` 取 `insets.top` 自己加上。
+>
+> ④ **「消息发送失败」的真话是「会话被别的 DSH 占着」**：根因不在手机——
+> `lsof <session>/session.lock` 显示写锁在桌面版 `DeepSeek Harness.app`（也见过 `dsh web`
+> 同时占着 21 个会话），宿主因此拒绝接管并回 `session/writer-held`，App 只是把原始的
+> code + 会话 UUID 原样贴出来。Web 对这个 code 有专门的恢复文案
+> （`ui-conversation` 的 `error.sessionInUse`），App 现在也有了（`chat.sessionInUse`）：
+> 「当前会话已被占用，可能是其他正在运行的 DSH 导致的（如其他 dsh web、桌面端），
+> 请退出其他正在运行的 DSH 后重试。」
+>
+> ⑤ **这个 code 得从消息里认，不能只看 code 字段**：插件的错误词表是**冻结**的，
+> `session/writer-held` 不在其中，于是被投影成 `internal` + `${code}: ${host message}`
+> 兜底（真机抓到的正是 `internal` / `session/writer-held: session "…" is already owned…`）。
+> 只看 `error.code === 'session/writer-held'` 会**恰好漏掉所有已发布的插件**，所以
+> `namesWriterContention()` 同时认「code 是这个」和「message 以这个开头」两种形状，
+> 抛出的 `MobileRemoteError`（带附件那条走 throw 分支）也一起走同一段判断
+> （`thrownText`）。
+>
+> 验证：`apps/mobile` 的 `typecheck` 清、`lint` 0 error（223 warning，与基线同量级，多出的
+> 两条是新测试文件里既有的 `no-void` 写法）、`test` 32 套 267 例全过（新增
+> `NoticeToast.test.tsx` 7 例：一行→点开全文、3s/5s 两个时长、点击重置、长按复制、
+> 关闭按钮、以及「卡片要越过状态栏」的定位断言；ChatScreen 新增 1 例：插件把 code 折进
+> 消息时仍然出恢复文案）。**Android 真机**（vivo V2405A，Metro + `adb reverse`）复核：
+> 检查更新出 3s 蓝边确认卡、写占用出 5s 红边失败卡；卡片离顶部与左右都有间距且不再压
+> 状态栏；点开显示全文三行 + 下方 ×，点 × 关闭；长按弹出「已复制」；连拍测时得到
+> 失败卡约 5s、确认卡约 3s 后自行消失。中文真机文字与截图一致。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

@@ -1336,7 +1336,9 @@ describe('ChatScreen header', () => {
     // to the app's own banner — the screen draws no notice of its own.
     act(() => { pressableByLabel(tree, 'common.copy')?.props.onPress() })
     expect(screenText(tree)).not.toContain('chat.directoryTapToCopy')
-    expect(onNotice).toHaveBeenCalledWith('notice.copied')
+    // The level travels with the words: the app hangs a confirmation's
+    // lifetime (3s) and a failure's (5s) off it.
+    expect(onNotice).toHaveBeenCalledWith('notice.copied', 'info')
   })
 
   it('names the mode without a prefix, and leaves the control off when there is nothing to open', async () => {
@@ -1370,5 +1372,43 @@ describe('ChatScreen header', () => {
     const row = ancestorsOf(count!).find(node => node.findAll(child => child === model).length > 0)
     expect(row).toBeDefined()
     expect(row!.findAll(node => node === count || node === model)).toEqual([count, model])
+  })
+})
+
+/**
+ * A prompt the Host would not take.
+ *
+ * The one refusal worth translating is write contention: another DSH — the
+ * desktop app, a second `dsh web` — already holds the Session, and the Host
+ * says so in its own words, naming the mechanism and the Session's id instead
+ * of anything the reader can act on. The Web answers with recovery copy, and so
+ * does this screen — whatever shape the refusal arrives in.
+ */
+describe('ChatScreen refused prompts', () => {
+  /** The composer's own field, which is how a draft gets typed in a test. */
+  function composer(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance {
+    const field = tree.root.findAll(node => typeof node.props.onChangeText === 'function').at(-1)
+    expect(field).toBeDefined()
+    return field!
+  }
+
+  it('answers a refusal the plugin folded into its message with the same recovery copy', async () => {
+    const { manager } = setupModes({})
+    // What a plugin without `session/writer-held` in its vocabulary sends: the
+    // closed mobile code, with the Host's own name kept in the text.
+    const prompt = jest.fn(async () =>
+      refusal('session/writer-held: session "s1" is already owned by an active write handle'))
+    ;(manager.client as unknown as { sessions: { prompt: jest.Mock } }).sessions.prompt = prompt
+    const onNotice = jest.fn()
+    const tree = render(manager, 's1', jest.fn(), { onNotice })
+    await settle()
+
+    act(() => { composer(tree).props.onChangeText('你好') })
+    act(() => { pressableByLabel(tree, 'chat.send')?.props.onPress() })
+    await settle()
+
+    expect(prompt).toHaveBeenCalled()
+    // The recovery copy, not the Host's sentence — the id in it is not a cure.
+    expect(onNotice).toHaveBeenCalledWith('chat.sendFailed(chat.sessionInUse)', 'error')
   })
 })
