@@ -230,6 +230,56 @@ function fileMention(path: string, kind: 'file' | 'directory'): string | null {
   return /\s/u.test(value) ? `@"${value}"` : `@${value}`
 }
 
+/**
+ * How close to the measured bottom the reader has to come before the
+ * transcript starts following the newest row again. The web uses 24px for the
+ * same decision (`use-chat-reading.ts`), widened here because a scroll sample
+ * arrives before the gesture's own momentum settles under a finger.
+ */
+const FOLLOW_TOLERANCE = 48
+
+/** How far the newest content sits below the fold, from one scroll event. */
+const distanceFromBottom = (event: NativeScrollEvent): number =>
+  event.contentSize.height - (event.contentOffset.y + event.layoutMeasurement.height)
+
+/**
+ * The transcript's Markdown, behind a memo boundary.
+ *
+ * The screen re-renders from the store's own throttle while a turn streams,
+ * and every one of those passes rebuilds the transcript rows — `buildTranscript`
+ * and `deriveConversation` both hand back fresh objects, so a row's identity
+ * says nothing about whether its content moved. What *is* comparable is the
+ * source, a string: equal text means the row has nothing new to draw, and the
+ * renderer can skip re-parsing it into a fresh native tree. That parse is the
+ * expensive part of a long answer, and it is what made scrolling a transcript
+ * under a writing model stutter.
+ *
+ * The style and rule objects are module constants, so the link handler is the
+ * only prop a caller has to hold still — see {@link useMarkdownLinkPress}.
+ */
+const MemoMarkdown = React.memo(Markdown)
+
+/**
+ * A link handler that keeps its identity for as long as the caller's does.
+ *
+ * Returning `false` suppresses the renderer's own `Linking.openURL`: what a
+ * link means depends on the surface it was tapped from, and the relative file
+ * paths these transcripts are full of must not be handed to the browser.
+ *
+ * @returns the handler, or `undefined` when the caller has none — the memo
+ *   boundary above takes a stable prop set, and an absent prop is the stablest
+ *   of all.
+ */
+function useMarkdownLinkPress(
+  onOpenLink?: (href: string) => void,
+): ((href: string) => boolean) | undefined {
+  const press = useCallback((href: string): boolean => {
+    onOpenLink?.(href)
+    return false
+  }, [onOpenLink])
+  return onOpenLink === undefined ? undefined : press
+}
+
 export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToSend = true }: Props): React.JSX.Element {
   const { locale, t } = useI18n()
   const [items, setItems] = useState<ConversationItem[]>([])
@@ -246,6 +296,13 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const hasMoreRef = useRef(false)
   const backfillRun = useRef(0)
   const backfillStop = useRef(false)
+  /**
+   * The reader has left the tail, so the walk holds instead of prepending a
+   * page above what they are reading. Kept apart from `backfillStop` (the
+   * reader's own pause, which must survive coming back to the tail) so
+   * returning to the newest message resumes a hold but not a choice.
+   */
+  const backfillHold = useRef(false)
   /**
    * The Host watermark whose tail read this screen already triggered, keyed by
    * Session: a page that cannot move the tail would otherwise be asked for
@@ -545,17 +602,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   /**
    * The reader is following the newest message: the transcript is at its bottom
    * and no finger or momentum scroll is in flight. Exactly one mechanism may
-   * hold the offset while this is true, so it gates both of them:
+   * hold the offset while this is true: the follow scroll that re-pins the
+   * newest row to the bottom of the viewport.
    *
-   * - the scroll anchor (`maintainVisibleContentPosition`) stays unarmed, and
-   * - the follow scroll re-pins the newest row to the bottom of the viewport.
-   *
-   * Armed together they fought: a streamed chunk grew the row above the anchor,
-   * the native anchor answered by moving the content back, and the follow
-   * scroll moved it the other way again — the up-and-down the reader saw while
-   * the model was thinking. Reading older history is the mirror image: the
-   * anchor is what keeps a prepended page from moving the place the reader is
-   * looking at, and nothing here scrolls.
+   * The native anchor (`maintainVisibleContentPosition`) is deliberately not
+   * used. Its adjustment is the delta of one subview's own frame between the
+   * prepare and adjust passes of a mount transaction, and a virtualized list
+   * recycles the subview it anchored to: measured on the iOS simulator, a 70pt
+   * swipe up at the bottom of a 6,825pt transcript sent the offset from 6,305
+   * to 268 — six thousand points of history the reader never asked for, and
+   * unrepeatably, which is what made it read as a random jump. Keeping the
+   * reader's place when older history is prepended is instead the backfill
+   * walk's job: it does not run while the reader is away from the tail (see the
+   * effect below `pauseBackfill`).
    */
   const followTailRef = useRef(true)
   const [followTail, setFollowTail] = useState(true)
@@ -574,6 +633,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * follow scroll uses — `scrollToEnd` estimates an unmeasured row.
    */
   const listContentHeight = useRef(0)
+  /**
+   * Whether the transcript has any rows yet. `ListEmptyComponent` inherits the
+   * transcript's own `onLayout`: VirtualizedList clones the placeholder with a
+   * handler that reports the placeholder's box, so the list's very first layout
+   * claims are a spinner's height (measured: 84pt and 56pt for a 550pt list).
+   * Recorded, they leave the follow scroll aiming at a viewport a few points
+   * tall and pinning the tail to a place that is not its bottom.
+   */
+  const listRowCount = useRef(0)
 
   /**
    * Record where the reader is. The gesture handlers compare and assign through
@@ -585,6 +653,50 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (followTailRef.current === next) return
     followTailRef.current = next
     setFollowTail(next)
+  }, [])
+
+  /**
+   * Keep the newest row in view while the reader is following the tail.
+   *
+   * The offset is measured, not estimated. `scrollToEnd` asks VirtualizedList
+   * for the last cell's metrics, and for a cell it has never measured that is
+   * an average-based guess — wrong by however tall the streaming row is, which
+   * left the list a screen short of the bottom and the follow logic fighting
+   * itself over the difference. `onContentSizeChange` hands over the real
+   * content height, the viewport comes from the list's own layout, and their
+   * difference *is* the bottom. Streams arrive faster than a frame, so the
+   * burst collapses into one scroll per frame with the newest height.
+   *
+   * @param contentHeight - the height that just arrived, or null to re-aim the
+   *   last one, which is what a viewport change needs (the content did not
+   *   move, the window that shows it did).
+   */
+  const pinTail = useCallback((contentHeight: number | null): void => {
+    if (contentHeight !== null && contentHeight > 0) pendingTailHeight.current = contentHeight
+    // Nothing new arrived: aim the height that is already on screen, which is
+    // the whole point of a viewport change (`onListLayout`). Consumed heights
+    // are cleared as the frame runs, so without this a window that shrank while
+    // the model was quiet was never answered.
+    if (pendingTailHeight.current === null && listContentHeight.current > 0) {
+      pendingTailHeight.current = listContentHeight.current
+    }
+    if (pendingTailHeight.current === null) return
+    if (tailFollowFrame.current !== null) return
+    tailFollowFrame.current = requestAnimationFrame(() => {
+      tailFollowFrame.current = null
+      const measured = pendingTailHeight.current
+      pendingTailHeight.current = null
+      if (measured === null) return
+      if (!mountedRef.current || listInteractionActive.current || !followTailRef.current) return
+      const viewportHeight = listViewportHeight.current
+      // Nothing has been laid out yet, so there is no measured bottom to aim at
+      // — `scrollToEnd` is the only thing that can close the window.
+      if (viewportHeight <= 0) {
+        listRef.current?.scrollToEnd({ animated: false })
+        return
+      }
+      listRef.current?.scrollToOffset({ offset: Math.max(0, measured - viewportHeight), animated: false })
+    })
   }, [])
 
   const handleBack = useCallback((): void => {
@@ -636,26 +748,32 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   }, [sessionId, syncFollowTail])
 
   const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>): void => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
-    const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
-    listDistanceFromBottom.current = distanceFromBottom
-    listViewportHeight.current = layoutMeasurement.height
+    const distance = distanceFromBottom(event.nativeEvent)
+    listDistanceFromBottom.current = distance
+    listViewportHeight.current = event.nativeEvent.layoutMeasurement.height
     // Content growing below the reader is not the reader moving: a streamed
     // chunk leaves the offset where it was, so the next sample reports a
-    // distance the reader never made. Disarming on that sample and re-arming on
-    // the follow scroll that answers it turned every chunk into a toggle of the
-    // scroll anchor and of the offset it holds — the up-and-down the reader saw
-    // while the model was thinking. Only their own gesture (or the control that
-    // returns them to the tail) hands the offset over, so this side only ever
-    // takes it back, with the small tolerance that keeps layout rounding from
-    // leaving the tail unowned.
-    if (!listInteractionActive.current && distanceFromBottom <= 48) syncFollowTail(true)
+    // distance the reader never made. Only their own gesture (or the control
+    // that returns them to the tail) hands the offset away, so this side only
+    // ever takes it back, with the small tolerance that keeps layout rounding
+    // from leaving the tail unowned.
+    if (!listInteractionActive.current && distance <= FOLLOW_TOLERANCE) syncFollowTail(true)
   }, [syncFollowTail])
 
-  /** The viewport can be known before the first scroll sample arrives. */
+  /**
+   * The viewport can be known before the first scroll sample arrives — and it
+   * can change after one: the keyboard, a question dock or the composer all
+   * take their room out of the transcript. A window that shrank around a tail
+   * the reader was following has to be re-pinned, because the content did not
+   * move, the window did.
+   */
   const onListLayout = useCallback((event: LayoutChangeEvent): void => {
-    listViewportHeight.current = event.nativeEvent.layout.height
-  }, [])
+    if (listRowCount.current === 0) return
+    const { height } = event.nativeEvent.layout
+    if (height <= 0 || height === listViewportHeight.current) return
+    listViewportHeight.current = height
+    if (followTailRef.current && !listInteractionActive.current) pinTail(null)
+  }, [pinTail])
 
   const onListScrollBeginDrag = useCallback((): void => {
     // Opt out before the first scroll sample arrives, otherwise a concurrent
@@ -668,18 +786,34 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     syncFollowTail(false)
   }, [syncFollowTail])
 
-  const finishListInteraction = useCallback((): void => {
+  /**
+   * Hand the offset back when the reader's gesture is over.
+   *
+   * The distance is read from the event that ended the gesture, never from the
+   * last sample: `onMomentumScrollEnd` can be delivered before the sample for
+   * the position it stopped at, and the sample from the middle of the gesture
+   * left the tail unowned — the reader sat at the bottom while the transcript
+   * refused to follow the next answer, which is the half of "it does not scroll
+   * any more" that only shows up sometimes.
+   */
+  const finishListInteraction = useCallback((distance: number, viewportHeight: number): void => {
     listInteractionActive.current = false
-    syncFollowTail(listDistanceFromBottom.current <= 48)
+    listDistanceFromBottom.current = distance
+    if (viewportHeight > 0) listViewportHeight.current = viewportHeight
+    syncFollowTail(distance <= FOLLOW_TOLERANCE)
   }, [syncFollowTail])
 
-  const onListScrollEndDrag = useCallback((): void => {
+  const onListScrollEndDrag = useCallback((event?: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    // Read the geometry here: a synthetic event does not outlive the handler
+    // that received it, and the handoff below is deferred by a timer.
+    const distance = event === undefined ? listDistanceFromBottom.current : distanceFromBottom(event.nativeEvent)
+    const viewportHeight = event === undefined ? 0 : event.nativeEvent.layoutMeasurement.height
     // Momentum begins on a later native event. Delay the unlock briefly so
     // there is no gap in which a content-size change can steal the scroll.
     if (listInteractionEndTimer.current !== null) clearTimeout(listInteractionEndTimer.current)
     listInteractionEndTimer.current = setTimeout(() => {
       listInteractionEndTimer.current = null
-      finishListInteraction()
+      finishListInteraction(distance, viewportHeight)
     }, 120)
   }, [finishListInteraction])
 
@@ -691,45 +825,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     listInteractionActive.current = true
   }, [])
 
-  const onListMomentumScrollEnd = useCallback((): void => {
-    finishListInteraction()
+  const onListMomentumScrollEnd = useCallback((event?: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    finishListInteraction(
+      event === undefined ? listDistanceFromBottom.current : distanceFromBottom(event.nativeEvent),
+      event === undefined ? 0 : event.nativeEvent.layoutMeasurement.height,
+    )
   }, [finishListInteraction])
 
-  /**
-   * Keep the newest row in view while the reader is following the tail.
-   *
-   * The offset is measured, not estimated. `scrollToEnd` asks VirtualizedList
-   * for the last cell's metrics, and for a cell it has never measured that is
-   * an average-based guess — wrong by however tall the streaming row is, which
-   * left the list a screen short of the bottom and the follow logic fighting
-   * itself over the difference. `onContentSizeChange` hands over the real
-   * content height, the viewport comes from the list's own layout, and their
-   * difference *is* the bottom. Streams arrive faster than a frame, so the
-   * burst collapses into one scroll per frame with the newest height.
-   */
   const onListContentSizeChange = useCallback((_width: number, height: number): void => {
     listContentHeight.current = height
     // A transcript the reader has scrolled away from must never be dragged back
     // down by a row that merely remeasured.
     if (!mountedRef.current || listInteractionActive.current || !followTailRef.current) return
-    pendingTailHeight.current = height
-    if (tailFollowFrame.current !== null) return
-    tailFollowFrame.current = requestAnimationFrame(() => {
-      tailFollowFrame.current = null
-      const contentHeight = pendingTailHeight.current
-      pendingTailHeight.current = null
-      if (contentHeight === null) return
-      if (!mountedRef.current || listInteractionActive.current || !followTailRef.current) return
-      const viewportHeight = listViewportHeight.current
-      // Nothing has been laid out yet, so there is no measured bottom to aim at
-      // — and no anchor armed to disagree with the estimate this once.
-      if (viewportHeight <= 0) {
-        listRef.current?.scrollToEnd({ animated: false })
-        return
-      }
-      listRef.current?.scrollToOffset({ offset: Math.max(0, contentHeight - viewportHeight), animated: false })
-    })
-  }, [])
+    pinTail(height)
+  }, [pinTail])
 
   /**
    * The web's floating "back to bottom" control: re-arm the follow scroll and
@@ -1187,17 +1296,24 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
    * even when it worked, walking back through a long Session meant tapping
    * "load earlier" once per page. The gateway now answers short pages, and this
    * keeps asking until there is nothing older to ask for.
+   *
+   * @param allowWhileReading - load one page even though the reader is away
+   *   from the tail. Only the "load earlier" control passes it: the reader
+   *   asked for that page by hand, and accepting the small shift in what they
+   *   are reading is the price of the page they just requested.
    */
-  const backfillHistory = useCallback(async (): Promise<void> => {
+  const backfillHistory = useCallback(async (allowWhileReading = false): Promise<void> => {
     const generation = ++backfillRun.current
     backfillStop.current = false
     setBackfill('running')
+    let allowed = allowWhileReading
     for (;;) {
       if (generation !== backfillRun.current || !mountedRef.current) return
-      if (backfillStop.current) {
+      if (backfillStop.current || (backfillHold.current && !allowed)) {
         setBackfill('paused')
         return
       }
+      allowed = false
       const more = await loadOlderPage()
       if (generation !== backfillRun.current || !mountedRef.current) return
       if (more === null) {
@@ -1214,6 +1330,20 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const pauseBackfill = useCallback((): void => {
     backfillStop.current = true
   }, [])
+
+  /**
+   * Older history is prepended above everything the reader can see, so a page
+   * that lands while they are reading history moves the text under their eyes.
+   * The walk therefore only runs while the tail is what the reader is watching,
+   * and resumes — without their having to ask — the moment they come back to
+   * it. The reader's own pause (`backfillStop`) is not resumed this way.
+   */
+  useEffect(() => {
+    backfillHold.current = !followTail
+    if (followTail && backfill === 'paused' && !backfillStop.current && hasOlderHistory) {
+      void backfillHistory()
+    }
+  }, [followTail, backfill, hasOlderHistory, backfillHistory])
 
   /**
    * Notice a Transcript whose live stream dropped the end of a turn.
@@ -1994,6 +2124,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const { turns, rows: listRows, rowIndexOfItemKey } = buildTranscript(items, {
     running: session === undefined ? undefined : hostRunningOf(session),
   })
+  // Read by the list's own callbacks, which are created before the transcript
+  // exists (see `listRowCount`).
+  listRowCount.current = listRows.length
   /**
    * The running turn, for the transcript's own bottom indicator: the web keeps
    * a live clock there so a long turn never looks stalled. It rides the last
@@ -2132,13 +2265,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
           // on the first screen with the answer below the fold.
           key={sessionId}
           data={listRows}
+          style={styles.list}
           keyExtractor={row => row.key}
           contentContainerStyle={styles.listContent}
-          // Only armed while the reader is holding their place in older history:
-          // the anchor is what keeps a prepended page from moving what they are
-          // reading, and it is the follow scroll that keeps the newest row in
-          // view while the model streams. See `followTailRef`.
-          maintainVisibleContentPosition={followTail ? undefined : { minIndexForVisible: 0 }}
           // A refused read is the bar's to explain; claiming "no messages yet"
           // underneath it would contradict what just went wrong.
           ListEmptyComponent={historyStatus === 'error' ? undefined : (
@@ -2177,7 +2306,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             ) : (
               <TouchableOpacity
                 style={styles.historyLoader}
-                onPress={() => void backfillHistory()}
+                onPress={() => void backfillHistory(true)}
               >
                 <Text style={styles.historyLoaderText}>
                   {backfill === 'failed' ? t('chat.retryOlder') : t('chat.loadOlder')}
@@ -2876,6 +3005,7 @@ function ProcessReasoningRow({ step, running, open, onToggle, onLongPress, onOpe
   onOpenLink?: ((href: string) => void) | undefined
 }): React.JSX.Element {
   const { t } = useI18n()
+  const linkPress = useMarkdownLinkPress(onOpenLink)
   const summary = running ? step.preview : step.settledPreview
   return (
     <TouchableOpacity
@@ -2895,15 +3025,13 @@ function ProcessReasoningRow({ step, running, open, onToggle, onLongPress, onOpe
       </View>
       {open && (
         <View style={styles.reasoningBody}>
-          <Markdown
+          <MemoMarkdown
             style={markdownCompactStyles}
             rules={markdownRules}
-            {...onOpenLink === undefined
-              ? {}
-              : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+            {...(linkPress === undefined ? {} : { onLinkPress: linkPress })}
           >
             {step.text}
-          </Markdown>
+          </MemoMarkdown>
         </View>
       )}
     </TouchableOpacity>
@@ -3147,6 +3275,7 @@ function CollapsibleMarkdown({ text, onOpenLink }: {
   onOpenLink?: (href: string) => void
 }): React.JSX.Element {
   const { t } = useI18n()
+  const linkPress = useMarkdownLinkPress(onOpenLink)
   const collapsible = text.length > LONG_REPLY_LIMIT
   const [expanded, setExpanded] = useState(!collapsible)
   const previousLength = useRef(text.length)
@@ -3171,15 +3300,13 @@ function CollapsibleMarkdown({ text, onOpenLink }: {
             <Text style={styles.replyToggleText}>{t('chat.replyCollapse')}</Text>
           </TouchableOpacity>
         )}
-        <Markdown
+        <MemoMarkdown
           style={markdownStyles}
           rules={markdownRules}
-          {...onOpenLink === undefined
-            ? {}
-            : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+          {...(linkPress === undefined ? {} : { onLinkPress: linkPress })}
         >
           {text}
-        </Markdown>
+        </MemoMarkdown>
       </>
     )
   }
@@ -3192,15 +3319,13 @@ function CollapsibleMarkdown({ text, onOpenLink }: {
   return (
     <TouchableOpacity style={styles.replyPreview} onPress={() => setExpanded(true)} accessibilityRole="button">
       <View style={styles.replyPreviewBody} pointerEvents="none">
-        <Markdown
+        <MemoMarkdown
           style={markdownStyles}
           rules={markdownRules}
-          {...onOpenLink === undefined
-            ? {}
-            : { onLinkPress: (href: string): boolean => { onOpenLink(href); return false } }}
+          {...(linkPress === undefined ? {} : { onLinkPress: linkPress })}
         >
           {preview}
-        </Markdown>
+        </MemoMarkdown>
       </View>
       <Text style={styles.replyToggleText}>{t('chat.replyExpand', { count: text.length })}</Text>
     </TouchableOpacity>
@@ -3484,6 +3609,13 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: chat.bgBase },
   /** The transcript's frame: the list, plus the floating control over it. */
   listWrap: { flex: 1 },
+  /**
+   * The transcript fills its frame rather than growing with its rows: a list
+   * that sizes itself to its content hands its own layout callback whatever
+   * the content happened to be at that moment, and the follow scroll measures
+   * its target from that height.
+   */
+  list: { flex: 1 },
   /**
    * The web's `.toBottom`: a 34px circle on the floating fill, 24px in from the
    * composer's own side clearance and 16px above the list's bottom edge, wearing

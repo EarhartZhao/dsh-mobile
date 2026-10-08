@@ -208,6 +208,41 @@
 > 与气泡行首等号；两行草稿卡片自动增高、首行不再溢出；长草稿顶到上限后停在卡片内滚动，
 > 无内容越出边框。
 
+> 2026-10-08 追加（长会话滚动：跟尾、前插保位与卡顿）：内容一多，聊天页有三个毛病——
+> ① 发完消息不自动跟到底、② 在结尾处轻轻上滑会**突然跳走一大块**、③ 拖动卡顿。三处的
+> 根因互相独立，逐条换掉：
+>
+> ① **先修 ②**，因为它最刺眼。`maintainVisibleContentPosition`（原生滚动锚）的补偿量是
+> **某个 subview 自己的 frame 在 mount 事务前后之差**，而虚拟列表会回收它锚定的那个 view，
+> 差值就变成天文数字——模拟器实测：6,825pt 的长会话里在底部上滑 70pt，offset 从 6,305
+> 直接跳到 268，甩掉六千点历史，且复现不稳定，读起来就是"随机跳一大块"。常驻、只跟尾态、
+> 只阅读态三种模式全试过，都会踩，**整条移除**。读者离开尾部时的保位改由前插走查负责。
+> ② **① 有三处**：(a) `ListEmptyComponent` 会继承列表自己的 `onLayout`，VirtualizedList
+> 把"正在加载历史"转圈的盒子当列表高度上报（实测 84pt / 56pt，真列表 550pt）——记下来就
+> 等于把视口记成几十点高，跟尾滚动的目标跟着算错。加 `listRowCount`，行数为 0 时忽略
+> `onLayout`。(b) `onMomentumScrollEnd` 可能**早于**那个位置最后一条 `onScroll` 到达，
+> 手势结束时读到的是中段样本，于是人明明在底部却不再跟尾。改成从结束事件本身读 geometry
+> （`finishListInteraction(distance, viewportHeight)`），不再依赖过期样本。(c) **键盘**：
+> 输入卡抬起来时视口变矮、内容没动，`onListLayout` 本该拿最后一次量到的高度重新贴底，但
+> `pinTail(null)` 读的 `pendingTailHeight` 已经在上一帧被消费清空，于是什么都没发生——
+> 点进输入框，正在回的那条消息就滑到折线以下（模拟器实测：内容整块没动，只是被裁掉）。
+> 改成重贴时回退到 `listContentHeight`（最后一次上报的内容高度）。
+> ③ **③ 卡顿**：`buildTranscript` / `deriveConversation` 每帧都返回新对象，行身份不可用；
+> 能比的是 Markdown **源码字符串**，相等就没有新东西要画。加模块级
+> `MemoMarkdown = React.memo(Markdown)` + `useMarkdownLinkPress`（稳定 `onLinkPress`），
+> 三处 `<Markdown>` 全换过去，长回复不再每帧重新解析成原生树。读者离开尾部时前插页会移动
+> 他脚下的文字，所以前插走查在 `followTail` 为假时**挂起**、回到尾部自动续跑（读者的手动
+> 暂停 `backfillStop` 不在其列）。
+> ④ 顺带把列表钉成 `flex: 1`（`styles.list`）：会按内容长高的列表把内容高度当自己的布局
+> 上报，跟尾滚动拿它算目标就偏。
+> 模拟器复核（iPhone 17 Pro + Metro，改的是模块级代码，重启 App 后测）：长会话底部上滑
+> 76.2pt 位移 **0pt**（带状像素平移匹配 meandiff 0.0）；上滑离开尾部浮出"回到底部"，回去
+> 后再上滑仍是 0pt，且与基线像素一致（meandiff 0.0）；十余条长 Markdown 的 6,853pt 会话
+> 拖动顺滑。(c) 的"键盘抬起后整块内容被裁掉、最新一条落到折线以下"是模拟器实测复现的，
+> 改完由新增单测锁住（`re-pins the newest row when the window shrinks…`）；设备上的键盘
+> 复测未做——驱动模拟器要发真实鼠标事件，会打断机器上的其他操作。单测 29 套 236 例全过，
+> typecheck 与 lint（0 error）同过。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

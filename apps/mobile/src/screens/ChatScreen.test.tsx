@@ -448,7 +448,11 @@ describe('ChatScreen tail following', () => {
 
   it('does not drag back a transcript the reader scrolled away from', async () => {
     const { manager, history } = setup()
-    history.mockResolvedValueOnce(okPage())
+    let release: (value: unknown) => void = () => undefined
+    history
+      .mockResolvedValueOnce(okHistory(page([5], true)))
+      .mockReturnValueOnce(new Promise<unknown>(resolve => { release = resolve }))
+      .mockResolvedValueOnce(okHistory(page([3], false)))
     const tree = render(manager)
     await settle()
 
@@ -460,14 +464,26 @@ describe('ChatScreen tail following', () => {
     // The unlock is deliberately delayed past the drag's own momentum.
     await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 200)) })
 
-    // An older page is prepended under the reader's finger.
+    // The page in flight lands, then its rows remeasure taller. The reader is
+    // in the middle of the transcript, so none of it may move them: the follow
+    // scroll stays off, and the walk holds instead of prepending another page
+    // above what they are reading. (The native anchor is not the guard — it is
+    // gone for good, because a virtualized list recycles the view it anchors
+    // to. See `followTailRef`.)
+    await act(async () => { release(okHistory(page([4], true))) })
     act(() => { list.props.onContentSizeChange(390, 2_400) })
-    await frame()
+    await settle()
 
     expect(toOffset).not.toHaveBeenCalled()
     expect(toEnd).not.toHaveBeenCalled()
-    // The anchor is what holds their place now.
-    expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
+    expect(history).toHaveBeenCalledTimes(2)
+
+    // Coming back to the newest row resumes the walk without the reader having
+    // to ask: the hold is where they are looking, not a choice they made.
+    // Pausing by hand *is* the choice, and `backfillStop` keeps that one stopped.
+    act(() => { list.props.onScroll(scrollTo(1_600, 2_400, 800)) })
+    await settle()
+    expect(history).toHaveBeenCalledTimes(3)
   })
 
   it('keeps the tail when a stale sample reports the offset a chunk grew away from', async () => {
@@ -499,30 +515,81 @@ describe('ChatScreen tail following', () => {
     await settle()
 
     // The reader parks themselves in the middle of the first conversation, so
-    // the tail is theirs no longer and the anchor is holding their place.
+    // the tail is theirs no longer: the floating "back to bottom" control is up
+    // and the follow scroll is off. Their place is kept by not reading older
+    // history under them — see the walk's own hold — not by the native anchor,
+    // which is gone.
     const first = scrollCommands(tree)
     act(() => { first.list.props.onLayout(listLayout(800)) })
     act(() => { first.list.props.onScrollBeginDrag() })
     act(() => { first.list.props.onScroll(scrollTo(200, 2_000, 800)) })
     act(() => { first.list.props.onScrollEndDrag() })
     await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 200)) })
-    expect(first.list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
+    expect(pressableByLabel(tree, 'chat.toBottom')).toBeDefined()
 
     // A hop down the lineage swaps the conversation under the same screen.
     renderSession(tree, manager, 'child', jest.fn())
     await settle()
 
-    // The new transcript is a fresh one that opens on its tail: the anchor is
-    // unarmed again, and the first size it reports is followed to the bottom.
-    // Carried over, the reader's old place left them on the first screen of a
+    // The new transcript is a fresh one that opens on its tail: the control is
+    // gone, and the first size it reports is followed to the bottom. Carried
+    // over, the reader's old place left them on the first screen of a
     // conversation whose answer sat below the fold.
     const next = scrollCommands(tree)
-    expect(next.list.props.maintainVisibleContentPosition).toBeUndefined()
+    expect(pressableByLabel(tree, 'chat.toBottom')).toBeUndefined()
     act(() => { next.list.props.onLayout(listLayout(800)) })
     act(() => { next.list.props.onContentSizeChange(390, 3_000) })
     await frame()
 
     expect(next.toOffset.mock.calls).toEqual([[{ offset: 2_200, animated: false }]])
+  })
+
+  it('does not measure the viewport from the loading placeholder', async () => {
+    const { manager, history } = setup()
+    let release: (value: unknown) => void = () => undefined
+    history.mockReturnValueOnce(new Promise<unknown>(resolve => { release = resolve }))
+    const tree = render(manager)
+
+    // `ListEmptyComponent` inherits the transcript's own `onLayout`, so
+    // VirtualizedList reports the "正在加载历史" spinner's box as the list's
+    // height. Recorded, that box becomes the viewport the follow scroll aims
+    // against, and the newest row lands a spinner's height above the real
+    // bottom with nothing left to correct it.
+    const { list, toEnd, toOffset } = scrollCommands(tree)
+    act(() => { list.props.onLayout(listLayout(84)) })
+
+    await act(async () => { release(okPage()) })
+    await settle()
+    act(() => { list.props.onContentSizeChange(390, 3_000) })
+    await frame()
+
+    // The viewport is still unknown, so the list closes the window the only way
+    // it can instead of aiming at a height that was never the transcript's.
+    expect(toOffset).not.toHaveBeenCalled()
+    expect(toEnd).toHaveBeenCalled()
+  })
+
+  it('re-pins the newest row when the window shrinks around a tail the reader is following', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    const { list, toOffset } = scrollCommands(tree)
+    act(() => { list.props.onLayout(listLayout(800)) })
+    act(() => { list.props.onContentSizeChange(390, 3_000) })
+    await frame()
+    expect(toOffset.mock.calls).toEqual([[{ offset: 2_200, animated: false }]])
+
+    // The keyboard takes its room out of the transcript. The content did not
+    // move, the window that shows it did, and nothing new was measured — so the
+    // re-aim has to reuse the height the last size change reported. Without it
+    // the newest row stayed below the fold and the reader had to scroll down to
+    // the message they were answering.
+    act(() => { list.props.onLayout(listLayout(500)) })
+    await frame()
+
+    expect(toOffset.mock.calls.at(-1)).toEqual([{ offset: 2_500, animated: false }])
   })
 })
 
