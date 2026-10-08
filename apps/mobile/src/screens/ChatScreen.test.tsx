@@ -1059,6 +1059,17 @@ describe('ChatScreen composer triggers', () => {
     await settle()
     expect(hasField(tree, 'plus.searchReferences')).toBe(false)
     expect(composer(tree)?.props.value).toBe('@/w/a.ts')
+
+    // The flap: delete the space, type one back, delete it again. Only the
+    // token is the identity, so the space coming and going must not lose the
+    // dismissal the insert recorded.
+    act(() => { composer(tree)?.props.onChangeText('@/w/a.ts ') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+
+    act(() => { composer(tree)?.props.onChangeText('@/w/a.ts') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
   })
 })
 

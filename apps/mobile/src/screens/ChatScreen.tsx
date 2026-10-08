@@ -403,7 +403,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     if (textOnlyComposer) return
     const token = activeComposerToken(text)
     if (token === null) {
-      dismissedTrigger.current = null
+      /**
+       * No trigger at the very end — but a trailing space is not a new draft.
+       * An insert leaves one, so delete-space / type-space / delete-space is
+       * three keystrokes over one unchanged token; forgetting the dismissal on
+       * the middle one brought the sheet back on the mention the insert had
+       * already finished. The token is the identity, the space after it is
+       * not, so anything the reader leaves behind that still reads as the
+       * dismissed token keeps the memory.
+       */
+      if (composerTokenKey(text.trimEnd()) !== dismissedTrigger.current) dismissedTrigger.current = null
       return
     }
     if (dismissedTrigger.current === composerTokenKey(text)) return
