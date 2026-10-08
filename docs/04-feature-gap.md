@@ -176,6 +176,10 @@
 > `dismissedTrigger`，键与关闭时同一套（`composerTokenKey`：触发字符 + 偏移；插入那行按去掉
 > 尾随空格后的文本取键，所以删掉这个空格也算同一个 token）；在同一偏移上继续编辑保持关闭，
 > 另一处新写的 `@`/`/` 照常打开自己的 tab。
+> 同形的问题还有第二条入口：会话更多菜单里的「浏览工作区」→「插入引用」（`WorkspaceBrowserSheet`）
+> 不走 `insertAtTrigger`，而是直接往 draft 写 `@提及 `，所以同样会删掉空格就重开。这条路径现在
+> 也用同一个 `finishedTokenKey` 记 dismissed（键仍在 `insertReference` 里生成，改完 draft 与
+> 记忆只差一次 setState），两条插入入口共用一套抑制。
 
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、

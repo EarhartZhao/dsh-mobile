@@ -38,6 +38,7 @@ jest.mock('react-native-markdown-display', () => {
 
 import { ChatScreen } from './ChatScreen'
 import { MessageActionRow } from '../components/MessageActions'
+import { WorkspaceBrowserSheet } from '../components/WorkspaceBrowserSheet'
 
 const PAGE = {
   events: [{
@@ -145,6 +146,17 @@ function composer(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance 
   return tree.root.findAll(node =>
     typeof node.props.onChangeText === 'function'
     && node.props.placeholder === 'chat.sendPlaceholder').at(-1)
+}
+
+/**
+ * The screen's own wiring into 「浏览工作区」: the sheet owns the browsing, the
+ * screen owns what a picked path does to the draft.
+ */
+function browserInsert(
+  tree: renderer.ReactTestRenderer,
+): (reference: { path: string; kind: 'file' | 'directory' }) => void {
+  return tree.root.findAllByType(WorkspaceBrowserSheet).at(-1)!.props.onInsertReference as
+    (reference: { path: string; kind: 'file' | 'directory' }) => void
 }
 
 /** Whether a search field carrying this i18n placeholder is on screen. */
@@ -1029,6 +1041,24 @@ describe('ChatScreen composer triggers', () => {
     act(() => { composer(tree)?.props.onChangeText('/compact @/w/a.ts and /') })
     await settle()
     expect(hasField(tree, 'plus.searchCommands')).toBe(true)
+  })
+
+  it('stays shut while the reader edits a mention the file browser inserted', async () => {
+    const { manager } = setup()
+    const tree = render(manager)
+    await settle()
+
+    // 「浏览工作区」 writes the mention straight into the draft and keeps a
+    // chip beside it — the same text a pick writes, through a different door.
+    act(() => { browserInsert(tree)({ path: '/w/a.ts', kind: 'file' }) })
+    await settle()
+    expect(composer(tree)?.props.value).toBe('@/w/a.ts ')
+    expect(screenText(tree)).toContain('a.ts')
+
+    act(() => { composer(tree)?.props.onChangeText('@/w/a.ts') })
+    await settle()
+    expect(hasField(tree, 'plus.searchReferences')).toBe(false)
+    expect(composer(tree)?.props.value).toBe('@/w/a.ts')
   })
 })
 

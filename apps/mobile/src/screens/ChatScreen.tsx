@@ -204,6 +204,15 @@ function composerTokenKey(text: string): string | null {
   return token === null ? null : `${token.trigger}@${text.length - token.prefix.length}`
 }
 
+/**
+ * The dismissal key for a token an insertion just finished. Every inserter
+ * leaves a trailing space, so the token itself — what the detector reads once
+ * that space is deleted — is the draft without it.
+ */
+function finishedTokenKey(text: string): string | null {
+  return composerTokenKey(text.endsWith(' ') ? text.slice(0, -1) : text)
+}
+
 /** One file or directory the user picked into the composer from the browser. */
 interface InsertedReference {
   path: string
@@ -421,7 +430,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
      * reopen the sheet on the text just picked; remember the finished token
      * here too, keyed the way the draft reads without that trailing space.
      */
-    dismissedTrigger.current = composerTokenKey(next.endsWith(' ') ? next.slice(0, -1) : next)
+    dismissedTrigger.current = finishedTokenKey(next)
     composerRef.current?.focus()
   }
 
@@ -1380,10 +1389,15 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
     const mention = fileMention(reference.path, reference.kind)
     if (mention === null) return
     setBrowserOpen(false)
-    setDraft(current => `${current === '' || /\s$/.test(current) ? current : `${current} `}${mention} `)
+    const next = `${draft === '' || /\s$/.test(draft) ? draft : `${draft} `}${mention} `
+    setDraft(next)
+    // The browsed chip writes the same shape a pick does — a mention and a
+    // space — so it needs the same dismissal, or deleting that space reopens
+    // the sheet on the path it just inserted.
+    dismissedTrigger.current = finishedTokenKey(next)
     setInsertedRefs(current => [...current.filter(entry => entry.path !== reference.path).slice(-5), reference])
     composerRef.current?.focus()
-  }, [])
+  }, [draft])
 
   /** Drops one chip together with the mention it stands for. */
   const removeReference = useCallback((reference: InsertedReference): void => {
