@@ -16,6 +16,10 @@ export type ConversationItem =
       key: string
       seq: number
       time: number
+      /** The turn this step ran in; absent when the log did not say. */
+      turn?: number
+      /** The step within the turn, 1-based. The trajectory's step groups key on it. */
+      step?: number
       /** Durable assistant-message identity; absent on synthetic items. */
       messageId?: string
       text: string
@@ -28,6 +32,11 @@ export type ConversationItem =
        * nothing to report and stays off rather than showing zeros.
        */
       usage?: StepTokenUsage
+      /**
+       * Wall clock of the step's own `step/start`, when the log carried one.
+       * The trajectory's 「时间」 column is this to the message time.
+       */
+      startedAt?: number
     }
   | { kind: 'compaction'; key: string; seq: number; time: number; summary: string; compactionId: string }
   | {
@@ -35,6 +44,10 @@ export type ConversationItem =
       key: string
       seq: number
       time: number
+      /** The turn this call ran in; absent when the log did not say. */
+      turn?: number
+      /** The step within the turn that dispatched it. */
+      step?: number
       callId: string
       name: string
       args: string
@@ -45,8 +58,24 @@ export type ConversationItem =
       callView: ToolCallView | null
       resultView: ToolResultView | null
       subCalls: ToolSubCall[]
+      /** When the dispatch landed, and when its result did: the row's duration. */
+      startedAt?: number
+      endedAt?: number
+      /** The call-time model-visible schema, read from the request header. */
+      schema?: unknown
     }
-  | { kind: 'stream'; key: string; seq: number; time: number; text: string; reasoning: string }
+  | {
+      kind: 'stream'
+      key: string
+      seq: number
+      time: number
+      turn?: number
+      step?: number
+      text: string
+      reasoning: string
+      /** Wall clock of the step's own `step/start`, when the log carried one. */
+      startedAt?: number
+    }
   /**
    * A tool the model has announced but not yet dispatched. The host streams the
    * tool-call name in an `assistant/chunk` before the durable `tool/call` lands;
@@ -58,6 +87,8 @@ export type ConversationItem =
       key: string
       seq: number
       time: number
+      turn?: number
+      step?: number
       callId: string
       name: string
       /**
@@ -80,6 +111,41 @@ export type ConversationItem =
    * See `isUnclaimedSurfaceEvent` for the rule and its exclusions.
    */
   | { kind: 'unknown'; key: string; seq: number; time: number; eventType: string; data: unknown }
+  /**
+   * The rendered system prompt, or one of its updates.
+   *
+   * The harness logs it as `system/message` on the model-visible surface, and
+   * the transcript deliberately hides it ({@link isUnclaimedSurfaceEvent}).
+   * The trajectory does not: knowing what the model was actually told is the
+   * reason to open a trajectory at all, so it becomes its own record.
+   */
+  | {
+      kind: 'system'
+      key: string
+      seq: number
+      time: number
+      text: string
+      /** The first system prompt of the session, as opposed to a later rewrite. */
+      initial: boolean
+      /** The producer's own description of the rewrite, when it wrote one. */
+      sourceKind?: string
+    }
+  /**
+   * A message injected *for* the model rather than written by the reader —
+   * a skill catalogue, a reminder, a plugin's context. It rides
+   * `user/message` with a non-user source or `developer/message`, and the
+   * transcript drops both; the trajectory lists them so the model's context is
+   * readable rather than implied.
+   */
+  | {
+      kind: 'context'
+      key: string
+      seq: number
+      time: number
+      text: string
+      /** e.g. `plugin`, `goal`, `skill` — what produced this injection. */
+      sourceKind?: string
+    }
   /**
    * Files the model declared as deliverables (`present` tool). The host records
    * them as a durable `deliverables/presented` event carrying the path and the
@@ -324,6 +390,24 @@ export function deriveConversation(session: SessionState, options: ConversationO
   const toolParents = new Map<string, string>()
   /** Paths already delivered this log, so both delivery sources dedupe onto one card. */
   const delivered = new Map<string, number>()
+  /**
+   * When each step opened, keyed `turn:step`.
+   *
+   * `assistant/message` records when the answer landed but not when the model
+   * was asked, so without this a trajectory row can only report a message's
+   * clock, never how long the step took. `step/start` is the missing end.
+   */
+  const stepStarts = new Map<string, number>()
+  /**
+   * The tool catalogue the newest `request/header` advertised, by tool name.
+   *
+   * The header is the only record of the schema the model was shown at call
+   * time, so a call row reads its schema from whatever header preceded it —
+   * the same lookup the Web's trajectory performs.
+   */
+  const toolSchemas = new Map<string, unknown>()
+  /** Whether the rendered system prompt has already been recorded. */
+  let sawSystemPrompt = false
 
   for (const entry of session.events) {
     const event = entry.event
@@ -337,17 +421,91 @@ export function deriveConversation(session: SessionState, options: ConversationO
         // Only human-authored prompts render as bubbles. The harness also
         // logs injected context (skill catalogs, reminders, …) as
         // user/message with a non-user source kind; those are model-facing,
-        // not conversation UI. Absent source = keep (defensive).
+        // not conversation UI, and the transcript drops them. They still
+        // belong to the trajectory — the model's context is exactly what a
+        // reader opens a trajectory to inspect — so they become a context
+        // record rather than disappearing. Absent source = keep (defensive).
         // Wire shape: data is the message itself ({content, source, role, id}).
+        const content = isObj(data) ? extractContent(data['message'] ?? data) : undefined
         if (isObj(data)) {
           const source = isObj(data['source']) ? data['source']
             : isObj(data['message']) && isObj((data['message'] as Record<string, unknown>)['source'])
               ? (data['message'] as Record<string, unknown>)['source']
               : undefined
-          if (isObj(source) && typeof source['kind'] === 'string' && source['kind'] !== 'user') break
+          const sourceKind = isObj(source) && typeof source['kind'] === 'string' ? source['kind'] : undefined
+          if (sourceKind !== undefined && sourceKind !== 'user') {
+            items.push({
+              kind: 'context',
+              key: `c${seq}`,
+              seq,
+              time,
+              text: blocksToText(content),
+              ...(sourceKind === '' ? {} : { sourceKind }),
+            })
+            break
+          }
         }
-        const content = isObj(data) ? extractContent(data['message'] ?? data) : undefined
         items.push({ kind: 'user', key: `u${seq}`, seq, time, text: blocksToText(content), images: blocksToImages(content) })
+        break
+      }
+      case 'developer/message': {
+        // Developer instructions reach the model the same way an injected
+        // context message does, and the transcript hides both for the same
+        // reason. The trajectory keeps them, labelled by their source.
+        const message = isObj(data) ? data['message'] ?? data : undefined
+        const source = isObj(message) && isObj(message['source']) ? message['source'] : undefined
+        const sourceKind = isObj(source) && typeof source['kind'] === 'string' ? source['kind'] : undefined
+        items.push({
+          kind: 'context',
+          key: `c${seq}`,
+          seq,
+          time,
+          text: blocksToText(extractContent(message)),
+          ...(sourceKind === undefined || sourceKind === '' ? {} : { sourceKind }),
+        })
+        break
+      }
+      case 'system/message': {
+        // The rendered system prompt. The transcript hides it; the trajectory
+        // is where a reader goes to see what the model was actually told.
+        const message = isObj(data) ? data['message'] ?? data : undefined
+        const source = isObj(message) && isObj(message['source']) ? message['source'] : undefined
+        const sourceKind = isObj(source) && typeof source['kind'] === 'string' ? source['kind'] : undefined
+        const text = blocksToText(extractContent(message))
+        items.push({
+          kind: 'system',
+          key: `sys${seq}`,
+          seq,
+          time,
+          text,
+          initial: !sawSystemPrompt,
+          ...(sourceKind === undefined || sourceKind === '' ? {} : { sourceKind }),
+        })
+        sawSystemPrompt = true
+        break
+      }
+      case 'step/start': {
+        // Bookkeeping the transcript never shows, but the one record of when a
+        // step's clock started — which is what a trajectory row's duration needs.
+        if (isObj(data)
+          && typeof data['turn'] === 'number'
+          && typeof data['step'] === 'number') {
+          stepStarts.set(`${data['turn']}:${data['step']}`, time)
+        }
+        break
+      }
+      case 'request/header': {
+        // The tool catalogue the request advertised. Read here so a later
+        // `tool/call` can carry the schema the model was shown at call time.
+        const header = isObj(data) && isObj(data['header']) ? data['header'] : undefined
+        const catalog = header !== undefined && Array.isArray(header['tools']) ? header['tools'] : undefined
+        if (catalog !== undefined) {
+          toolSchemas.clear()
+          for (const candidate of catalog) {
+            if (!isObj(candidate) || typeof candidate['name'] !== 'string') continue
+            toolSchemas.set(candidate['name'], candidate)
+          }
+        }
         break
       }
       case 'assistant/message': {
@@ -356,6 +514,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
         const step = typeof data['step'] === 'number' ? data['step'] : -1
         finalizedSteps.add(`${turn}:${step}`)
         live.delete(`${turn}:${step}`)
+        const startedAt = stepStarts.get(`${turn}:${step}`)
         const message = data['message']
         const content = isObj(message) ? message['content'] : undefined
         const messageId = isObj(message) && typeof message['id'] === 'string' ? message['id'] : undefined
@@ -374,12 +533,15 @@ export function deriveConversation(session: SessionState, options: ConversationO
           key: `a${seq}`,
           seq,
           time,
+          ...(turn >= 0 ? { turn } : {}),
+          ...(step >= 0 ? { step } : {}),
           ...(messageId === undefined ? {} : { messageId }),
           text: blocksToText(content),
           reasoning: blocksToReasoning(content),
           interrupted: data['interrupted'] === true,
           producedFiles,
           ...(usage === null ? {} : { usage }),
+          ...(startedAt === undefined ? {} : { startedAt }),
         })
         break
       }
@@ -387,14 +549,19 @@ export function deriveConversation(session: SessionState, options: ConversationO
         if (!isObj(data)) break
         const callId = typeof data['callId'] === 'string' ? data['callId'] : `c${seq}`
         const turn = typeof data['turn'] === 'number' ? data['turn'] : -1
+        const step = typeof data['step'] === 'number' ? data['step'] : -1
+        const name = typeof data['name'] === 'string' ? data['name'] : 'tool'
+        const schema = toolSchemas.get(name)
         const view = toolEventView(entry)
         const item: ConversationItem & { kind: 'tool' } = {
           kind: 'tool',
           key: `t${seq}`,
           seq,
           time,
+          ...(turn >= 0 ? { turn } : {}),
+          ...(step >= 0 ? { step } : {}),
           callId,
-          name: typeof data['name'] === 'string' ? data['name'] : 'tool',
+          name,
           args: typeof data['arguments'] === 'string' ? data['arguments'] : '',
           status: 'running',
           resultPreview: '',
@@ -403,6 +570,8 @@ export function deriveConversation(session: SessionState, options: ConversationO
           callView: view.call,
           resultView: null,
           subCalls: [],
+          startedAt: time,
+          ...(schema === undefined ? {} : { schema }),
         }
         // The durable call supersedes the transient preparing row it completes.
         preparing.delete(callId)
@@ -441,6 +610,8 @@ export function deriveConversation(session: SessionState, options: ConversationO
         const target = callId === undefined ? undefined : tools.get(callId)
         if (target !== undefined) {
           target.status = isObj(data['error']) ? 'error' : 'done'
+          // The result's own clock closes the row's duration.
+          target.endedAt = time
           const content = toolResultBlocks(messageContent, callId)
           const text = blocksToText(content)
           target.resultPreview = truncate(text, 300)
@@ -620,13 +791,17 @@ export function deriveConversation(session: SessionState, options: ConversationO
     let liveOffset = 0
     for (const buffer of live.values()) {
       if (finalizedSteps.has(`${buffer.turn}:${buffer.step}`)) continue
+      const startedAt = stepStarts.get(`${buffer.turn}:${buffer.step}`)
       items.push({
         kind: 'stream',
         key: `s${buffer.turn}:${buffer.step}`,
         seq: LIVE_TAIL_SEQ + liveOffset++,
         time: buffer.time,
+        ...(buffer.turn >= 0 ? { turn: buffer.turn } : {}),
+        ...(buffer.step >= 0 ? { step: buffer.step } : {}),
         text: buffer.text,
         reasoning: buffer.reasoning,
+        ...(startedAt === undefined ? {} : { startedAt }),
       })
     }
     /** Announced calls get the same tail treatment: they are the newest thing
@@ -638,6 +813,8 @@ export function deriveConversation(session: SessionState, options: ConversationO
         key: `p${entry.callId}`,
         seq: LIVE_TAIL_SEQ + liveOffset++,
         time: entry.time,
+        ...(entry.turn >= 0 ? { turn: entry.turn } : {}),
+        ...(entry.step >= 0 ? { step: entry.step } : {}),
         callId: entry.callId,
         name: entry.name,
         argsLength: entry.argsLength,

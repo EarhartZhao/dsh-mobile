@@ -399,6 +399,8 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
   let current: Turn | null = null
   /** A `turn/start` seen before its turn's first content row. */
   let pendingStart: number | undefined
+  /** Preamble (a system prompt, injected context) seen before the first turn. */
+  const leading: ConversationItem[] = []
   /** The run of steps the turn is reading right now; an answer closes it. */
   let run: TurnProcessStep[] = []
   let runToolCalls = 0
@@ -459,6 +461,15 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
       }
       continue
     }
+    // A system prompt or an injected context message that arrives before the
+    // first prompt is that turn's preamble, not a turn of its own. The Web
+    // seats both in the opening turn's message group, so giving them a section
+    // here would shift every later turn's number by one and leave a "第 1 轮"
+    // holding nothing but the system prompt.
+    if (current === null && (item.kind === 'system' || item.kind === 'context')) {
+      leading.push(item)
+      continue
+    }
     // A prompt opens a new turn; anything before the first prompt (a restored
     // greeting, say) still needs a home, so the first item opens one too.
     if (item.kind === 'user' || current === null) {
@@ -466,6 +477,9 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
       // that just closed it.
       flushRun()
       current = open(item)
+      // The preamble the log wrote before the prompt reads above it, the way
+      // the Web orders it.
+      if (leading.length > 0) current.items.unshift(...leading.splice(0))
     }
 
     current.items.push(item)
@@ -486,6 +500,16 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
     const time = itemTime(item)
     if (time > current.endedAt) current.endedAt = time
     if (time > 0 && (current.startedAt === 0 || time < current.startedAt)) current.startedAt = time
+  }
+  // A Session that never got a prompt (only a system prompt, say) still has
+  // content, and dropping it would hide the one thing such a log holds.
+  if (current === null && leading.length > 0) {
+    flushRun()
+    const first = leading[0]
+    if (first !== undefined) {
+      current = open(first)
+      current.items = leading.splice(0)
+    }
   }
   // The last turn's final run has no answer after it to close it.
   flushRun()

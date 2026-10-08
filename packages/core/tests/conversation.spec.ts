@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { deriveConversation } from '../src/conversation.ts'
 import { SessionStore } from '../src/session-store.ts'
+import { groupTurns } from '../src/turns.ts'
 import { RpcId } from '@dsh-mobile/protocol'
 
 const sid = 's-1' as never
@@ -35,10 +36,11 @@ describe('deriveConversation', () => {
     })
   })
 
-  it('keeps model-facing surface events and log-only events out of the transcript', () => {
+  it('keeps model-facing surface events out of the transcript but records them for the trajectory', () => {
     const store = new SessionStore()
     // The rendered system prompt and developer instructions are surface events
-    // the harness writes for the model; the web hides them, and so does this.
+    // the harness writes for the model; the web transcript hides them, and so
+    // does this one — but the trajectory is where a reader goes to see them.
     feed(store, 1, 'system/message', { message: { content: [{ type: 'text', text: 'you are dsh' }] } })
     feed(store, 2, 'developer/message', { turn: 1, step: 1, message: { content: [], source: { kind: 'developer' } } })
     // Injected context is a user-role message with a non-user source.
@@ -47,7 +49,12 @@ describe('deriveConversation', () => {
     feed(store, 4, 'step/start', { turn: 1, step: 1 })
     feed(store, 5, 'assistant/attempt', { turn: 1, step: 1 })
 
-    expect(deriveConversation(store.sessions.get('s-1')!)).toEqual([])
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items.map(i => i.kind)).toEqual(['system', 'context', 'context'])
+    expect(items[0]).toMatchObject({ kind: 'system', text: 'you are dsh', initial: true })
+    expect(items[2]).toMatchObject({ kind: 'context', sourceKind: 'skill-invocation', text: 'skill body' })
+    // None of them may reach the transcript's own rows.
+    expect(groupTurns(items).flatMap(turn => turn.visible)).toEqual([])
   })
 
   it('surfaces a named tool-call delta as a preparing row until the call lands', () => {
@@ -517,6 +524,10 @@ describe('deriveConversation', () => {
     feed(store, 2, 'user/message', { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user', rpcId: 'r1' }, role: 'user' })
     feed(store, 3, 'user/message', { content: [{ type: 'text', text: 'no source kept' }], role: 'user' })
     const items = deriveConversation(store.sessions.get('s-1')!)
-    expect(items.map(i => i.kind === 'user' ? i.text : i.kind)).toEqual(['hi', 'no source kept'])
+    // The injected reminder becomes a context record — visible in the
+    // trajectory, never as a user bubble.
+    expect(items.map(i => i.kind === 'user' ? i.text : i.kind)).toEqual(['context', 'hi', 'no source kept'])
+    expect(groupTurns(items).flatMap(turn => turn.visible).map(i => i.kind))
+      .toEqual(['user', 'user'])
   })
 })

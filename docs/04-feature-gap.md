@@ -364,6 +364,46 @@
 > `目录 …/mine/dsh/deepseek-harness` + 右侧「标准模式」，第二行右侧 `deepseek-flash`，
 > 底带顶边与输入卡之间留出空隙（没有发鼠标/触摸事件，计划条与「已复制」走单测）。
 
+> 2026-10-08 追加（新对话卡加载 + 轨迹页内容补齐）：
+>
+> ① **「新对话卡在正在加载对话…」**：根因是会话页的挂载闩只写了 `false`——
+> `useEffect(() => () => { mountedRef.current = false }, [])` 从不写回 `true`，而 Fast Refresh
+> 会保留组件状态、重跑 effect：清理把闩按下后不再抬起，之后每个 tail 读取的结果都被
+> `if (request !== … || !mountedRef.current) return` 丢掉，而 `loading` 唯一的出口就是那次
+> 读取落地，于是**永久转圈**（真实 remount 之所以能好，因为新实例的 `mountedRef` 初值是
+> `true`）。修法两条：闩在 effect 里两端都写；再加一个 5s 的看门狗，只在
+> `status === 'loading'` 且**确实没有读取在飞**（`historyInFlight === 0`）时补发一次 tail
+> 读取——它只在等待已经断裂时动手，绝不去打断在飞的请求。
+>
+> ② **轨迹页内容补齐**（对齐 Web `ui-trajectory` 的投影）。`deriveConversation` 现在也产出
+> 轨迹需要的骨架：`system/message` → 「系统」记录（区分初始 / 已更新）、非 user 来源的
+> `user/message` 与 `developer/message` → 「上下文」记录（带 `sourceKind`，如
+> `agent-instructions` / `runtime-context` / `skill-catalog`），assistant / tool / stream /
+> preparing 记录带上 `turn`/`step`；并从 `step/start` 取步骤起始时间、从 `request/header`
+> 取调用时刻的工具 schema、从 `tool/result` 取结束时间，于是每行能报「时间」与工具耗时。
+> 这两类记录**只进轨迹、不进对话**：`isVisible` 本来就把未知 kind 挡在 transcript 之外，
+> `groupTurns` 也新增了前置缓冲，把出现在第一条 prompt 之前的 system/context 并入该轮，
+> 而不是让它们单独占一个「第 1 轮」把轮次编号整体顶后一位。
+>
+> `TrajectoryScreen` 改成 Web 的分组结构：每轮先「消息」组（提示词、系统提示词、注入上下文），
+> 再按 `step` 分「第 N 步」组，compaction 自成一「压缩 N」组；每条记录带 `#N` 序号、状态点、
+> 与 Web 同名的三列用量（输入 / 输出 / 思考，来自该步 `usage`）；工具行展开后是
+> 「参数 / Schema」分块加缩进的「子工具」子行（`ToolCallBlock` 的子调用树），assistant 行
+> 展开后是完整正文。仍未做的（有意取舍）：Web 的工具栏、时间线与详情面板 tab——
+> 手机宽度放不下，且同一份信息已在行内可读。
+> 「消息」组不是单数：Web 只在**正站在**一个「消息」组末尾时往里追加，否则就在记录落点
+> 另开一个。一条没有 `step` 的交付记录落在最后一步之后，若硬塞进开头的「消息」组，
+> 就会把 13:35 的交付印在 13:31 的步骤上方——现在与 Web 一致，在步骤下方另起一组。
+>
+> 验证：`packages/core` `typecheck`/`test` 全过（新增 `tests/trajectory-fold.spec.ts` 5 例，
+> 覆盖 turn/step 归属、工具起止耗时、请求头 schema、初始/更新系统提示词与前置缓冲）；
+> `apps/mobile` `typecheck` 清、`lint` 0 error、`test` 31 套 258 例全过（`TrajectoryScreen`
+> 新增两例：分组/系统行/用量列、展开工具到子工具）；`sync-protocol:check` 通过。
+> 模拟器（iPhone 17 Pro + Metro）只读截图核对：`Greeting and session start` 一页显示
+> 「消息」组里的 `#1 系统 初始系统提示词`、`#2 用户`、`#3–#5 上下文 · agent-instructions /
+> runtime-context / skill-catalog`，随后「第 1 步」的 `#6 助手` 带 `输入 166 输出 27`；
+> 长会话页显示「第 14 步」等分组与 `#N`、状态点、`已完成 · 0 秒 · 13:32:20`，展开态正文完整。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

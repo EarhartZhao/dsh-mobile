@@ -1,11 +1,12 @@
 /**
  * One conversation's trajectory — the Web's Trajectory view on a phone.
  *
- * The Web's own view is a table: records grouped by turn and step, a timeline
- * over them, an inspector beside them, and a toolbar to widen the call column.
- * A phone has room for none of that, so this is the same projection laid out as
- * a list — every turn as a section header, then that turn's records in log
- * order, each row opening onto its own body. It reads the same log fold the
+ * The Web's own view is a table: records grouped by turn and then by message
+ * and step, a timeline over them, an inspector beside them, and a toolbar to
+ * widen the call column. A phone has room for none of the chrome, so this is
+ * the same projection laid out as a list — every turn a section header, the
+ * turn's preamble under a 「消息」 group, then one group per step, in log order,
+ * each record opening onto its own body. It reads the same log fold the
  * transcript reads and changes nothing, and it deliberately has no composer:
  * a trajectory is for reading what happened, not for asking for more.
  */
@@ -19,6 +20,7 @@ import {
   stepTokenUsage,
   type ConnectionManager,
   type ConversationItem,
+  type ToolSubCall,
   type Turn,
 } from '@dsh-mobile/core'
 import { useI18n, type TranslationKey } from '../i18n'
@@ -30,21 +32,68 @@ import { formatTokenCount, runDurationLabel, toolDisplayName } from '../ui-label
 /** A row's translator, narrowed to what the record builder needs. */
 type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string
 
-interface TrajectoryRecord {
+/** One labelled block inside a record's expanded body (a tool's parameters, its schema, …). */
+interface TrajectorySection {
+  label: string
+  text: string
+}
+
+/** One step's billed buckets, laid out as the Web's three metric columns. */
+interface TrajectoryMetrics {
+  input?: number
+  output?: number
+  think?: number
+}
+
+/** Everything a record carries before {@link project} has placed it in the list. */
+interface RawRecord {
   /** The conversation item's own key, which is what the row's fold is held by. */
   key: string
-  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'compaction' | 'other'
+  kind: 'system' | 'user' | 'context' | 'assistant' | 'thinking' | 'tool' | 'subtool' | 'compacted' | 'delivery' | 'other'
   /** The left-hand chip: what this record is, in one or two characters. */
   badge: string
   title: string
-  /** The right-hand reading: time, status, tokens. */
+  /** The right-hand reading: status, token columns, clock. */
   meta: string
-  body: string
-  /** Only shown once the row is open — a tool's arguments, or its result. */
-  detail?: string
+  /** The one-line body shown while collapsed. */
+  preview: string
+  /** The full body, shown once the row is open. */
+  body?: string
+  /** Extra labelled blocks, shown once the row is open. */
+  sections: TrajectorySection[]
+  /** Nested calls a tool row owns (the Web's 子工具 rows). */
+  children: RawRecord[]
+  /** The Web's three message columns; only assistant rows carry them. */
+  metrics?: TrajectoryMetrics
+  status?: 'running' | 'done' | 'error'
   /** When the log recorded it; 0 when the record carries no clock. */
   time: number
-  status?: 'running' | 'done' | 'error'
+  /** When the work itself began, when the log recorded it apart from `time`. */
+  startedAt?: number
+  /** When the work finished, when that is later than `time`. */
+  endedAt?: number
+}
+
+/** A record placed in the list: its 1-based `#N`, and children placed with it. */
+interface TrajectoryRecord extends Omit<RawRecord, 'children'> {
+  index: number
+  children: TrajectoryRecord[]
+}
+
+/** One 「消息」/「第 N 步」/「压缩 N」 section inside a turn. */
+interface TrajectoryGroup {
+  key: string
+  title: string
+  /** The group's own wall span, when its records recorded one. */
+  description?: string
+  records: TrajectoryRecord[]
+}
+
+interface TrajectoryTurn {
+  key: string
+  ordinal: number
+  turn: Turn
+  groups: TrajectoryGroup[]
 }
 
 interface Props {
@@ -52,13 +101,6 @@ interface Props {
   sessionId: string
   onBack: () => void
 }
-
-/**
- * How long a body has to be before folding it away is worth a control. Short
- * records (most tool rows) read better flat, and the Web's own trajectory rows
- * are not folded either — only the ones a phone would otherwise lose to.
- */
-const FOLDABLE_CHARS = 160
 
 export function TrajectoryScreen({ manager, sessionId, onBack }: Props): React.JSX.Element {
   const { locale, t } = useI18n()
@@ -109,14 +151,21 @@ export function TrajectoryScreen({ manager, sessionId, onBack }: Props): React.J
     }
   }, [manager, sessionId])
 
+  const model = useMemo<TrajectoryTurn[]>(() => project(turns, t), [turns, t])
+
   const rows = useMemo<Row[]>(() => {
     const next: Row[] = []
-    turns.forEach((turn, index) => {
-      next.push({ kind: 'turn', key: `turn:${turn.key}`, turn, ordinal: index + 1 })
-      for (const record of recordsOf(turn, t)) next.push({ kind: 'record', key: record.key, record })
-    })
+    for (const turn of model) {
+      next.push({ kind: 'turn', key: `turn:${turn.key}`, turn: turn.turn, ordinal: turn.ordinal })
+      for (const group of turn.groups) {
+        next.push({ kind: 'group', key: `group:${turn.key}:${group.key}`, group })
+        for (const record of group.records) {
+          next.push({ kind: 'record', key: `${turn.key}:${record.key}`, record, depth: 0 })
+        }
+      }
+    }
     return next
-  }, [turns, t])
+  }, [model])
 
   const toggle = (key: string): void => {
     setOpen(current => current.includes(key)
@@ -150,15 +199,19 @@ export function TrajectoryScreen({ manager, sessionId, onBack }: Props): React.J
         )}
         renderItem={({ item }) => item.kind === 'turn'
           ? <TurnHeader turn={item.turn} ordinal={item.ordinal} t={t} />
-          : (
-            <RecordRow
-              record={item.record}
-              open={opened.has(item.key)}
-              locale={locale}
-              t={t}
-              onToggle={toggle}
-            />
-          )}
+          : item.kind === 'group'
+            ? <GroupHeader group={item.group} />
+            : (
+              <RecordRow
+                record={item.record}
+                depth={item.depth}
+                open={opened.has(item.record.key)}
+                opened={opened}
+                locale={locale}
+                t={t}
+                onToggle={toggle}
+              />
+            )}
       />
     </View>
   )
@@ -166,12 +219,13 @@ export function TrajectoryScreen({ manager, sessionId, onBack }: Props): React.J
 
 type Row =
   | { kind: 'turn'; key: string; turn: Turn; ordinal: number }
-  | { kind: 'record'; key: string; record: TrajectoryRecord }
+  | { kind: 'group'; key: string; group: TrajectoryGroup }
+  | { kind: 'record'; key: string; record: TrajectoryRecord; depth: number }
 
 /**
  * The turn's own boundary row.
  *
- * The Web marks the same boundary with a group header carrying the turn's
+ * The Web marks the same boundary with a sticky header carrying the turn's
  * status, its recorded duration and its accounting; the phone folds those into
  * one line, because a section header that wraps eats the records under it.
  */
@@ -205,53 +259,112 @@ function TurnHeader({ turn, ordinal, t }: {
   )
 }
 
+/** The Web's 「消息」/「第 N 步」/「压缩 N」 section marker inside a turn. */
+function GroupHeader({ group }: { group: TrajectoryGroup }): React.JSX.Element {
+  return (
+    <View style={styles.groupHeader}>
+      <Text style={styles.groupTitle}>{group.title}</Text>
+      {group.description !== undefined && group.description !== '' && (
+        <Text style={styles.groupDescription} numberOfLines={1}>{group.description}</Text>
+      )}
+    </View>
+  )
+}
+
 /**
  * One record, folded to a single line by default.
  *
  * The chip names the record's kind, the title is what the conversation calls
  * it (a tool's own display name, a prompt's first line), and the body holds the
- * text the reader came for. Tap opens the rest.
+ * text the reader came for. Tap opens the rest: the full body, the labelled
+ * blocks (a tool's arguments, its result, the schema the model was shown) and
+ * any nested sub-tool rows.
  */
-function RecordRow({ record, open, locale, t, onToggle }: {
+function RecordRow({ record, depth, open, opened, locale, t, onToggle }: {
   record: TrajectoryRecord
+  depth: number
   open: boolean
+  opened: ReadonlySet<string>
   locale: string
   t: Translate
   onToggle: (key: string) => void
 }): React.JSX.Element {
-  const foldable = record.detail !== undefined
-    || record.body.includes('\n')
-    || record.body.length > FOLDABLE_CHARS
+  const hasBody = record.body !== undefined && record.body !== record.preview
+  const foldable = hasBody || record.sections.length > 0 || record.children.length > 0
   const time = record.time === 0 ? '' : new Date(record.time).toLocaleTimeString(locale, { hour12: false })
   const meta = [record.meta, time].filter(part => part !== '').join(t('chat.step.separator'))
+  const indent = 34 + spacing(1.5) + depth * spacing(3)
   return (
-    <TouchableOpacity
-      style={styles.record}
-      disabled={!foldable}
-      onPress={() => onToggle(record.key)}
-      accessibilityRole={foldable ? 'button' : undefined}
-      accessibilityLabel={foldable ? t('trajectory.detail') : undefined}
-    >
-      <View style={styles.recordHead}>
-        <Text style={styles.badge} numberOfLines={1}>{record.badge}</Text>
-        <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
-        {record.status !== undefined && <StatusDot status={record.status} />}
-        <Text style={styles.recordMeta} numberOfLines={1}>{meta}</Text>
-        {foldable && (
-          <Icon
-            name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'}
-            size={12}
-            color={chat.labelTertiary}
-          />
+    <View style={[styles.record, depth > 0 && styles.recordNested]}>
+      <TouchableOpacity
+        style={styles.recordPress}
+        disabled={!foldable}
+        onPress={() => onToggle(record.key)}
+        accessibilityRole={foldable ? 'button' : undefined}
+        accessibilityLabel={foldable ? t('trajectory.detail') : undefined}
+      >
+        <View style={styles.recordHead}>
+          <Text style={styles.index} numberOfLines={1}>#{record.index}</Text>
+          <Text style={styles.badge} numberOfLines={1}>{record.badge}</Text>
+          <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
+          {record.status !== undefined && <StatusDot status={record.status} />}
+          <Text style={styles.recordMeta} numberOfLines={1}>{meta}</Text>
+          {foldable && (
+            <Icon
+              name={open ? 'ChevronUpOutline' : 'ChevronDownOutline'}
+              size={12}
+              color={chat.labelTertiary}
+            />
+          )}
+        </View>
+        {record.metrics !== undefined && <MetricsRow metrics={record.metrics} t={t} indent={indent} />}
+        {record.preview !== '' && (
+          <Text
+            style={[styles.recordBody, { marginLeft: indent }, depth > 0 && styles.recordBodyNested]}
+            numberOfLines={open ? undefined : 1}
+          >
+            {open ? (record.body ?? record.preview) : record.preview}
+          </Text>
         )}
-      </View>
-      {record.body !== '' && (
-        <Text style={styles.recordBody} numberOfLines={open ? undefined : 1}>{record.body}</Text>
-      )}
-      {open && record.detail !== undefined && (
-        <Text style={styles.recordDetail} selectable>{record.detail}</Text>
-      )}
-    </TouchableOpacity>
+        {open && record.sections.map(section => (
+          <View key={section.label} style={[styles.section, { marginLeft: indent }]}>
+            <Text style={styles.sectionLabel}>{section.label}</Text>
+            <Text style={styles.sectionBody} selectable>{section.text}</Text>
+          </View>
+        ))}
+      </TouchableOpacity>
+      {open && record.children.map(child => (
+        <RecordRow
+          key={child.key}
+          record={child}
+          depth={depth + 1}
+          open={opened.has(child.key)}
+          opened={opened}
+          locale={locale}
+          t={t}
+          onToggle={onToggle}
+        />
+      ))}
+    </View>
+  )
+}
+
+/** The Web's three message columns: 输入 / 输出 / 思考, in the order it prints them. */
+function MetricsRow({ metrics, t, indent }: {
+  metrics: TrajectoryMetrics
+  t: Translate
+  indent: number
+}): React.JSX.Element {
+  const cells = [
+    ...(metrics.input === undefined ? [] : [t('trajectory.metric.input', { value: formatTokenCount(metrics.input) })]),
+    ...(metrics.output === undefined ? [] : [t('trajectory.metric.output', { value: formatTokenCount(metrics.output) })]),
+    ...(metrics.think === undefined ? [] : [t('trajectory.metric.think', { value: formatTokenCount(metrics.think) })]),
+  ]
+  if (cells.length === 0) return <View />
+  return (
+    <View style={[styles.metrics, { marginLeft: indent }]}>
+      {cells.map(cell => <Text key={cell} style={styles.metric}>{cell}</Text>)}
+    </View>
   )
 }
 
@@ -262,16 +375,110 @@ function StatusDot({ status }: { status: 'running' | 'done' | 'error' }): React.
 }
 
 /**
- * One turn's records, in the order the log recorded them.
+ * One turn's records, grouped the way the Web groups them.
  *
- * Taken from the turn's whole membership rather than from what the transcript
- * renders: a tool call and a reasoning block have no row of their own in Chat,
- * and hiding them is exactly what a trajectory is for.
+ * A turn is a preamble plus its steps. The preamble — the prompts and the
+ * context the model was given — is the Web's 「消息」 group; each numbered step
+ * (every record whose log entry carried a `step`) is a 「第 N 步」 group; a
+ * compaction owns its own 「压缩 N」 group. Records keep the order the log
+ * recorded them in, which is what makes the fold readable at all.
+ *
+ * A record with no step does not always belong at the top: a turn's delivered
+ * files land after its last step, and dropping them into the preamble group
+ * would print a 13:35 row above a 13:31 one. The Web meets this by only
+ * appending to a 「消息」 group it is already standing on and otherwise opening
+ * a fresh one where the record fell, so a late delivery gets its own group
+ * below the steps instead of being lifted over them.
  */
-function recordsOf(turn: Turn, t: Translate): TrajectoryRecord[] {
-  const records: TrajectoryRecord[] = []
-  for (const item of turn.items) records.push(...recordsFor(item, t))
-  return records
+function project(turns: Turn[], t: Translate): TrajectoryTurn[] {
+  let index = 0
+  const next: TrajectoryTurn[] = []
+  turns.forEach((turn, position) => {
+    const groups: TrajectoryGroup[] = []
+    /** The group a record whose log entry carried a `step` belongs to. */
+    const stepGroup = (key: string, title: string): TrajectoryGroup => {
+      const existing = groups.find(candidate => candidate.key === key)
+      if (existing !== undefined) return existing
+      const created: TrajectoryGroup = { key, title, records: [] }
+      groups.push(created)
+      return created
+    }
+    /** Where a record with no step goes: the trailing 「消息」 group, or a new one here. */
+    const pushMessage = (records: TrajectoryRecord[]): void => {
+      const last = groups[groups.length - 1]
+      if (last !== undefined && isMessageGroup(last)) {
+        last.records.push(...records)
+        return
+      }
+      groups.push({
+        key: `message:${groups.length}`,
+        title: t('trajectory.group.message'),
+        records: [...records],
+      })
+    }
+    const number = (record: RawRecord): TrajectoryRecord => ({
+      ...record,
+      index: ++index,
+      children: record.children.map(number),
+    })
+    for (const item of turn.items) {
+      const step = stepOf(item)
+      const records = recordsFor(item, t, number)
+      if (item.kind === 'compaction') {
+        stepGroup(`compaction:${item.seq}`, t('trajectory.group.compaction', { seq: item.seq }))
+          .records.push(...records)
+        continue
+      }
+      if (step === undefined) {
+        pushMessage(records)
+        continue
+      }
+      stepGroup(`step:${step}`, t('trajectory.group.step', { step })).records.push(...records)
+    }
+    for (const group of groups) {
+      const span = spanOf(group.records)
+      if (span !== undefined && !isMessageGroup(group)) {
+        group.description = runDurationLabel(Math.max(1_000, span), t)
+      }
+    }
+    next.push({ key: turn.key, ordinal: position + 1, turn, groups })
+  })
+  return next
+}
+
+/**
+ * Whether a group is one of the turn's 「消息」 sections.
+ *
+ * A turn can hold more than one of them — the preamble, and then whatever
+ * stepless record fell later — so they are keyed by position and recognised by
+ * key rather than being a single well-known name.
+ */
+function isMessageGroup(group: TrajectoryGroup): boolean {
+  return group.key.startsWith('message:')
+}
+
+/**
+ * The wall time a group's records span.
+ *
+ * A step's own clock is not always recorded, so this reads from the earliest
+ * `startedAt` (or arrival) to the latest `endedAt` (or arrival) — the same span
+ * the Web prints beside a step's title. `undefined` means the group recorded
+ * nothing to measure, which is not the same as a group that took no time.
+ */
+function spanOf(records: TrajectoryRecord[]): number | undefined {
+  let from: number | undefined
+  let to: number | undefined
+  const consider = (value: number | undefined, lower: boolean): void => {
+    if (value === undefined || value <= 0) return
+    if (lower) from = from === undefined ? value : Math.min(from, value)
+    else to = to === undefined ? value : Math.max(to, value)
+  }
+  for (const record of records) {
+    consider(record.startedAt ?? record.time, true)
+    consider(record.endedAt ?? record.time, false)
+  }
+  if (from === undefined || to === undefined || to <= from) return undefined
+  return to - from
 }
 
 /**
@@ -281,7 +488,34 @@ function recordsOf(turn: Turn, t: Translate): TrajectoryRecord[] {
  * rows (思考 and 助手). Turn boundaries carry the section header instead, and
  * record nothing of their own.
  */
-function recordsFor(item: ConversationItem, t: Translate): TrajectoryRecord[] {
+/**
+ * The step a record belongs to.
+ *
+ * Only the records a request produced carry one; a prompt, an injected context
+ * message, a compaction and a turn boundary do not, which is exactly what
+ * separates the Web's 「消息」 group from its numbered steps.
+ */
+function stepOf(item: ConversationItem): number | undefined {
+  switch (item.kind) {
+    case 'assistant':
+    case 'tool':
+    case 'stream':
+    case 'preparing':
+      return item.step
+    default:
+      return undefined
+  }
+}
+
+function recordsFor(
+  item: ConversationItem,
+  t: Translate,
+  number: (record: RawRecord) => TrajectoryRecord,
+): TrajectoryRecord[] {
+  return rawRecordsFor(item, t).map(number)
+}
+
+function rawRecordsFor(item: ConversationItem, t: Translate): RawRecord[] {
   switch (item.kind) {
     case 'user':
       return [{
@@ -290,11 +524,42 @@ function recordsFor(item: ConversationItem, t: Translate): TrajectoryRecord[] {
         badge: t('trajectory.kind.user'),
         title: firstLine(item.text) || t('trajectory.kind.user'),
         meta: item.images.length === 0 ? '' : t('trajectory.images', { count: item.images.length }),
+        preview: oneLine(item.text),
         body: item.text,
+        sections: [],
+        children: [],
+        time: item.time,
+      }]
+    case 'system':
+      return [{
+        key: item.key,
+        kind: 'system',
+        badge: t('trajectory.kind.system'),
+        title: item.initial ? t('trajectory.system.initial') : t('trajectory.system.updated'),
+        meta: '',
+        preview: oneLine(item.text),
+        body: item.text,
+        sections: [],
+        children: [],
+        time: item.time,
+      }]
+    case 'context':
+      return [{
+        key: item.key,
+        kind: 'context',
+        badge: t('trajectory.kind.context'),
+        title: item.sourceKind === undefined
+          ? t('trajectory.kind.context')
+          : t('trajectory.context.from', { source: item.sourceKind }),
+        meta: '',
+        preview: oneLine(item.text),
+        body: item.text,
+        sections: [],
+        children: [],
         time: item.time,
       }]
     case 'assistant': {
-      const records: TrajectoryRecord[] = []
+      const records: RawRecord[] = []
       if (item.reasoning.trim() !== '') {
         records.push({
           key: `${item.key}:reasoning`,
@@ -302,8 +567,12 @@ function recordsFor(item: ConversationItem, t: Translate): TrajectoryRecord[] {
           badge: t('trajectory.kind.thinking'),
           title: t('trajectory.kind.thinking'),
           meta: '',
+          preview: firstLine(item.reasoning),
           body: item.reasoning,
+          sections: [],
+          children: [],
           time: item.time,
+          ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
         })
       }
       if (item.text.trim() !== '') records.push(assistantRecord(item.key, item.text, item, t))
@@ -318,41 +587,58 @@ function recordsFor(item: ConversationItem, t: Translate): TrajectoryRecord[] {
     case 'tool': {
       const result = item.resultText.trim()
       const args = item.args.trim()
-      const detail = [
-        ...(args === '' ? [] : [`${t('trajectory.args')}\n${compactJson(item.args, 4_000)}`]),
-        ...(result === '' ? [] : [`${t('trajectory.result')}\n${result}`]),
-      ].join('\n\n')
+      const duration = item.startedAt === undefined || item.endedAt === undefined
+        ? undefined
+        : Math.max(0, item.endedAt - item.startedAt)
+      const sections: TrajectorySection[] = [
+        ...(args === '' ? [] : [{ label: t('trajectory.args'), text: compactJson(item.args, 4_000) }]),
+        ...(item.schema === undefined ? [] : [{ label: t('trajectory.schema'), text: prettyJson(item.schema) }]),
+      ]
+      const meta = [
+        toolStatusLabel(item.status, t),
+        ...(duration === undefined || duration <= 0 ? [] : [runDurationLabel(duration, t)]),
+        ...(item.subCalls.length === 0 ? [] : [t('trajectory.subtools', { count: item.subCalls.length })]),
+      ].join(t('chat.step.separator'))
       return [{
         key: item.key,
         kind: 'tool',
         badge: t('trajectory.kind.tool'),
         title: toolDisplayName(item.name, t),
-        meta: `${toolStatusLabel(item.status, t)}${item.subCalls.length === 0 ? '' : t('chat.step.separator') + t('trajectory.calls', { count: item.subCalls.length })}`,
+        meta,
         status: item.status === 'running' ? 'running' : item.status === 'error' ? 'error' : 'done',
-        body: result !== '' ? result : item.resultPreview,
-        ...(detail === '' ? {} : { detail }),
+        preview: result !== '' ? oneLine(result) : item.resultPreview,
+        ...(result === '' ? {} : { body: result }),
+        sections,
+        children: item.subCalls.map(subCall => subtoolRecord(item.key, subCall, t)),
         time: item.time,
+        ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
+        ...(item.endedAt === undefined ? {} : { endedAt: item.endedAt }),
       }]
     }
     case 'preparing':
       return [{
         key: item.key,
-        kind: 'other',
+        kind: 'tool',
         badge: t('trajectory.kind.preparing'),
         title: toolDisplayName(item.name, t),
         meta: t('trajectory.status.running'),
         status: 'running',
-        body: '',
+        preview: '',
+        sections: [],
+        children: [],
         time: item.time,
       }]
     case 'compaction':
       return [{
         key: item.key,
-        kind: 'compaction',
-        badge: t('trajectory.kind.compaction'),
+        kind: 'compacted',
+        badge: t('trajectory.kind.compacted'),
         title: t('trajectory.kind.compaction'),
         meta: '',
+        preview: oneLine(item.summary),
         body: item.summary,
+        sections: [],
+        children: [],
         time: item.time,
       }]
     case 'unknown':
@@ -363,18 +649,22 @@ function recordsFor(item: ConversationItem, t: Translate): TrajectoryRecord[] {
         badge: t('common.unknown'),
         title: item.eventType,
         meta: '',
-        body: compactJson(item.data, 160),
-        detail: prettyJson(item.data),
+        preview: compactJson(item.data, 160),
+        sections: [{ label: t('trajectory.raw'), text: prettyJson(item.data) }],
+        children: [],
         time: item.time,
       }]
     case 'delivery':
       return [{
         key: item.key,
-        kind: 'other',
-        badge: t('trajectory.kind.tool'),
+        kind: 'delivery',
+        badge: t('trajectory.kind.delivery'),
         title: t('trajectory.delivered', { count: item.files.length }),
         meta: '',
+        preview: item.files.map(file => file.path).join(t('chat.step.separator')),
         body: item.files.map(file => file.path).join('\n'),
+        sections: [],
+        children: [],
         time: item.time,
       }]
     default:
@@ -389,10 +679,20 @@ function assistantRecord(
   item: Extract<ConversationItem, { kind: 'assistant' }> | undefined,
   t: Translate,
   running = false,
-): TrajectoryRecord {
+): RawRecord {
   const usage = item?.usage === undefined ? null : stepTokenUsage(item.usage)
+  const metrics: TrajectoryMetrics | undefined = usage === null
+    ? undefined
+    : {
+      input: usage.uncachedInputTokens,
+      output: usage.outputTokens,
+      ...(usage.reasoningTokens === undefined ? {} : { think: usage.reasoningTokens }),
+    }
+  const duration = item?.startedAt === undefined || item.time <= item.startedAt
+    ? undefined
+    : item.time - item.startedAt
   const meta = [
-    ...(usage === null ? [] : [t('message.turnUsage.consumed', { total: formatTokenCount(usage.totalTokens) })]),
+    ...(duration === undefined ? [] : [runDurationLabel(duration, t)]),
     ...(item?.interrupted === true ? [t('chat.interrupted')] : []),
   ].join(t('chat.step.separator'))
   return {
@@ -402,8 +702,35 @@ function assistantRecord(
     title: running ? t('trajectory.status.running') : t('trajectory.kind.assistant'),
     meta,
     status: running ? 'running' : 'done',
+    preview: oneLine(text),
     body: text,
+    sections: [],
+    children: [],
+    ...(metrics === undefined ? {} : { metrics }),
     time: item?.time ?? 0,
+    ...(item?.startedAt === undefined ? {} : { startedAt: item.startedAt }),
+  }
+}
+
+/** One nested call under a tool row: the Web's 子工具 record. */
+function subtoolRecord(parentKey: string, call: ToolSubCall, t: Translate): RawRecord {
+  const args = call.args.trim()
+  const result = call.resultText.trim()
+  const sections: TrajectorySection[] = [
+    ...(args === '' ? [] : [{ label: t('trajectory.args'), text: compactJson(call.args, 4_000) }]),
+  ]
+  return {
+    key: `${parentKey}:sub:${call.callId}`,
+    kind: 'subtool',
+    badge: t('trajectory.kind.subtool'),
+    title: toolDisplayName(call.name, t),
+    meta: toolStatusLabel(call.status, t),
+    status: call.status === 'running' ? 'running' : call.status === 'error' ? 'error' : 'done',
+    preview: result !== '' ? oneLine(result) : call.resultPreview,
+    ...(result === '' ? {} : { body: result }),
+    sections,
+    children: [],
+    time: call.time,
   }
 }
 
@@ -416,6 +743,12 @@ function toolStatusLabel(status: 'running' | 'done' | 'error', t: Translate): st
 function firstLine(text: string): string {
   const line = text.trim().split('\n')[0] ?? ''
   return line.length > 60 ? `${line.slice(0, 59)}…` : line
+}
+
+/** One line, whatever the body holds: the collapsed row's own preview. */
+function oneLine(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  return collapsed.length > 120 ? `${collapsed.slice(0, 119)}…` : collapsed
 }
 
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' })
@@ -454,8 +787,26 @@ const styles = StyleSheet.create({
   },
   turnLabel: { color: chat.labelPrimary, fontSize: fontSize.small, fontWeight: '600' },
   turnFacts: { flexShrink: 1, color: chat.labelTertiary, fontSize: fontSize.tiny },
-  record: { paddingVertical: spacing(1.5) },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing(2),
+    marginTop: spacing(2),
+    marginBottom: spacing(0.5),
+  },
+  groupTitle: { color: chat.labelSecondary, fontSize: fontSize.tiny, fontWeight: '600' },
+  groupDescription: { flexShrink: 1, color: chat.labelTertiary, fontSize: fontSize.tiny },
+  record: { paddingVertical: spacing(0.5) },
+  recordNested: {
+    marginLeft: spacing(3),
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: chat.borderL1,
+    paddingLeft: spacing(2),
+  },
+  recordPress: { paddingVertical: spacing(1) },
   recordHead: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) },
+  index: { minWidth: 26, color: chat.labelTertiary, fontSize: fontSize.tiny, fontVariant: ['tabular-nums'] },
   badge: {
     width: 34,
     color: chat.labelTertiary,
@@ -464,19 +815,24 @@ const styles = StyleSheet.create({
   recordTitle: { flexShrink: 1, color: chat.labelPrimary, fontSize: fontSize.small },
   recordMeta: { marginLeft: 'auto', flexShrink: 1, color: chat.labelTertiary, fontSize: fontSize.tiny },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
+  metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(2), marginTop: spacing(0.5) },
+  metric: { color: chat.labelTertiary, fontSize: fontSize.tiny, fontVariant: ['tabular-nums'] },
   recordBody: {
-    marginLeft: 34 + spacing(1.5),
     marginTop: spacing(0.5),
     color: chat.labelSecondary,
     fontSize: fontSize.tiny,
     lineHeight: fontSize.tiny + 6,
   },
-  recordDetail: {
-    marginLeft: 34 + spacing(1.5),
+  recordBodyNested: { color: chat.labelTertiary },
+  section: {
     marginTop: spacing(1),
     paddingTop: spacing(1),
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: chat.borderL1,
+  },
+  sectionLabel: { color: chat.labelTertiary, fontSize: fontSize.tiny, fontWeight: '600' },
+  sectionBody: {
+    marginTop: spacing(0.5),
     color: chat.labelSecondary,
     fontFamily: mono,
     fontSize: fontSize.tiny,

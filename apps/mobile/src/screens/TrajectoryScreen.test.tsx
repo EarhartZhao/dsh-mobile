@@ -165,6 +165,77 @@ describe('TrajectoryScreen', () => {
     expect(screenText(tree)).toContain('trajectory.empty')
   })
 
+  it('groups a turn into its message and step sections, the way the Web does', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    feed(store, 1, 'system/message', { message: { content: [{ type: 'text', text: 'you are dsh' }] } })
+    feed(store, 2, 'user/message', { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })
+    feed(store, 3, 'assistant/message', {
+      turn: 1, step: 1,
+      usage: { inputTokens: 120, outputTokens: 30, reasoningTokens: 5 },
+      message: { content: [{ type: 'text', text: 'hello' }] },
+    })
+    await settle()
+
+    const text = screenText(tree)
+    // The preamble and the step are separate sections, in log order.
+    expect(text).toContain('trajectory.group.message')
+    expect(text).toContain('trajectory.group.step(step=1)')
+    // The system prompt is recorded here even though the transcript hides it.
+    expect(text).toContain('trajectory.kind.system')
+    expect(text).toContain('you are dsh')
+    // Records are numbered, and the answer carries the Web's token columns.
+    expect(text).toContain('#|1')
+    expect(text).toContain('trajectory.metric.input(value=120)')
+    expect(text).toContain('trajectory.metric.output(value=30)')
+    expect(text).toContain('trajectory.metric.think(value=5)')
+  })
+
+  it('files a stepless record that fell after a step below it, not in the preamble', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    feed(store, 1, 'user/message', { content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } })
+    feed(store, 2, 'assistant/message', {
+      turn: 1, step: 1,
+      message: { content: [{ type: 'text', text: 'working' }] },
+    })
+    // An injected context record lands mid-turn, after the step that ran. The
+    // Web opens a second 「消息」 section where it fell rather than lifting it
+    // over the step, and a phone that lifted it printed a later clock above an
+    // earlier one.
+    feed(store, 3, 'user/message', {
+      content: [{ type: 'text', text: 'current runtime context' }],
+      source: { kind: 'runtime-context' },
+    })
+    await settle()
+
+    const text = screenText(tree)
+    const preamble = text.indexOf('trajectory.group.message')
+    const step = text.indexOf('trajectory.group.step(step=1)')
+    const late = text.lastIndexOf('trajectory.group.message')
+    expect(preamble).toBeGreaterThanOrEqual(0)
+    expect(preamble).toBeLessThan(step)
+    expect(step).toBeLessThan(late)
+    // The record is still in the turn, and still readable.
+    expect(text).toContain('trajectory.context.from(source=runtime-context)')
+    expect(text).toContain('current runtime context')
+  })
+
+  it('opens a tool onto its sub-tool row', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    feed(store, 1, 'user/message', { content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } })
+    feed(store, 2, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'code', arguments: '{}' })
+    feed(store, 3, 'tool/code-dispatch-start', { parentCallId: 'c1', subCallId: 'c1.1', name: 'bash', arguments: '{"command":"ls"}' })
+    feed(store, 4, 'tool/code-dispatch', { parentCallId: 'c1', subCallId: 'c1.1', name: 'bash', content: [{ type: 'text', text: 'a.txt' }] })
+    await settle()
+
+    expect(screenText(tree)).toContain('trajectory.subtools(count=1)')
+    expect(screenText(tree)).not.toContain('trajectory.kind.subtool')
+    act(() => { pressableByLabel(tree, 'trajectory.detail')?.props.onPress() })
+    expect(screenText(tree)).toContain('trajectory.kind.subtool')
+  })
+
   it('goes back where it came from', async () => {
     const { manager } = setup()
     const onBack = jest.fn()
