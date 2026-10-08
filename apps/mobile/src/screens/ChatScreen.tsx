@@ -25,9 +25,10 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
+  type HostInstance,
 } from 'react-native'
+import { TouchableOpacity } from '../components/Touchable'
 import { buildTranscript, compactJson, deriveConversation, increasedForkTitle, isLogBehindHost, placementLabel, prettyJson, queuePreview, sessionDisplayTitle, sessionStatsView, shortSessionId, stepTokenUsage, totalLineChanges, turnTokenUsage, type ConnectionManager, type ConversationItem, type FileChangeSummary, type ProcessActivitySummary, type SessionState, type SessionStatsView, type TodoItemView, type TranscriptRow, type Turn, type TurnProcessStep } from '@dsh-mobile/core'
 import { subagentAddress, subagentRows, type SubagentAddress } from '@dsh-mobile/core'
 import type {
@@ -269,6 +270,14 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
   const [permissionOptions, setPermissionOptions] = useState<MobilePermissionPreset[] | null>(null)
   const [permissionPickerOpen, setPermissionPickerOpen] = useState(false)
   const [presetPickerOpen, setPresetPickerOpen] = useState(false)
+  /**
+   * Where the mode menu hangs off. Both chips open the same floating panel, so
+   * the screen measures whichever one was tapped and the panel drops just
+   * above it — clearing the composer, keyboard raised or not.
+   */
+  const [modeMenuTop, setModeMenuTop] = useState<number | undefined>(undefined)
+  const permissionChipRef = useRef<HostInstance | null>(null)
+  const presetChipRef = useRef<HostInstance | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [messageAction, setMessageAction] = useState<ConversationItem | null>(null)
@@ -1904,6 +1913,21 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
       })
       .catch(() => showNotice(t('chat.switchConnection')))
   }
+  /**
+   * Open a mode menu under its own chip. The measurement is what lets the panel
+   * clear the composer and ride the keyboard, and on Fabric it lands in the
+   * same batch as the open, so the panel never draws in its fallback seat. A
+   * renderer that cannot measure still opens the menu rather than leaving the
+   * chip dead.
+   */
+  const openModeMenu = (node: HostInstance | null, open: () => void): void => {
+    open()
+    if (node === null || typeof node.measureInWindow !== 'function') {
+      setModeMenuTop(undefined)
+      return
+    }
+    node.measureInWindow((_x, y) => setModeMenuTop(y))
+  }
   const title = sessionDisplayTitle({
     title: manager.store.title(sessionId),
     ...(summary?.cwd === undefined ? {} : { cwd: summary.cwd }),
@@ -2402,9 +2426,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
                 same controls the conversation menu used to repeat. */}
             {editingItem === null && !textOnlyComposer && permissionChip !== undefined && (
               <TouchableOpacity
+                ref={permissionChipRef}
                 style={styles.modeChip}
                 hitSlop={8}
-                onPress={() => setPermissionPickerOpen(true)}
+                onPress={() => openModeMenu(permissionChipRef.current, () => setPermissionPickerOpen(true))}
                 accessibilityRole="button"
                 accessibilityLabel={t('chat.permissionMode', { name: permissionChip })}
               >
@@ -2419,9 +2444,10 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
             )}
             {editingItem === null && !textOnlyComposer && presetChip !== undefined && (
               <TouchableOpacity
+                ref={presetChipRef}
                 style={styles.modeChip}
                 hitSlop={8}
-                onPress={() => setPresetPickerOpen(true)}
+                onPress={() => openModeMenu(presetChipRef.current, () => setPresetPickerOpen(true))}
                 accessibilityRole="button"
                 accessibilityLabel={t('chat.presetMode', { name: presetChip })}
               >
@@ -2586,6 +2612,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         visible={permissionPickerOpen}
         title={t('chat.permissionTitle')}
         options={permissionChoices}
+        anchorTop={modeMenuTop}
         onClose={() => setPermissionPickerOpen(false)}
         onSelect={value => { setPermissionPickerOpen(false); selectPermission(value) }}
       />
@@ -2593,6 +2620,7 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, enterToS
         visible={presetPickerOpen}
         title={t('chat.presetSeat')}
         options={presetChoices}
+        anchorTop={modeMenuTop}
         onClose={() => setPresetPickerOpen(false)}
         onSelect={selectPreset}
       />
@@ -2812,7 +2840,6 @@ function ProcessReasoningRow({ step, running, open, onToggle, onLongPress, onOpe
   return (
     <TouchableOpacity
       style={styles.reasoningRow}
-      activeOpacity={1}
       onPress={onToggle}
       onLongPress={onLongPress}
     >
@@ -3272,6 +3299,8 @@ function Bubble({ item, manager, sessionId, onLongPress, onPreview, onOpenLink, 
               ))}
             </View>
           )}
+          {/* Content, not a button: a tap does nothing, so the bubble keeps a
+              flat press state and only the long press opens the action menu. */}
           <TouchableOpacity activeOpacity={1} style={styles.userBubble} onLongPress={onLongPress}>
             <PromptBubbleText text={item.text} />
           </TouchableOpacity>

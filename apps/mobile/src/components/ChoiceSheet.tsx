@@ -1,13 +1,18 @@
 /**
- * One-choice bottom sheet: a flat list of named options with the current one
- * marked. The Web picks a permission preset and an agent preset from anchored
- * menus; a phone has no room beside the composer, so both open this sheet.
+ * One-choice menu: a flat list of named options with the current one marked.
+ * The Web picks a permission preset and an agent preset from menus anchored to
+ * the chip that owns them; a phone has no room for that row beside the draft,
+ * so both drop the same floating panel the header's subagent switcher uses —
+ * no scrim, panel radius, soft elevation — over the messages.
  */
 import React from 'react'
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import {
+  Modal, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+} from 'react-native'
 import { ModalBackdrop } from './ModalBackdrop'
-import { colors, fontSize, radius, spacing } from '../theme'
-import { useI18n } from '../i18n'
+import { TouchableOpacity } from './Touchable'
+import { chat, colors, fontSize, radius, spacing } from '../theme'
+import { Icon } from '../icons'
 
 export interface ChoiceSheetOption {
   key: string
@@ -19,45 +24,58 @@ export interface ChoiceSheetOption {
   disabled?: boolean
 }
 
-export function ChoiceSheet({ visible, title, options, onClose, onSelect }: {
+export function ChoiceSheet({ visible, title, options, anchorTop, onClose, onSelect }: {
   visible: boolean
   title: string
   options: ChoiceSheetOption[]
+  /**
+   * The trigger's own top edge in window space. The panel hangs off it, so it
+   * clears the composer whether or not the keyboard has raised the draft.
+   */
+  anchorTop?: number
   onClose: () => void
   onSelect: (key: string) => void
 }): React.JSX.Element {
-  const { t } = useI18n()
+  const { height: windowHeight } = useWindowDimensions()
+  const gap = spacing(2)
+  // Anchor the panel just above the chip that opened it; without a measurement
+  // it still has to clear the composer band.
+  const drop = anchorTop === undefined ? spacing(30) : Math.max(spacing(3), windowHeight - anchorTop + gap)
+  const ceiling = anchorTop === undefined ? windowHeight * 0.6 : Math.max(160, anchorTop - spacing(16))
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <ModalBackdrop onClose={onClose} style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <View style={styles.grabber} />
-          <Text style={styles.title} numberOfLines={1}>{title}</Text>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <ModalBackdrop onClose={onClose} style={[styles.backdrop, { paddingBottom: drop }]}>
+        <View style={[styles.menu, { maxHeight: ceiling }]}>
+          <Text style={styles.menuTitle} numberOfLines={1}>{title}</Text>
+          <ScrollView style={styles.menuScroll} keyboardShouldPersistTaps="handled">
             {options.map(option => (
               <TouchableOpacity
                 key={option.key}
-                style={[styles.option, option.current === true && styles.optionCurrent]}
+                style={styles.row}
                 disabled={option.disabled === true}
                 onPress={() => onSelect(option.key)}
                 accessibilityRole="button"
                 accessibilityLabel={option.label}
               >
-                <View style={styles.optionText}>
-                  <Text style={[styles.optionLabel, option.danger === true && styles.danger]} numberOfLines={1}>
+                <View style={styles.rowCopy}>
+                  <Text
+                    style={[
+                      styles.label,
+                      option.current === true && styles.labelCurrent,
+                      option.danger === true && styles.danger,
+                    ]}
+                    numberOfLines={1}
+                  >
                     {option.label}
                   </Text>
                   {option.subtitle !== undefined && (
-                    <Text style={styles.optionSubtitle} numberOfLines={2}>{option.subtitle}</Text>
+                    <Text style={styles.subtitle} numberOfLines={2}>{option.subtitle}</Text>
                   )}
                 </View>
-                {option.current === true && <Text style={styles.current}>{t('common.current')}</Text>}
+                {option.current === true && <Icon name="CheckOutline" size={14} color={colors.accent} />}
               </TouchableOpacity>
             ))}
           </ScrollView>
-          <TouchableOpacity style={styles.close} onPress={onClose}>
-            <Text style={styles.closeText}>{t('common.close')}</Text>
-          </TouchableOpacity>
         </View>
       </ModalBackdrop>
     </Modal>
@@ -65,33 +83,37 @@ export function ChoiceSheet({ visible, title, options, onClose, onSelect }: {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { justifyContent: 'flex-end' },
-  sheet: {
+  /** A dropdown, not a dialog: no scrim, and the panel clears the composer. */
+  backdrop: { backgroundColor: 'transparent', justifyContent: 'flex-end' },
+  menu: {
     backgroundColor: colors.bgElevated,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    maxHeight: '55%',
-    paddingBottom: spacing(3),
+    borderRadius: radius.panel,
+    marginHorizontal: spacing(3),
+    paddingVertical: spacing(1),
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
-  grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border, marginTop: spacing(2) },
-  title: { color: colors.text, fontSize: fontSize.body, fontWeight: '700', paddingHorizontal: spacing(4), paddingTop: spacing(2) },
-  scroll: { flexGrow: 0 },
-  content: { paddingVertical: spacing(1), paddingHorizontal: spacing(3), gap: spacing(1) },
-  option: {
+  menuTitle: {
+    color: chat.labelTertiary,
+    fontSize: fontSize.tiny,
+    paddingHorizontal: spacing(2),
+    paddingTop: spacing(1),
+    paddingBottom: spacing(1),
+  },
+  menuScroll: { paddingVertical: spacing(1) },
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: spacing(2),
+    paddingVertical: spacing(2),
     gap: spacing(2),
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    padding: spacing(2.5),
   },
-  optionCurrent: { borderColor: colors.accent, backgroundColor: colors.bgBubbleUser },
-  optionText: { flex: 1, gap: 2 },
-  optionLabel: { color: colors.text, fontSize: fontSize.small, fontWeight: '600' },
-  optionSubtitle: { color: colors.textDim, fontSize: fontSize.tiny },
-  current: { color: colors.textDim, fontSize: fontSize.tiny },
+  rowCopy: { flex: 1, gap: 2 },
+  label: { color: chat.labelPrimary, fontSize: fontSize.small },
+  labelCurrent: { color: colors.accent },
+  subtitle: { color: chat.labelTertiary, fontSize: fontSize.tiny },
   danger: { color: colors.danger },
-  close: { alignItems: 'center', paddingVertical: spacing(2) },
-  closeText: { color: colors.accent, fontSize: fontSize.small },
 })

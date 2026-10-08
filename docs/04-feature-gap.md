@@ -138,7 +138,7 @@
 > ② **输入框左侧的访问模式 chip**：`permissions` 投影只有 `currentValue`，可切换的名单是
 > **进程级 catalog**，App 早先按投影里的 `options` 找选项，所以这个控件从来没有渲染出来过——
 > 插件新增 `permissionPreset.catalog`（0.2.38，白名单 + `remoteCall`），App 走
-> `mobile-catalog.ts` 宽解析读取，chip 点开是底部弹层（仅可查看 / 工作区内修改 / 完全权限，
+> `mobile-catalog.ts` 宽解析读取，chip 点开是与子智能体切换器同款的下拉浮层（仅可查看 / 工作区内修改 / 完全权限，
 > 后两者里的 danger 值仍先弹确认），选中走 `/permission <value>`；
 > ③ **Agent 模式只属于新对话**：只有 `blank === true` 的会话才渲染第二枚 chip，选中调
 > `agentPresets.select` 且**不发任何消息**；已开始的会话完全不渲染该控件（宿主在首轮就冻结组合、
@@ -155,6 +155,13 @@
 > 模拟器复核（iPhone 17 Pro + Metro）：空白会话上两枚 chip 同时在，Agent 弹层列出四个内置模式
 > 及各自描述，选 `ptc` 后 chip 变为「Agent 模式，当前：PTC 模式」且不发送消息；
 > 已开始的会话只有访问模式 chip，Meta 行读作「预设 标准模式」。
+
+> 2026-10-08 追加（模式菜单换成下拉浮层）：Web 的这两种选择器都挂在触发它的 chip 下面，
+> 不是从屏幕底下推上来的 sheet，所以 `ChoiceSheet` 换成和子智能体切换器同一副壳——**没有遮罩**、
+> `radius-panel` 圆角配软投影、行不再画边框（当前项用 accent 文字 + `IconCheckOutline`，
+> danger 档仍是红字）。位置由 chip 自报：按下时 `measureInWindow` 拿到自己的窗口坐标，
+> 面板就挂在它上方 8px（Fabric 上测量与开面板在同一个 batch 里，弹层不会先在兜底位置画一帧，
+> 量不到的渲染器也有兜底偏移），所以键盘把输入卡顶起来时面板跟着走。
 
 > 2026-10-08 追加（按下态收口）：`components/Touchable.tsx` 是 RN touchable 的薄封装，
 > 默认 `activeOpacity` 从 RN 的 **0.2 提到 0.8**——浅色底上 0.2 会把控件压成近乎透明，
