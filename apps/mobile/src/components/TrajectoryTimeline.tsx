@@ -23,6 +23,12 @@ import { TRAJECTORY_LANES } from '../trajectory-model'
 /** The lane band's own height: the Web's 8px block every 14px. */
 const LANE_STEP = 14
 const LANE_HEIGHT = 8
+/**
+ * The lane caption's line box. The band is only 8 points tall, and a caption
+ * squeezed into that box loses the bottom of every glyph, so the caption gets
+ * a full line of its own and is centred on the band instead.
+ */
+const LABEL_HEIGHT = 14
 /** The Web's plot height (50px) and its 7px breathing room top and bottom. */
 const PLOT_HEIGHT = 50
 const PLOT_PADDING = 7
@@ -103,13 +109,17 @@ export function TrajectoryTimeline({
     >
       <View style={styles.labels} pointerEvents="none">
         {TRAJECTORY_LANES.map((lane, index) => (
-          <Text
+          <View
             key={lane}
-            style={[styles.laneLabel, { top: PLOT_PADDING + index * LANE_STEP }]}
-            numberOfLines={1}
+            style={[
+              styles.laneLabelBox,
+              { top: PLOT_PADDING + index * LANE_STEP - (LABEL_HEIGHT - LANE_HEIGHT) / 2 },
+            ]}
           >
-            {t(LANE_KEYS[lane])}
-          </Text>
+            <Text style={styles.laneLabel} numberOfLines={1}>
+              {t(LANE_KEYS[lane])}
+            </Text>
+          </View>
         ))}
       </View>
       <TouchableOpacity
@@ -168,14 +178,8 @@ const styles = StyleSheet.create({
     borderBottomColor: chat.borderL2,
   },
   labels: { width: 34, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: chat.borderL1 },
-  laneLabel: {
-    position: 'absolute',
-    right: 4,
-    height: LANE_HEIGHT,
-    color: chat.labelCaption,
-    fontSize: 10,
-    lineHeight: LANE_HEIGHT,
-  },
+  laneLabelBox: { position: 'absolute', right: 4, height: LABEL_HEIGHT, justifyContent: 'center' },
+  laneLabel: { color: chat.labelCaption, fontSize: 10 },
   track: { flex: 1 },
   boundary: {
     position: 'absolute',
