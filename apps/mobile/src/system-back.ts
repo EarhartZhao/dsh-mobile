@@ -1,4 +1,12 @@
-export type SystemBackRoute = 'list' | 'chat' | 'trajectory' | 'settings' | 'plugins' | 'connections' | 'pairing'
+export type SystemBackRoute =
+  | 'list'
+  | 'chat'
+  | 'trajectory'
+  | 'trajectoryRecord'
+  | 'settings'
+  | 'plugins'
+  | 'connections'
+  | 'pairing'
 
 interface SystemBackOptions {
   route: SystemBackRoute
@@ -8,6 +16,8 @@ interface SystemBackOptions {
   goToSettings: () => void
   /** Leave a trajectory for the conversation it belongs to. */
   closeTrajectory: () => void
+  /** Leave one trajectory record for the trajectory it belongs to. */
+  closeTrajectoryRecord: () => void
   showPrompt: () => void
   moveToBackground: () => void
 }
@@ -18,6 +28,13 @@ interface SystemBackResult {
 }
 
 export function handleSystemBack(options: SystemBackOptions): SystemBackResult {
+  // A record is a sub-page of one trajectory, which is itself a sub-page of
+  // one conversation: back walks the stack one step at a time.
+  if (options.route === 'trajectoryRecord') {
+    options.closeTrajectoryRecord()
+    return { handled: true, lastBackAt: 0 }
+  }
+
   // A trajectory is a sub-page of one conversation: back walks into that
   // conversation rather than all the way out to the list.
   if (options.route === 'trajectory') {

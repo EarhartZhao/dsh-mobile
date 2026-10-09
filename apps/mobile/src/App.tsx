@@ -41,14 +41,17 @@ import { SessionListScreen } from './screens/SessionListScreen'
 import { PluginInventoryScreen } from './screens/PluginInventoryScreen'
 import { ChatScreen } from './screens/ChatScreen'
 import { TrajectoryScreen } from './screens/TrajectoryScreen'
+import { TrajectoryRecordScreen } from './screens/TrajectoryRecordScreen'
 import { SettingsScreen, type ThemeMode } from './screens/SettingsScreen'
 import { NoticeToast, type NoticeLevel } from './components/NoticeToast'
 import {
   INITIAL_NAV,
   closeChat,
   closeTrajectory,
+  closeTrajectoryRecord,
   openChat,
   openTrajectory,
+  openTrajectoryRecord,
   routeTo,
   type NavState,
   type Route,
@@ -197,6 +200,16 @@ function AppContent(): React.JSX.Element {
   /** Leave a conversation's trajectory for that conversation. */
   const leaveTrajectory = useCallback(() => {
     setNav(closeTrajectory)
+  }, [])
+  /** Open one record of the trajectory on screen, as its own page. */
+  const openTrajectoryRecordPage = useCallback((index: number) => {
+    setNav(current => current.route.name === 'trajectory'
+      ? openTrajectoryRecord(current, current.route.sessionId, index)
+      : current)
+  }, [])
+  /** Leave one record for the trajectory it was opened from. */
+  const leaveTrajectoryRecord = useCallback(() => {
+    setNav(closeTrajectoryRecord)
   }, [])
   const [connState, setConnState] = useState<ConnectionState>('idle')
   /**
@@ -414,12 +427,16 @@ function AppContent(): React.JSX.Element {
       goToList: leaveChat,
       goToSettings: () => goTo({ name: 'settings' }),
       closeTrajectory: leaveTrajectory,
+      closeTrajectoryRecord: leaveTrajectoryRecord,
       showPrompt: showBackExitPrompt,
       moveToBackground,
     })
     lastBackPress.current = result.lastBackAt
     return result.handled
-  }, [goTo, leaveChat, leaveTrajectory, moveToBackground, route.name, showBackExitPrompt])
+  }, [
+    goTo, leaveChat, leaveTrajectory, leaveTrajectoryRecord, moveToBackground, route.name,
+    showBackExitPrompt,
+  ])
 
   const handleHardwareBack = useCallback(() => {
     if (pairing === null || managerRef.current === null) return false
@@ -832,6 +849,14 @@ function AppContent(): React.JSX.Element {
               manager={managerRef.current}
               sessionId={route.sessionId}
               onBack={leaveTrajectory}
+              onOpenRecord={openTrajectoryRecordPage}
+            />
+          ) : route.name === 'trajectoryRecord' ? (
+            <TrajectoryRecordScreen
+              manager={managerRef.current}
+              sessionId={route.sessionId}
+              index={route.index}
+              onBack={leaveTrajectoryRecord}
             />
           ) : (
             <ChatScreen

@@ -1,11 +1,13 @@
 /**
  * The conversation's trajectory screen.
  *
- * The Web's own view is a table with a timeline and an inspector; the phone
- * lays the same projection out as a list. What is worth pinning down here is
- * that it reads the log the transcript reads — a tool call and a reasoning
- * block have rows of their own even though Chat renders neither — and that it
- * opens without a composer.
+ * The Web's own view is a table with a duration overview, a toolbar and an
+ * inspector; the phone lays the same projection out as a list, puts the Web's
+ * toolbar and overview above it, and pushes the inspector as a page of its
+ * own. What is worth pinning down here is that it reads the log the transcript
+ * reads — a tool call and a reasoning block have rows of their own even though
+ * Chat renders neither — that its three switches and its search box do what
+ * the Web's do, and that it carries no composer.
  */
 import React from 'react'
 import renderer, { act } from 'react-test-renderer'
@@ -45,19 +47,48 @@ function screenText(tree: renderer.ReactTestRenderer): string {
   return parts.join('|')
 }
 
+/** Every pressable carrying this accessibility label, in render order. */
+function pressablesByLabel(
+  tree: renderer.ReactTestRenderer,
+  label: string,
+): renderer.ReactTestInstance[] {
+  return tree.root.findAll(node =>
+    typeof node.props.onPress === 'function' && node.props.accessibilityLabel === label)
+}
+
 /** The innermost pressable carrying this accessibility label. */
 function pressableByLabel(
   tree: renderer.ReactTestRenderer,
   label: string,
 ): renderer.ReactTestInstance | undefined {
-  return tree.root.findAll(node =>
-    typeof node.props.onPress === 'function' && node.props.accessibilityLabel === label).at(-1)
+  return pressablesByLabel(tree, label).at(-1)
 }
 
 function setup(): { manager: ConnectionManager; store: SessionStore } {
   const store = new SessionStore()
   store.applyBaseline({ summaries: [], workspaces: [] })
   return { manager: { store } as unknown as ConnectionManager, store }
+}
+
+/** The left offsets of every block currently drawn on the overview bar. */
+function spanLefts(tree: renderer.ReactTestRenderer): string[] {
+  return tree.root.findAll((node) => {
+    const style = flattenStyle(node.props.style)
+    return style?.position === 'absolute' && style.height === 8 && style.borderRadius === 1
+  }).map(span => String(flattenStyle(span.props.style)?.left))
+}
+
+/** One node's style prop, flattened the way React Native would flatten it. */
+function flattenStyle(style: unknown): Record<string, unknown> | null {
+  if (Array.isArray(style)) {
+    return style.reduce<Record<string, unknown>>(
+      (accumulated, entry) => ({ ...accumulated, ...(flattenStyle(entry) ?? {}) }),
+      {},
+    )
+  }
+  return typeof style === 'object' && style !== null
+    ? style as Record<string, unknown>
+    : null
 }
 
 /** One recorded event, the way the store's mux frames deliver them. */
@@ -101,9 +132,22 @@ async function settle(): Promise<void> {
 
 const trees: renderer.ReactTestRenderer[] = []
 
-function render(manager: ConnectionManager, onBack: () => void = jest.fn()): renderer.ReactTestRenderer {
+function render(
+  manager: ConnectionManager,
+  onBack: () => void = jest.fn(),
+  onOpenRecord: (index: number) => void = jest.fn(),
+): renderer.ReactTestRenderer {
   let tree!: renderer.ReactTestRenderer
-  act(() => { tree = renderer.create(<TrajectoryScreen manager={manager} sessionId={SESSION} onBack={onBack} />) })
+  act(() => {
+    tree = renderer.create(
+      <TrajectoryScreen
+        manager={manager}
+        sessionId={SESSION}
+        onBack={onBack}
+        onOpenRecord={onOpenRecord}
+      />,
+    )
+  })
   trees.push(tree)
   return tree
 }
@@ -139,22 +183,36 @@ describe('TrajectoryScreen', () => {
     expect(text).toContain('8 个来源')
   })
 
-  it('opens a folded record onto its arguments, and carries no composer', async () => {
+  it('opens a record as its own page instead of unfolding it in the list', async () => {
+    const { manager, store } = setup()
+    const onOpenRecord = jest.fn()
+    const tree = render(manager, jest.fn(), onOpenRecord)
+    planningTurn(store)
+    await settle()
+
+    // The row's detail belongs to the record page now, not to an inline fold.
+    expect(screenText(tree)).not.toContain('trajectory.args')
+
+    const rows = pressablesByLabel(tree, 'trajectory.record.open')
+    expect(rows.length).toBeGreaterThan(0)
+    act(() => { rows[0]?.props.onPress() })
+    // The first row is the prompt, the ledger's `#1`.
+    expect(onOpenRecord).toHaveBeenCalledWith(1)
+  })
+
+  it('carries the trajectory\u2019s own search box and no composer', async () => {
     const { manager, store } = setup()
     const tree = render(manager)
     planningTurn(store)
     await settle()
 
-    // Nothing to type into: a trajectory is for reading what happened.
-    expect(tree.root.findAll(node => typeof node.props.onChangeText === 'function')).toHaveLength(0)
-
-    // The tool's detail only exists once the row is open.
-    expect(screenText(tree)).not.toContain('trajectory.args')
-    const row = pressableByLabel(tree, 'trajectory.detail')
-    expect(row).toBeDefined()
-    act(() => { row?.props.onPress() })
-    expect(screenText(tree)).toContain('trajectory.args')
-    expect(screenText(tree)).toContain('query')
+    // The only field on this screen is the toolbar's search: a trajectory is
+    // for reading what happened, not for asking for more. (React Native
+    // forwards the props to its host view, so one field can appear twice.)
+    const fields = tree.root.findAll(node => typeof node.props.onChangeText === 'function')
+    expect(fields.length).toBeGreaterThan(0)
+    expect(fields.every(field => field.props.accessibilityLabel === 'trajectory.toolbar.search'))
+      .toBe(true)
   })
 
   it('says so when the conversation has no records', async () => {
@@ -221,19 +279,110 @@ describe('TrajectoryScreen', () => {
     expect(text).toContain('current runtime context')
   })
 
-  it('opens a tool onto its sub-tool row', async () => {
+  it('draws the Web\u2019s three-lane overview above the ledger', async () => {
     const { manager, store } = setup()
     const tree = render(manager)
-    feed(store, 1, 'user/message', { content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } })
-    feed(store, 2, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'code', arguments: '{}' })
-    feed(store, 3, 'tool/code-dispatch-start', { parentCallId: 'c1', subCallId: 'c1.1', name: 'bash', arguments: '{"command":"ls"}' })
-    feed(store, 4, 'tool/code-dispatch', { parentCallId: 'c1', subCallId: 'c1.1', name: 'bash', content: [{ type: 'text', text: 'a.txt' }] })
+    planningTurn(store)
     await settle()
 
-    expect(screenText(tree)).toContain('trajectory.subtools(count=1)')
-    expect(screenText(tree)).not.toContain('trajectory.kind.subtool')
-    act(() => { pressableByLabel(tree, 'trajectory.detail')?.props.onPress() })
-    expect(screenText(tree)).toContain('trajectory.kind.subtool')
+    const text = screenText(tree)
+    // The bar names the Web's own lanes, and counts every record on it.
+    expect(text).toContain('trajectory.lane.input')
+    expect(text).toContain('trajectory.lane.model')
+    expect(text).toContain('trajectory.lane.tools')
+    expect(tree.root.findAll(node => node.props.accessibilityLabel === 'trajectory.timeline.aria'))
+      .not.toHaveLength(0)
+    // 用户 · 思考 · 助手 · 工具 — one block per record.
+    // 用户 · 思考 · 助手 · 工具, one equal-width slot each.
+    expect([...new Set(spanLefts(tree))]).toEqual(['0%', '25%', '50%', '75%'])
+  })
+
+  it('folds every turn from the toolbar, and opens them again', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    planningTurn(store)
+    await settle()
+
+    act(() => { pressableByLabel(tree, 'trajectory.toolbar.collapseTurns')?.props.onPress() })
+    const folded = screenText(tree)
+    // Every turn keeps its header; its records are what folded away.
+    expect(folded).toContain('trajectory.turn(turn=1)')
+    expect(folded).not.toContain('trajectory.group.step(step=1)')
+    expect(folded).not.toContain(toolDisplayName('web_search', mockT))
+
+    act(() => { pressableByLabel(tree, 'trajectory.toolbar.expandTurns')?.props.onPress() })
+    expect(screenText(tree)).toContain('trajectory.group.step(step=1)')
+  })
+
+  it('folds a single turn from its own header', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    planningTurn(store)
+    await settle()
+
+    act(() => { pressableByLabel(tree, 'trajectory.turn.collapse')?.props.onPress() })
+    const folded = screenText(tree)
+    expect(folded).toContain('trajectory.turn(turn=1)')
+    expect(folded).not.toContain('先规划一下')
+    act(() => { pressableByLabel(tree, 'trajectory.turn.expand')?.props.onPress() })
+    expect(screenText(tree)).toContain('先规划一下')
+  })
+
+  it('drops the tool rows from the ledger when 调用 folds them away', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    planningTurn(store)
+    await settle()
+
+    act(() => { pressableByLabel(tree, 'trajectory.toolbar.collapseCalls')?.props.onPress() })
+    const folded = screenText(tree)
+    expect(folded).not.toContain(toolDisplayName('web_search', mockT))
+    // Everything that is not a call is still listed.
+    expect(folded).toContain('我来查一下天津近五年的经济数据。')
+    expect(folded).toContain('先规划一下')
+  })
+
+  it('scales the overview by recorded durations when 时长 is switched on', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    planningTurn(store)
+    await settle()
+
+    const equalWidth = new Set(spanLefts(tree)).size
+
+    // Off, the button offers the recorded-duration projection.
+    expect(pressableByLabel(tree, 'trajectory.toolbar.useActualDuration')).toBeDefined()
+    act(() => { pressableByLabel(tree, 'trajectory.toolbar.useActualDuration')?.props.onPress() })
+    // On, it offers the way back to equal-width operations.
+    const on = pressableByLabel(tree, 'trajectory.toolbar.useEqualWidth')
+    expect(on?.props.accessibilityState).toEqual({ selected: true })
+    // And the bar itself changed: the same records now share the time domain.
+    expect(new Set(spanLefts(tree)).size).toBeLessThan(equalWidth)
+    act(() => { on?.props.onPress() })
+    expect(pressableByLabel(tree, 'trajectory.toolbar.useActualDuration')).toBeDefined()
+    expect(new Set(spanLefts(tree)).size).toBe(equalWidth)
+  })
+
+  it('answers the search box with its hits, and counts them', async () => {
+    const { manager, store } = setup()
+    const tree = render(manager)
+    planningTurn(store)
+    await settle()
+
+    const field = tree.root.findAll(node => typeof node.props.onChangeText === 'function')[0]
+    act(() => { field?.props.onChangeText('8 个来源') })
+
+    const text = screenText(tree)
+    expect(text).toContain('trajectory.search.count(count=1)')
+    // Only the hit stays in the ledger — including its turn and section
+    // headers, which is what keeps it readable.
+    expect(text).toContain(toolDisplayName('web_search', mockT))
+    expect(text).toContain('trajectory.turn(turn=1)')
+    expect(text).not.toContain('查一下天津的经济数据')
+    expect(text).not.toContain('先规划一下')
+
+    act(() => { field?.props.onChangeText('没有这种东西') })
+    expect(screenText(tree)).toContain('trajectory.search.empty')
   })
 
   it('goes back where it came from', async () => {

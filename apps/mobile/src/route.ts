@@ -18,6 +18,12 @@ export type Route =
    * backing out of the trajectory lands on the conversation it belongs to.
    */
   | { name: 'trajectory'; sessionId: string }
+  /**
+   * One trajectory record, opened by tapping its row. The Web shows the same
+   * record in an inspector beside the ledger; a phone pushes this page instead,
+   * and backing out lands on the trajectory it was opened from.
+   */
+  | { name: 'trajectoryRecord'; sessionId: string; index: number }
   | { name: 'settings' }
   | { name: 'plugins' }
   | { name: 'connections' }
@@ -33,7 +39,7 @@ export const INITIAL_NAV: NavState = { route: { name: 'list' }, chatTrail: [] }
 
 /** The two routes that show a conversation, and so keep its lineage. */
 const showsConversation = (route: Route): boolean =>
-  route.name === 'chat' || route.name === 'trajectory'
+  route.name === 'chat' || route.name === 'trajectory' || route.name === 'trajectoryRecord'
 
 /**
  * Show one screen. Any screen but a conversation drops the lineage: back is a
@@ -80,5 +86,24 @@ export function openTrajectory(state: NavState, sessionId: string): NavState {
 export function closeTrajectory(state: NavState): NavState {
   return state.route.name === 'trajectory'
     ? { route: { name: 'chat', sessionId: state.route.sessionId }, chatTrail: state.chatTrail }
+    : state
+}
+
+/**
+ * Open one record of one conversation's trajectory. The trajectory stays the
+ * way back — the record is a sub-page of it, not a peer.
+ */
+export function openTrajectoryRecord(
+  state: NavState,
+  sessionId: string,
+  index: number,
+): NavState {
+  return { route: { name: 'trajectoryRecord', sessionId, index }, chatTrail: state.chatTrail }
+}
+
+/** Leave one record: the trajectory it was opened from. */
+export function closeTrajectoryRecord(state: NavState): NavState {
+  return state.route.name === 'trajectoryRecord'
+    ? { route: { name: 'trajectory', sessionId: state.route.sessionId }, chatTrail: state.chatTrail }
     : state
 }

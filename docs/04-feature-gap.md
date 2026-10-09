@@ -502,6 +502,48 @@
 > 上面全部结论来自对真实会话日志的重放；`removeClippedSubviews={false}` 与滚动是否
 > 回退需要在下次接上设备时按「长会话滚动」那一段的办法再核一遍。
 
+> 2026-10-09 追加（轨迹页补齐工具栏 / 时间概览 / 搜索，检查器改成独立一页）：
+>
+> ① **投影搬出组件**：轨迹的投影从 `TrajectoryScreen.tsx` 提到 `src/trajectory-model.ts`
+> （纯函数，无 React、无 store），列表、时间概览、搜索框和新的记录页读同一份
+> `projectTrajectory` 的结果，三者不可能对同一段日志有两种说法。投影本身与上一轮一致
+> （每轮「消息」组 + 按 step 的「第 N 步」组 + 「压缩 N」组），新增的是记录自带
+> `durationMs`（工具取 `endedAt - startedAt`、assistant 取 `step/start` 到 `assistant/message`
+> 的墙钟）、`turn`/`group` 归属，以及「子工具的子树也编号」——`#N` 与 Web 一样按日志
+> 顺序连续。
+>
+> ② **Web 的工具栏三开关落到手机上**（对齐 `TrajectoryToolbar`）：`时长` 在
+> **等宽操作**（每条记录一个槽位）与**实际时长**（按记录毫秒数、并压缩空档，与 Web 的
+> `deriveTrajectoryTimeline('duration')` 同一套算法）之间切换；`轮次` 收起/展开所有轮次；
+> `调用` 把工具行从列表里收起（手机上的行没有自己的正文本可折叠，记录的正文在记录页）。
+> 搜索框对齐 Web 的 `TrajectorySearchIndex`：空格分词的**全部**词都要命中同一条记录，
+> 命中面覆盖 chip / 标题 / meta / 正文 / 各分块 / 所属分组；有查询时列表只留命中项
+> （连同它所在轮次与分组的表头）并报「N 条匹配」，概览条把没命中的块按 Web 的
+> `[data-search-match='false']` 压到 0.16 透明度。
+>
+> ③ **时间概览条**（`components/TrajectoryTimeline.tsx`，新文件）：Web 的三条泳道
+> （输入 / 模型 / 工具）、每次轮次边界一条发丝线、每条记录一个按泳道着色的块（错误的
+> 记录用红、用户蓝、上下文绿、assistant 琥珀、工具深蓝），高度与间距照搬 Web 的
+> 50px / 8px / 14px。Web 的拖拽选区与视口缩放没有移植——手机上无法一边拖一边读表；
+> 保留的是**点击落点最近的记录**：先展开挡住它的折叠（含 `调用` 开关），再滚到它并高亮
+> 该行（缩略图式导航）。
+>
+> ④ **检查器改成一页**：Web 把点开的记录显示在右侧面板，手机宽度放不下，改成推入
+> `TrajectoryRecordScreen`（新文件，新路由 `trajectoryRecord`）。这一页不再截断：正文、
+> `参数` / `Schema` / `结果` / `原始内容` 全部分块，加上轮次、分组、类型、状态、记录时间、
+> 开始/结束、时长（毫秒，与 Web 的 `formatDurationMillis` 同样带千分位）、用量三列，以及
+> 它拥有的子工具各自的正文与分块。系统返回键在这一页回到轨迹页（`system-back` 新增
+> 一个分支），轨迹页再回会话。
+>
+> 验证：`apps/mobile` `typecheck` 清、`lint` 0 error（224 warning，与基线同量级）、
+> `test` 34 套 286 例全过（`TrajectoryScreen` 重写为 12 例：整轮成员、点行开记录页、
+> 只有搜索框没有输入框、空态、分组、落点分组、三泳道概览与等宽槽位、工具栏收轮次、
+> 单轮表头收起、收起调用、时长开关往返、搜索命中与计数；新增 `TrajectoryRecordScreen`
+> 4 例：工具的参数/结果/子工具、思考块正文、记录不在日志里、返回；新增
+> `trajectory-model.test.ts` 6 例：`#N` 连续编号与子工具归属、等宽槽位与泳道、按时长
+> 压缩空档、空查询、逐词命中；`system-back` 与 `route` 各新增记录页的往返一例）；
+> 工作区 `typecheck` 清、`sync-protocol:check` 通过、`packages/core` `test` 全过。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、
@@ -544,7 +586,7 @@
 | 上下文用量统计 | ✅ assistant/message.usage + contextBreakdown 投影 | ● | token 用量条已接入 |
 | Compaction 指示 | ✅ compaction 投影 + assistant 摘要 | ● | 压缩/摘要标记已接入 |
 | 会话标题/元信息头 | ✅ projection(title) + summary | ● | 两行元信息：子智能体计数（最左）与模型切换一行，目录（点开弹层可复制整条路径）与模式一行；父会话行、轨迹入口已接入，更新时间按需求下线 |
-| 会话轨迹视图 | ✅ 客户端本地投影（`deriveConversation` + `groupTurns`） | ● | Web 的 conversation.view 第二个 tab；按轮次列出全部记录（含对话页不渲染的工具调用与纯思考步），可展开看参数/结果，无输入框。Web 的时间概览/检查器/工具栏未移植 |
+| 会话轨迹视图 | ✅ 客户端本地投影（`deriveConversation` + `groupTurns`，投影在 `src/trajectory-model.ts`） | ● | Web 的 conversation.view 第二个 tab；按轮次列出全部记录（含对话页不渲染的工具调用与纯思考步）。Web 的工具栏（时长/轮次/调用）、搜索框、三泳道时间概览条都已移植；点行不再就地展开，改为推入记录页（`TrajectoryRecordScreen`）完整显示正文、参数/结果/Schema/原始内容与子工具。未移植：概览条的拖拽选区与视口缩放（手机上无法一边拖一边读表） |
 
 ### C. 执行控制与模型（中价值，契约已有）
 
