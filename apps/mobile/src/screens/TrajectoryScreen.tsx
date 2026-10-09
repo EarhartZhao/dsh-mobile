@@ -187,6 +187,11 @@ export function TrajectoryScreen({ manager, sessionId, onBack, onOpenRecord }: P
           <Text style={styles.backLabel}>{t('chat.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.title} numberOfLines={1}>{t('chat.trajectory')}</Text>
+        {/* The title centres in what is left between the header's two side
+            slots, so the back button's width is reserved on the right as well;
+            without it the title centres on the remaining box and reads shifted
+            to the right. */}
+        <View style={styles.sideSpacer} />
       </View>
       <Toolbar
         t={t}
@@ -411,6 +416,15 @@ function ClockGlyph({ color }: { color: string }): React.JSX.Element {
 }
 
 /**
+ * The header's two side slots, in points.
+ *
+ * The back button needs room for its chevron and its label; the right slot is
+ * the same width and holds nothing, which is what puts the title in the middle
+ * of the screen rather than in the middle of the space the back button left.
+ */
+const HEADER_SIDE = 88
+
+/**
  * The turn's own boundary row.
  *
  * The Web marks the same boundary with a sticky header carrying the turn's
@@ -549,9 +563,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(2.5),
     gap: spacing(2),
   },
-  back: { flexDirection: 'row', alignItems: 'center', minWidth: 88, gap: 2 },
+  back: { flexDirection: 'row', alignItems: 'center', width: HEADER_SIDE, gap: 2 },
   backLabel: { color: colors.accent, fontSize: fontSize.body },
   title: { flex: 1, color: colors.text, fontSize: fontSize.body, fontWeight: '600', textAlign: 'center' },
+  sideSpacer: { width: HEADER_SIDE },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -592,7 +607,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: chat.hover,
   },
-  searchInput: { flex: 1, padding: 0, color: chat.labelPrimary, fontSize: fontSize.tiny },
+  /**
+   * The pill is a fixed 28 points tall, and the input fills it.
+   *
+   * Android lays a single-line input's text out from the top of its box and
+   * pads the font's ascent asymmetrically, so the placeholder rode high in the
+   * pill while the magnifier beside it sat on the middle line. Centring the
+   * text vertically and dropping the font padding puts both on the same line.
+   */
+  searchInput: {
+    flex: 1,
+    height: 28,
+    padding: 0,
+    paddingVertical: 0,
+    color: chat.labelPrimary,
+    fontSize: fontSize.tiny,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+  },
   sessionTitle: {
     paddingHorizontal: spacing(4),
     paddingBottom: spacing(1),
