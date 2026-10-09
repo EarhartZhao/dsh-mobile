@@ -379,17 +379,33 @@ function Toolbar({
       </TouchableOpacity>
       <View style={styles.search}>
         <Icon name="SearchOutline" size={11} color={chat.labelTertiary} />
-        <TextInput
-          style={styles.searchInput}
-          value={query}
-          onChangeText={onQueryChange}
-          placeholder={t('trajectory.toolbar.searchPlaceholder')}
-          placeholderTextColor={chat.labelCaption}
-          accessibilityLabel={t('trajectory.toolbar.search')}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-        />
+        <View style={styles.searchField}>
+          <TextInput
+            style={styles.searchInput}
+            value={query}
+            onChangeText={onQueryChange}
+            accessibilityLabel={t('trajectory.toolbar.search')}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {/* A single-line input draws its native placeholder about half a line
+              below the text it stands in for, so the hint is a plain Text laid
+              over the field instead: it centres the same way the magnifier
+              does, and disappears as soon as the box holds anything. */}
+          {query === '' && (
+            <View
+              style={styles.searchHintLayer}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Text style={styles.searchHint} numberOfLines={1}>
+                {t('trajectory.toolbar.searchPlaceholder')}
+              </Text>
+            </View>
+          )}
+        </View>
         {query !== '' && (
           <TouchableOpacity
             accessibilityRole="button"
@@ -608,12 +624,24 @@ const styles = StyleSheet.create({
     backgroundColor: chat.hover,
   },
   /**
-   * The pill is a fixed 28 points tall, and the input fills it.
-   *
-   * Android lays a single-line input's text out from the top of its box and
-   * pads the font's ascent asymmetrically, so the placeholder rode high in the
-   * pill while the magnifier beside it sat on the middle line. Centring the
-   * text vertically and dropping the font padding puts both on the same line.
+   * The field keeps the pill's fixed 28 points so the input and the hint share
+   * one box; the hint itself is centred by flexbox rather than by the type
+   * metrics of a single-line input, which is what the magnifier already does.
+   */
+  searchField: { flex: 1, height: 28, justifyContent: 'center' },
+  searchHintLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  searchHint: { color: chat.labelCaption, fontSize: fontSize.tiny },
+  /**
+   * The input fills the field's 28 points instead of hugging its own font, so
+   * the text it holds lands on the pill's middle line rather than on the box's
+   * top edge; Android needs both hints to reach the same line.
    */
   searchInput: {
     flex: 1,
