@@ -19,6 +19,7 @@ import {
   prettyJson,
   stepTokenUsage,
   type ConversationItem,
+  type StepTokenUsage,
   type ToolSubCall,
   type Turn,
 } from '@dsh-mobile/core'
@@ -41,12 +42,6 @@ export type TrajectoryKind =
   | 'delivery'
   | 'other'
 
-/** One labelled block inside a record's body (a tool's parameters, its schema, …). */
-export interface TrajectorySection {
-  label: string
-  text: string
-}
-
 /** One step's billed buckets, laid out as the Web's three metric columns. */
 export interface TrajectoryMetrics {
   input?: number
@@ -66,10 +61,32 @@ export interface RawTrajectoryRecord {
   meta: string
   /** The one-line body shown in the list. */
   preview: string
-  /** The full body, shown on the record's own page. */
+  /** The full body: the inspector's 预览 / 原始内容 pages print this. */
   body?: string
-  /** Extra labelled blocks, shown on the record's own page. */
-  sections: TrajectorySection[]
+  /**
+   * The reasoning that produced this record, when it owns one.
+   *
+   * The ledger files a step's 思考 as a row of its own, and this is the same
+   * text attached to the answer so the record page can open with the thinking
+   * the Web's own inspector shows above an assistant message.
+   */
+  thinking?: string
+  /** A call's captured parameters, verbatim — the inspector's 参数 page. */
+  payload?: string
+  /** The schema the model was shown for this call — the inspector's Schema page. */
+  schema?: string
+  /** 「来源」: the one-line label over the status, e.g. 用户 or 目标 · Round 2. */
+  source?: string
+  /**
+   * The raw source object behind {@link RawTrajectoryRecord.source}, printed
+   * verbatim on the inspector's 来源 page.
+   */
+  sourceJson?: unknown
+  /**
+   * The session-global request this record answered, numbered the way the
+   * Web's ledger numbers them (`请求 #N`).
+   */
+  requestNumber?: number
   /** Nested calls a tool row owns (the Web's 子工具 rows). */
   children: RawTrajectoryRecord[]
   /** The Web's three message columns; only assistant rows carry them. */
@@ -79,6 +96,10 @@ export interface RawTrajectoryRecord {
   time: number
   /** When the work itself began, when the log recorded it apart from `time`. */
   startedAt?: number
+  /** When the step's first visible token arrived, when the log recorded it. */
+  firstTokenTime?: number
+  /** When the work itself finished: the end of the inspector's timing window. */
+  completedTime?: number
   /** When the work finished, when that is later than `time`. */
   endedAt?: number
   /** The record's own measured wall time, which is what the timeline scales by. */
@@ -167,6 +188,18 @@ export const TRAJECTORY_LANES = ['input', 'model', 'tools'] as const
  */
 export function projectTrajectory(turns: Turn[], t: Translate): TrajectoryTurn[] {
   let index = 0
+  /**
+   * The session-global request counter, the Web's own.
+   *
+   * The Web numbers every model call and every compaction in the order its
+   * anchor was recorded, and prints that number on the record that answered
+   * it. The app holds no request ledger of its own, but the log carries the
+   * same anchors: one assistant step, one compaction, one live stream, in
+   * order. Counting the items rather than the rendered rows keeps the numbers
+   * honest even for a step that answered with nothing but tool calls and so
+   * has no row of its own.
+   */
+  let request = 0
   const next: TrajectoryTurn[] = []
   turns.forEach((turn, position) => {
     const ordinal = position + 1
@@ -192,8 +225,13 @@ export function projectTrajectory(turns: Turn[], t: Translate): TrajectoryTurn[]
         records: [...records],
       })
     }
-    const number = (record: RawTrajectoryRecord, group: string): TrajectoryRecord => ({
+    const number = (
+      record: RawTrajectoryRecord,
+      group: string,
+      requestNumber?: number,
+    ): TrajectoryRecord => ({
       ...record,
+      ...(requestNumber === undefined ? {} : { requestNumber }),
       index: ++index,
       turn: ordinal,
       group,
@@ -201,22 +239,25 @@ export function projectTrajectory(turns: Turn[], t: Translate): TrajectoryTurn[]
     })
     for (const item of turn.items) {
       const step = stepOf(item)
+      const opened = item.kind === 'assistant' || item.kind === 'stream' || item.kind === 'compaction'
+        ? ++request
+        : undefined
       if (item.kind === 'compaction') {
         const key = `compaction:${item.seq}`
         const title = t('trajectory.group.compaction', { seq: item.seq })
         const group = stepGroup(key, title)
-        group.records.push(...recordsFor(item, t, record => number(record, title)))
+        group.records.push(...recordsFor(item, t, record => number(record, title, opened)))
         continue
       }
       if (step === undefined) {
         const title = t('trajectory.group.message')
-        pushMessage(recordsFor(item, t, record => number(record, title)))
+        pushMessage(recordsFor(item, t, record => number(record, title, opened)))
         continue
       }
       const key = `step:${step}`
       const title = t('trajectory.group.step', { step })
       const group = stepGroup(key, title)
-      group.records.push(...recordsFor(item, t, record => number(record, title)))
+      group.records.push(...recordsFor(item, t, record => number(record, title, opened)))
     }
     for (const group of groups) {
       const span = spanOf(group.records)
@@ -449,7 +490,10 @@ export function searchTrajectory(turns: TrajectoryTurn[], query: string): Set<nu
             candidate.meta,
             candidate.preview,
             candidate.body ?? '',
-            ...candidate.sections.flatMap(entry => [entry.label, entry.text]),
+            candidate.thinking ?? '',
+            candidate.payload ?? '',
+            candidate.schema ?? '',
+            candidate.source ?? '',
           ].join('\n').toLowerCase()
           if (terms.every(term => text.includes(term))) matches.add(candidate.index)
         }
@@ -499,7 +543,8 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         meta: item.images.length === 0 ? '' : t('trajectory.images', { count: item.images.length }),
         preview: oneLine(item.text),
         body: item.text,
-        sections: [],
+        source: messageSourceLabel(item.source, t('trajectory.kind.user'), t),
+        ...(item.source === undefined ? {} : { sourceJson: item.source }),
         children: [],
         time: item.time,
       }]
@@ -512,7 +557,7 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         meta: '',
         preview: oneLine(item.text),
         body: item.text,
-        sections: [],
+        ...(item.sourceKind === undefined ? {} : { source: capitalize(item.sourceKind) }),
         children: [],
         time: item.time,
       }]
@@ -527,7 +572,12 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         meta: '',
         preview: oneLine(item.text),
         body: item.text,
-        sections: [],
+        source: messageSourceLabel(
+          item.source,
+          item.sourceKind === undefined ? t('trajectory.kind.context') : capitalize(item.sourceKind),
+          t,
+        ),
+        ...(item.source === undefined ? {} : { sourceJson: item.source }),
         children: [],
         time: item.time,
       }]
@@ -542,10 +592,11 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
           meta: '',
           preview: firstLine(item.reasoning),
           body: item.reasoning,
-          sections: [],
           children: [],
           time: item.time,
           ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
+          ...(item.firstTokenTime === undefined ? {} : { firstTokenTime: item.firstTokenTime }),
+          completedTime: item.time,
         })
       }
       if (item.text.trim() !== '') records.push(assistantRecord(item.key, item.text, item, t))
@@ -556,17 +607,13 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
       // own state, and replaced by the `assistant` line when the step lands.
       return item.text.trim() === ''
         ? []
-        : [assistantRecord(item.key, item.text, undefined, t, true)]
+        : [assistantRecord(item.key, item.text, item, t, true)]
     case 'tool': {
       const result = item.resultText.trim()
       const args = item.args.trim()
       const duration = item.startedAt === undefined || item.endedAt === undefined
         ? undefined
         : Math.max(0, item.endedAt - item.startedAt)
-      const sections: TrajectorySection[] = [
-        ...(args === '' ? [] : [{ label: t('trajectory.args'), text: compactJson(item.args, 4_000) }]),
-        ...(item.schema === undefined ? [] : [{ label: t('trajectory.schema'), text: prettyJson(item.schema) }]),
-      ]
       const meta = [
         toolStatusLabel(item.status, t),
         ...(duration === undefined || duration <= 0 ? [] : [runDurationLabel(duration, t)]),
@@ -581,7 +628,8 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         status: item.status === 'running' ? 'running' : item.status === 'error' ? 'error' : 'done',
         preview: result !== '' ? oneLine(result) : item.resultPreview,
         ...(result === '' ? {} : { body: result }),
-        sections,
+        ...(args === '' ? {} : { payload: compactJson(item.args, 4_000) }),
+        ...(item.schema === undefined ? {} : { schema: prettyJson(item.schema) }),
         children: item.subCalls.map(subCall => subtoolRecord(item.key, subCall, t)),
         time: item.time,
         ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
@@ -595,10 +643,9 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         kind: 'tool',
         badge: t('trajectory.kind.preparing'),
         title: toolDisplayName(item.name, t),
-        meta: t('trajectory.status.running'),
+        meta: t('trajectory.status.pending'),
         status: 'running',
         preview: '',
-        sections: [],
         children: [],
         time: item.time,
       }]
@@ -611,7 +658,6 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         meta: '',
         preview: oneLine(item.summary),
         body: item.summary,
-        sections: [],
         children: [],
         time: item.time,
       }]
@@ -624,7 +670,7 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         title: item.eventType,
         meta: '',
         preview: compactJson(item.data, 160),
-        sections: [{ label: t('trajectory.raw'), text: prettyJson(item.data) }],
+        body: prettyJson(item.data),
         children: [],
         time: item.time,
       }]
@@ -637,7 +683,6 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
         meta: '',
         preview: item.files.map(file => file.path).join(t('chat.step.separator')),
         body: item.files.map(file => file.path).join('\n'),
-        sections: [],
         children: [],
         time: item.time,
       }]
@@ -646,11 +691,21 @@ function rawRecordsFor(item: ConversationItem, t: Translate): RawTrajectoryRecor
   }
 }
 
+/** What an answer needs to know, whether it is durable or still streaming. */
+interface AnswerSource {
+  time: number
+  reasoning: string
+  startedAt?: number
+  firstTokenTime?: number
+  usage?: StepTokenUsage
+  interrupted?: boolean
+}
+
 /** One answer — a step's own text, or the stream carrying it before it lands. */
 function assistantRecord(
   key: string,
   text: string,
-  item: Extract<ConversationItem, { kind: 'assistant' }> | undefined,
+  item: AnswerSource | undefined,
   t: Translate,
   running = false,
 ): RawTrajectoryRecord {
@@ -662,9 +717,11 @@ function assistantRecord(
       output: usage.outputTokens,
       ...(usage.reasoningTokens === undefined ? {} : { think: usage.reasoningTokens }),
     }
-  const duration = item?.startedAt === undefined || item.time <= item.startedAt
+  const answered = item?.time ?? 0
+  const duration = item?.startedAt === undefined || answered <= item.startedAt
     ? undefined
-    : item.time - item.startedAt
+    : answered - item.startedAt
+  const thinking = item === undefined ? '' : item.reasoning.trim()
   const meta = [
     ...(duration === undefined ? [] : [runDurationLabel(duration, t)]),
     ...(item?.interrupted === true ? [t('chat.interrupted')] : []),
@@ -673,16 +730,18 @@ function assistantRecord(
     key,
     kind: 'assistant',
     badge: t('trajectory.kind.assistant'),
-    title: running ? t('trajectory.status.running') : t('trajectory.kind.assistant'),
+    title: running ? t('trajectory.status.pending') : t('trajectory.kind.assistant'),
     meta,
     status: running ? 'running' : 'done',
     preview: oneLine(text),
     body: text,
-    sections: [],
+    ...(thinking === '' ? {} : { thinking: item?.reasoning ?? '' }),
     children: [],
     ...(metrics === undefined ? {} : { metrics }),
-    time: item?.time ?? 0,
+    time: answered,
     ...(item?.startedAt === undefined ? {} : { startedAt: item.startedAt }),
+    ...(item?.firstTokenTime === undefined ? {} : { firstTokenTime: item.firstTokenTime }),
+    ...(item === undefined || running ? {} : { completedTime: item.time }),
     ...(duration === undefined ? {} : { durationMs: duration }),
   }
 }
@@ -691,9 +750,6 @@ function assistantRecord(
 function subtoolRecord(parentKey: string, call: ToolSubCall, t: Translate): RawTrajectoryRecord {
   const args = call.args.trim()
   const result = call.resultText.trim()
-  const sections: TrajectorySection[] = [
-    ...(args === '' ? [] : [{ label: t('trajectory.args'), text: compactJson(call.args, 4_000) }]),
-  ]
   return {
     key: `${parentKey}:sub:${call.callId}`,
     kind: 'subtool',
@@ -703,15 +759,43 @@ function subtoolRecord(parentKey: string, call: ToolSubCall, t: Translate): RawT
     status: call.status === 'running' ? 'running' : call.status === 'error' ? 'error' : 'done',
     preview: result !== '' ? oneLine(result) : call.resultPreview,
     ...(result === '' ? {} : { body: result }),
-    sections,
+    ...(args === '' ? {} : { payload: compactJson(call.args, 4_000) }),
     children: call.subCalls.map(nested => subtoolRecord(`${parentKey}:${call.callId}`, nested, t)),
     time: call.time,
   }
 }
 
+/**
+ * The Web's own `messageSourceLabel`, on the raw source object.
+ *
+ * A prompt's source is what says who wrote it: the reader (`user`), the goal
+ * loop (`goal`, with the round it belongs to), or a plugin. Anything the
+ * client does not recognise is named by its own kind rather than being hidden,
+ * and a record with no source at all falls back to the row's own kind so the
+ * line is never blank.
+ */
+function messageSourceLabel(source: unknown, fallback: string, t: Translate): string {
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) return fallback
+  const properties = source as Record<string, unknown>
+  const kind = properties.kind
+  if (kind === 'user') return t('trajectory.kind.user')
+  if (kind === 'goal') {
+    const round = properties.round
+    return typeof round === 'number' && round > 0
+      ? t('trajectory.source.goalRound', { round })
+      : t('trajectory.source.goal')
+  }
+  return typeof kind === 'string' && kind !== '' ? capitalize(kind) : fallback
+}
+
+/** A source kind printed the way the Web prints it: first letter capitalised. */
+function capitalize(value: string): string {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`
+}
+
 function toolStatusLabel(status: 'running' | 'done' | 'error', t: Translate): string {
   return status === 'running'
-    ? t('trajectory.status.running')
+    ? t('trajectory.status.pending')
     : status === 'error' ? t('trajectory.status.failed') : t('trajectory.status.done')
 }
 

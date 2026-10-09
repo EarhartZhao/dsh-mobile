@@ -544,6 +544,46 @@
 > 压缩空档、空查询、逐词命中；`system-back` 与 `route` 各新增记录页的往返一例）；
 > 工作区 `typecheck` 清、`sync-protocol:check` 通过、`packages/core` `test` 全过。
 
+> 2026-10-09 追加（记录详情页按 Web 检查器的形状重做）：
+>
+> ① **分页**：上一轮把检查器搬成了一页平铺，形状仍与 Web 不同。现在对齐
+> `TrajectoryTable.tsx` 的 `detailTabs`：助手/用户/上下文是**概述 / 预览 / 原始内容**
+> （有来源对象时再加**来源**，打印 Web `MessageSource` 的原始 JSON），工具是**概述 /
+> 参数 / 结果 / Schema / 计时**，系统提示词单页，压缩只有**概述 / 原始内容**。顶部一行
+> 是 Web 的 tab 条，当前页带下划线；标题区改成 Web 检查器的「分类 + 第 N 轮 · 第 M 步」。
+> 记录内容的切换不再重算投影——列表、概览与这一页读同一份 `projectTrajectory`。
+>
+> ② **概述页补齐 Web 的读数**：来源（用户的 source 标签：用户 / 目标 · Round N /
+> `kind` 首字母大写；助手是**请求 #N**，编号与 Web 一样按 assistant 步与压缩的日志顺序
+> 连续编，含没有正文、只调用工具的步）、`层级`、`状态`（Web 的 `statusOf`：错误→失败、
+> 空压缩与无结果的调用→等待中，其余已完成；未完成的字样统一改成 Web 的「等待中」）、
+> message 的三行 token（`Token` = output、`推理` = reasoning、`内容` = output − reasoning）、
+> 以及**请求计时**五项：开始时间（本地时间带毫秒，与 Web `formatStartedAt` 同格式）、
+> 总时长、首 token 延迟、生成、吞吐量（tok/s，1 位小数）。缺项各有专门文案
+> （步骤开始时间不可用 / 首 token 时间不可用 / 输出 token 数不可用 / 时长过短），
+> 不是印 0。
+>
+> ③ **首 token 时间落到 core**：`assistant/message` 只记录答案落地的时间，TTFT 的锚点
+> 只在 chunk 流里。`deriveConversation` 现在按 Web 的 `isTokenDelta`（text/reasoning delta
+> 非空，或 tool-call delta 带 name/argumentsDelta）记每个 step 的首个 token，挂到
+> `assistant` 与 `stream` 项上（`firstTokenTime`）；没有 chunk 的会话重放则如实显示
+> 「首 token 时间不可用」。同时把 prompt 的 source 原对象带进 `user` / `context` 项
+> （`source`），供「来源」页打印。
+>
+> ④ **预览/原始内容**：预览走聊天同一套 Markdown 规则（`markdownPreviewRules`），助手的
+> 预览先渲染思考块再渲染正文——与 Web 的 `MarkdownRecordContent` 一致；原始内容是不渲染、
+> 可选择的同一段文本。参数/Schema/来源 JSON 用等宽字，结果按正文排。
+>
+> 验证：`apps/mobile` `typecheck` 清、`lint` 0 error（224 warning，与基线同量级）、
+> `test` 34 套 289 例全过（`TrajectoryRecordScreen` 重写为 7 例：助手概述的
+> 来源/状态/三行 token/五项计时与思考预览、工具的参数与 Schema 分页、结果与子工具留在
+> 概述、prompt 的来源标签、系统提示词单页、记录缺失、返回；`packages/core` 新增 2 例：首 token 锚点
+> 在 stream 与 settled message 之间保持不变、prompt 的 source 原对象保留）；工作区
+> `typecheck` 清、`sync-protocol:check` 通过、`packages/core` `test` 全过（23 套 172 例）。
+> 本轮**没有真机/模拟器肉眼复核**：Android 停在锁屏（需要用户解锁），iOS 模拟器按约定
+> 不用抢真实鼠标的工具驱动；记录页的渲染顺序用一次性的 headless 渲染核对过（
+> 概述 → 来源/请求 #N → 层级 → 状态 → Token/推理/内容 → 预览（思考块 + 正文）→ 请求计时）。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、
@@ -586,7 +626,7 @@
 | 上下文用量统计 | ✅ assistant/message.usage + contextBreakdown 投影 | ● | token 用量条已接入 |
 | Compaction 指示 | ✅ compaction 投影 + assistant 摘要 | ● | 压缩/摘要标记已接入 |
 | 会话标题/元信息头 | ✅ projection(title) + summary | ● | 两行元信息：子智能体计数（最左）与模型切换一行，目录（点开弹层可复制整条路径）与模式一行；父会话行、轨迹入口已接入，更新时间按需求下线 |
-| 会话轨迹视图 | ✅ 客户端本地投影（`deriveConversation` + `groupTurns`，投影在 `src/trajectory-model.ts`） | ● | Web 的 conversation.view 第二个 tab；按轮次列出全部记录（含对话页不渲染的工具调用与纯思考步）。Web 的工具栏（时长/轮次/调用）、搜索框、三泳道时间概览条都已移植；点行不再就地展开，改为推入记录页（`TrajectoryRecordScreen`）完整显示正文、参数/结果/Schema/原始内容与子工具。未移植：概览条的拖拽选区与视口缩放（手机上无法一边拖一边读表） |
+| 会话轨迹视图 | ✅ 客户端本地投影（`deriveConversation` + `groupTurns`，投影在 `src/trajectory-model.ts`） | ● | Web 的 conversation.view 第二个 tab；按轮次列出全部记录（含对话页不渲染的工具调用与纯思考步）。Web 的工具栏（时长/轮次/调用）、搜索框、三泳道时间概览条都已移植；点行不再就地展开，改为推入记录页（`TrajectoryRecordScreen`）。记录页按 Web 检查器分页：助手/用户/上下文是概述/预览/原始内容（+来源），工具是概述/参数/结果/Schema/计时，概述含来源（请求 #N）、状态、三行 token 与请求计时五项（开始时间/总时长/首 token 延迟/生成/吞吐量）。未移植：概览条的拖拽选区与视口缩放（手机上无法一边拖一边读表）、请求级检查器的选项/用量页与跨记录跳转（父助手消息 / 请求 #N 的左右跳转） |
 
 ### C. 执行控制与模型（中价值，契约已有）
 

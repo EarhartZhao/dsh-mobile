@@ -10,7 +10,16 @@ import type { SessionState } from './session-store.ts'
 import { isUnclaimedSurfaceEvent } from './unknown-event.ts'
 
 export type ConversationItem =
-  | { kind: 'user'; key: string; seq: number; time: number; text: string; images: ConversationImage[] }
+  | {
+      kind: 'user'
+      key: string
+      seq: number
+      time: number
+      text: string
+      images: ConversationImage[]
+      /** The source object the prompt rode in on, for the trajectory's 来源 tab. */
+      source?: unknown
+    }
   | {
       kind: 'assistant'
       key: string
@@ -37,6 +46,12 @@ export type ConversationItem =
        * The trajectory's 「时间」 column is this to the message time.
        */
       startedAt?: number
+      /**
+       * Wall clock of the step's first visible token — the anchor the Web's
+       * 「首 token 延迟」 is measured from. Read off the live `assistant/chunk`
+       * stream, so a replayed session that kept no chunks leaves it absent.
+       */
+      firstTokenTime?: number
     }
   | { kind: 'compaction'; key: string; seq: number; time: number; summary: string; compactionId: string }
   | {
@@ -75,6 +90,8 @@ export type ConversationItem =
       reasoning: string
       /** Wall clock of the step's own `step/start`, when the log carried one. */
       startedAt?: number
+      /** Wall clock of the step's first visible token, when chunks carried one. */
+      firstTokenTime?: number
     }
   /**
    * A tool the model has announced but not yet dispatched. The host streams the
@@ -145,6 +162,8 @@ export type ConversationItem =
       text: string
       /** e.g. `plugin`, `goal`, `skill` — what produced this injection. */
       sourceKind?: string
+      /** The source object itself, which the Web's 来源 tab prints verbatim. */
+      source?: unknown
     }
   /**
    * Files the model declared as deliverables (`present` tool). The host records
@@ -406,6 +425,16 @@ export function deriveConversation(session: SessionState, options: ConversationO
    * the same lookup the Web's trajectory performs.
    */
   const toolSchemas = new Map<string, unknown>()
+  /**
+   * When each step first produced a visible token, keyed `turn:step`.
+   *
+   * This is the anchor the Web's 「首 token 延迟」 measures from, and the only
+   * place it exists is the live chunk stream: the durable `assistant/message`
+   * records when the answer landed, not when the model started typing. A
+   * replayed session that kept no chunks therefore has no anchor, and the
+   * record says so rather than inventing one.
+   */
+  const firstTokens = new Map<string, number>()
   /** Whether the rendered system prompt has already been recorded. */
   let sawSystemPrompt = false
 
@@ -427,11 +456,13 @@ export function deriveConversation(session: SessionState, options: ConversationO
         // record rather than disappearing. Absent source = keep (defensive).
         // Wire shape: data is the message itself ({content, source, role, id}).
         const content = isObj(data) ? extractContent(data['message'] ?? data) : undefined
-        if (isObj(data)) {
-          const source = isObj(data['source']) ? data['source']
+        const source = isObj(data)
+          ? isObj(data['source']) ? data['source']
             : isObj(data['message']) && isObj((data['message'] as Record<string, unknown>)['source'])
               ? (data['message'] as Record<string, unknown>)['source']
               : undefined
+          : undefined
+        if (isObj(data)) {
           const sourceKind = isObj(source) && typeof source['kind'] === 'string' ? source['kind'] : undefined
           if (sourceKind !== undefined && sourceKind !== 'user') {
             items.push({
@@ -441,11 +472,20 @@ export function deriveConversation(session: SessionState, options: ConversationO
               time,
               text: blocksToText(content),
               ...(sourceKind === '' ? {} : { sourceKind }),
+              ...(source === undefined ? {} : { source }),
             })
             break
           }
         }
-        items.push({ kind: 'user', key: `u${seq}`, seq, time, text: blocksToText(content), images: blocksToImages(content) })
+        items.push({
+          kind: 'user',
+          key: `u${seq}`,
+          seq,
+          time,
+          text: blocksToText(content),
+          images: blocksToImages(content),
+          ...(source === undefined ? {} : { source }),
+        })
         break
       }
       case 'developer/message': {
@@ -462,6 +502,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
           time,
           text: blocksToText(extractContent(message)),
           ...(sourceKind === undefined || sourceKind === '' ? {} : { sourceKind }),
+          ...(source === undefined ? {} : { source }),
         })
         break
       }
@@ -515,6 +556,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
         finalizedSteps.add(`${turn}:${step}`)
         live.delete(`${turn}:${step}`)
         const startedAt = stepStarts.get(`${turn}:${step}`)
+        const firstTokenTime = firstTokens.get(`${turn}:${step}`)
         const message = data['message']
         const content = isObj(message) ? message['content'] : undefined
         const messageId = isObj(message) && typeof message['id'] === 'string' ? message['id'] : undefined
@@ -542,6 +584,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
           producedFiles,
           ...(usage === null ? {} : { usage }),
           ...(startedAt === undefined ? {} : { startedAt }),
+          ...(firstTokenTime === undefined ? {} : { firstTokenTime }),
         })
         break
       }
@@ -636,6 +679,12 @@ export function deriveConversation(session: SessionState, options: ConversationO
         const id = `${turn}:${step}`
         const chunk = data['chunk']
         if (!isObj(chunk)) break
+        // The step's first visible token. Recorded here rather than on the
+        // buffer because a step can announce a tool call before it writes any
+        // text, and the anchor must survive that.
+        if (turn >= 0 && step >= 0 && isTokenDelta(chunk) && !firstTokens.has(id)) {
+          firstTokens.set(id, time)
+        }
         // A named tool-call delta is the model announcing a call it has not
         // made yet. The web turns that gap into a "preparing" row so a long
         // argument stream does not look like a stalled turn.
@@ -792,6 +841,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
     for (const buffer of live.values()) {
       if (finalizedSteps.has(`${buffer.turn}:${buffer.step}`)) continue
       const startedAt = stepStarts.get(`${buffer.turn}:${buffer.step}`)
+      const firstTokenTime = firstTokens.get(`${buffer.turn}:${buffer.step}`)
       items.push({
         kind: 'stream',
         key: `s${buffer.turn}:${buffer.step}`,
@@ -802,6 +852,7 @@ export function deriveConversation(session: SessionState, options: ConversationO
         text: buffer.text,
         reasoning: buffer.reasoning,
         ...(startedAt === undefined ? {} : { startedAt }),
+        ...(firstTokenTime === undefined ? {} : { firstTokenTime }),
       })
     }
     /** Announced calls get the same tail treatment: they are the newest thing
@@ -827,6 +878,29 @@ export function deriveConversation(session: SessionState, options: ConversationO
 
 function extractContent(message: unknown): unknown {
   return isObj(message) ? message['content'] : undefined
+}
+
+/**
+ * Whether one stream chunk carries visible model output.
+ *
+ * The Web's own `isTokenDelta`: a text or reasoning delta has to be non-empty
+ * (the host opens a stream with empty deltas that say nothing), while a
+ * tool-call delta counts as soon as it names the call, because that name is
+ * the first thing the model produced. The first chunk that passes this test is
+ * what a step's 「首 token 延迟」 is measured from.
+ * @param chunk - the `assistant/chunk` payload's own chunk object.
+ * @returns true when the chunk is the model's first visible token so far.
+ */
+function isTokenDelta(chunk: Record<string, unknown>): boolean {
+  switch (chunk['type']) {
+    case 'text-delta':
+    case 'reasoning-delta':
+      return typeof chunk['text'] === 'string' && chunk['text'] !== ''
+    case 'tool-call-delta':
+      return chunk['argumentsDelta'] !== '' || chunk['name'] !== undefined
+    default:
+      return false
+  }
 }
 
 function truncate(text: string, max: number): string {

@@ -13,6 +13,13 @@ function feed(store: SessionStore, seq: number, type: string, data: unknown, vie
   })
 }
 
+/** One frame with its own clock, for the fields read off the event's time. */
+function push(store: SessionStore, seq: number, time: number, type: string, data: unknown): void {
+  store.applyMuxFrame(RpcId(crypto.randomUUID()), {
+    type: 'session/event', sessionId: sid, event: { seq, time, type, data } as never,
+  })
+}
+
 describe('deriveConversation', () => {
   it('discloses an unclaimed surface event instead of dropping it', () => {
     const store = new SessionStore()
@@ -485,6 +492,43 @@ describe('deriveConversation', () => {
     items = deriveConversation(store.sessions.get('s-1')!)
     expect(items.map(i => i.kind)).toEqual(['user', 'assistant'])
     expect(items[1]).toMatchObject({ text: '正在回答。' })
+  })
+
+  it('anchors a step\'s first token on the first chunk that carried one', () => {
+    const store = new SessionStore()
+    feed(store, 1, 'user/message', { message: { content: '问' } })
+    // The host opens a stream with deltas that say nothing; the second chunk is
+    // the model's first real token, and that is the Web's 首 token anchor.
+    push(store, 2, 1_500, 'assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', text: '' } })
+    push(store, 3, 1_900, 'assistant/chunk', { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: '嗯' } })
+    push(store, 4, 2_300, 'assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', text: '好' } })
+
+    // While the answer is still arriving the stream row carries the anchor…
+    const streaming = deriveConversation(store.sessions.get('s-1')!)
+    expect(streaming[1]).toMatchObject({ kind: 'stream', firstTokenTime: 1_900 })
+
+    // …and the settled message keeps it, so 首 token 延迟 survives the swap.
+    push(store, 5, 3_000, 'assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'text', text: '好了' }] } })
+    const settled = deriveConversation(store.sessions.get('s-1')!)
+    expect(settled[1]).toMatchObject({ kind: 'assistant', firstTokenTime: 1_900, time: 3_000 })
+  })
+
+  it('keeps the source object a prompt rode in on, for the trajectory', () => {
+    const store = new SessionStore()
+    // The reader's own prompt…
+    feed(store, 1, 'user/message', { message: { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } } })
+    // …and a goal round, which is injected for the model rather than written
+    // by the reader: the transcript hides it, the trajectory labels its source.
+    feed(store, 2, 'user/message', {
+      message: { content: [{ type: 'text', text: '目标：查天津' }], source: { kind: 'goal', round: 2 } },
+    })
+    const items = deriveConversation(store.sessions.get('s-1')!)
+    expect(items[0]).toMatchObject({ kind: 'user', source: { kind: 'user' } })
+    expect(items[1]).toMatchObject({
+      kind: 'context',
+      sourceKind: 'goal',
+      source: { kind: 'goal', round: 2 },
+    })
   })
 
   it('interrupted finalization carries the marker through', () => {
