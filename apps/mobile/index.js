@@ -38,6 +38,14 @@ const { name: appName } = require('./app.json');
 // (@react-native/virtualized-lists' feature-flag subpath import, the extracted
 // `Clipboard` getter) or things this app reports through its own top banner, so
 // the phone keeps the terminal's copy of the warning instead of the overlay.
+//
+// Two calls, because they act at different points: `ignoreAllLogs` stops the
+// notification from rendering at all, while `ignoreLogs` drops the matching
+// entries before they reach the store. A warning is raised again on every
+// reload, and RN's Fusebox path re-enables its own notice when a debugger
+// session ends, so silencing the string as well keeps the bar from coming back
+// with it.
 LogBox.ignoreAllLogs(true)
+LogBox.ignoreLogs(['Open debugger to view warnings.'])
 
 AppRegistry.registerComponent(appName, () => App);

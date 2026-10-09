@@ -27,6 +27,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // user's choice, and the Hub's private CA is pinned before any socket opens.
     DshApplyStoredInterfaceStyle(window)
     DshInstallWebSocketSecurity()
+    // React Native paints its own reload banner — "Refreshing…", blue, over the
+    // header — on every Fast Refresh, and nothing in JS can reach it: it is a
+    // native overlay the dev-support layer owns. It is English furniture the
+    // shell never asked for and the shell's own notice already covers what is
+    // worth saying, so it is switched off before React starts. Release builds
+    // default to off anyway; this only affects the debug menu build.
+    RCTDevLoadingViewSetEnabled(false)
     self.window = window
 
     factory.startReactNative(
