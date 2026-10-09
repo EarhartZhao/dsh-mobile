@@ -791,6 +791,7 @@ function AppContent(): React.JSX.Element {
               onOpenSession={openSession}
               onOpenSettings={() => goTo({ name: 'settings' })}
               currentSessionId={lastChatSessionId}
+              onNotice={showAlert}
             />
           ) : route.name === 'connections' ? (
             <ConnectionSwitcherScreen

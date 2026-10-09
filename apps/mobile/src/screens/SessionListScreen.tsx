@@ -4,12 +4,14 @@
  * store 'changed' (throttled).
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { Alert, AppState, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native'
+import { AppState, Clipboard, FlatList, Modal, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native'
 import { TouchableOpacity } from '../components/Touchable'
 import type { ConnectionManager } from '@dsh-mobile/core'
 import { presetSelectionEnabled, type DirectoryListing, type SessionSummary } from '@dsh-mobile/protocol'
+import { ConfirmModal } from '../components/ConfirmModal'
 import { ModalBackdrop } from '../components/ModalBackdrop'
 import { ActionSheet, type SheetAction } from '../components/ActionSheet'
+import type { NoticeLevel } from '../components/NoticeToast'
 import { PromptModal } from '../components/PromptModal'
 import { sessionSections } from '../session-sections'
 import { archivedSessions, isSubagentSession, listedSessions, sessionDisplayTitle, sessionRowTitle } from '@dsh-mobile/core'
@@ -29,6 +31,13 @@ interface Props {
   onOpenSettings?: () => void
   /** Chat the user was in last; its blank row stays visible, as on the Web. */
   currentSessionId?: string | null
+  /**
+   * Failures with nothing on this screen to attach them to — the Host refusing
+   * to open a chat, or a list that has no connection to ask. They ride the
+   * shell's one notice card: `Alert.alert` would draw the OS's own panel, with
+   * the OS's own wording for its buttons, next to those cards.
+   */
+  onNotice?: (text: string, level?: NoticeLevel) => void
 }
 
 function useStoreVersion(manager: ConnectionManager): number {
@@ -51,13 +60,16 @@ function useStoreVersion(manager: ConnectionManager): number {
 function copyPath(path: string): void { Clipboard.setString(path) }
 function sharePath(path: string): void { void Share.share({ message: path }).catch(() => undefined) }
 
-export function SessionListScreen({ manager, onOpenSession, onOpenSettings, currentSessionId }: Props): React.JSX.Element {
+export function SessionListScreen({ manager, onOpenSession, onOpenSettings, currentSessionId, onNotice }: Props): React.JSX.Element {
   const { t } = useI18n()
   useStoreVersion(manager)
   const { store } = manager
   const [query, setQuery] = useState('')
   const [searchHits, setSearchHits] = useState<{ sessionId: string; snippet: string }[] | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  /** The list's two destructive confirmations, as the app's own modal. */
+  const [workspaceDelete, setWorkspaceDelete] = useState<{ workspaceId: string } | null>(null)
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null)
   const [selectedWs, setSelectedWs] = useState<string | null>(null)
   const [wsCreateOpen, setWsCreateOpen] = useState(false)
   const [wsRenameId, setWsRenameId] = useState<string | null>(null)
@@ -146,13 +158,13 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
     setWsRenameId(workspaceId)
   }
 
+  /** Asks first; `deleteWorkspace` below is what runs after the confirmation. */
   const wsDelete = (workspaceId: string): void => {
-    Alert.alert(t('session.deleteWorkspaceTitle'), t('session.deleteWorkspaceMessage'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      { text: t('common.delete'), style: 'destructive', onPress: () => {
-        void manager.client?.workspace.delete({ workspaceId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
-      } },
-    ])
+    setWorkspaceDelete({ workspaceId })
+  }
+
+  const deleteWorkspace = (workspaceId: string): void => {
+    void manager.client?.workspace.delete({ workspaceId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
   }
 
   const wsCreate = (path: string): void => {
@@ -255,7 +267,7 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
     const client = manager.client
     if (creatingSession) return
     if (client === null) {
-      Alert.alert(t('session.notConnected'))
+      onNotice?.(t('session.notConnected'), 'error')
       return
     }
     setCreatingSession(true)
@@ -271,14 +283,14 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
         setCreatedSessionId(result.result.value.sessionId)
         onOpenSession(result.result.value.sessionId)
       } else {
-        Alert.alert(t('session.operationFailed'), t('link.newSessionFailed', {
+        onNotice?.(t('link.newSessionFailed', {
           message: String(result.result.error.message ?? ''),
-        }))
+        }), 'error')
       }
     } catch (cause) {
-      Alert.alert(t('session.operationFailed'), t('link.newSessionFailed', {
+      onNotice?.(t('link.newSessionFailed', {
         message: cause instanceof Error ? cause.message : String(cause),
-      }))
+      }), 'error')
     } finally {
       setCreatingSession(false)
     }
@@ -297,13 +309,13 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
     setSearchHits(items.filter(item => !subagentIds.has(item.sessionId)))
   }
 
+  /** Asks first; `archiveSession` below is what runs after the confirmation. */
   const archive = (sessionId: string): void => {
-    Alert.alert(t('session.archiveTitle'), t('session.archiveMessage'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      { text: t('common.archive'), style: 'destructive', onPress: () => {
-        void manager.client?.workspace.archiveSession({ sessionId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
-      } },
-    ])
+    setArchiveTarget(sessionId)
+  }
+
+  const archiveSession = (sessionId: string): void => {
+    void manager.client?.workspace.archiveSession({ sessionId } as never).catch(() => undefined).finally(() => { void manager.refreshBaseline() })
   }
 
   /** Restore one archived Session; the host answers with the complete archive set. */
@@ -670,6 +682,35 @@ export function SessionListScreen({ manager, onOpenSession, onOpenSettings, curr
           const menu = workspaceMenu
           setWorkspaceMenu(null)
           if (menu !== null) runWorkspaceAction(menu, key)
+        }}
+      />
+      {/* The two destructive answers the list asks for, in the same card the
+          settings screen uses — the sheet above closes into these. */}
+      <ConfirmModal
+        visible={workspaceDelete !== null}
+        title={t('session.deleteWorkspaceTitle')}
+        message={t('session.deleteWorkspaceMessage')}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        danger
+        onCancel={() => setWorkspaceDelete(null)}
+        onConfirm={() => {
+          const target = workspaceDelete
+          setWorkspaceDelete(null)
+          if (target !== null) deleteWorkspace(target.workspaceId)
+        }}
+      />
+      <ConfirmModal
+        visible={archiveTarget !== null}
+        title={t('session.archiveTitle')}
+        message={t('session.archiveMessage')}
+        confirmLabel={t('common.archive')}
+        cancelLabel={t('common.cancel')}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={() => {
+          const target = archiveTarget
+          setArchiveTarget(null)
+          if (target !== null) archiveSession(target)
         }}
       />
     </View>

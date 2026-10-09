@@ -9,6 +9,8 @@ jest.mock('../i18n', () => ({
 }))
 
 import { SessionListScreen } from './SessionListScreen'
+import { ActionSheet } from '../components/ActionSheet'
+import { ConfirmModal } from '../components/ConfirmModal'
 
 /** Only the surface the list touches; the unpair affordance must be gone. */
 const manager = {
@@ -129,6 +131,43 @@ describe('SessionListScreen grouping', () => {
     for (const label of ['common.rename', 'session.fork', 'common.archive']) {
       expect(tree.root.findAllByProps({ children: label }).length).toBeGreaterThan(0)
     }
+  })
+
+  it('asks before archiving, in the app’s own modal, and calls the Host after', () => {
+    /**
+     * This question used to be an `Alert.alert`: the OS drew the panel, chose
+     * the corner radius, and named its own buttons, so the one interaction that
+     * hides a chat did not look like the rest of the app. It is the shared
+     * `ConfirmModal` now, and nothing is asked of the Host until it is answered.
+     */
+    const archiveSession = jest.fn().mockResolvedValue(undefined)
+    const withClient = {
+      ...manager,
+      client: { workspace: { archiveSession } },
+    } as unknown as ConnectionManager
+    const tree = render(withClient)
+    const row = tree.root.findAll(node =>
+      typeof node.props.onLongPress === 'function' &&
+      node.findAllByProps({ children: '第二个会话' }).length > 0,
+    ).at(-1)
+
+    act(() => { row!.props.onLongPress() })
+    const sheet = tree.root.findAllByType(ActionSheet).find(node => node.props.visible === true)!
+    const archiveAction = sheet.findAll(node =>
+      typeof node.props.onPress === 'function' &&
+      node.findAllByProps({ children: 'common.archive' }).length > 0,
+    ).at(-1)
+    act(() => { archiveAction!.props.onPress() })
+
+    const modal = tree.root.findAllByType(ConfirmModal).find(node => node.props.visible === true)
+    expect(modal).toBeDefined()
+    expect(modal!.props.title).toBe('session.archiveTitle')
+    expect(archiveSession).not.toHaveBeenCalled()
+
+    act(() => { modal!.props.onConfirm() })
+
+    expect(archiveSession).toHaveBeenCalledWith({ sessionId: 's2' })
+    expect(tree.root.findAllByType(ConfirmModal).every(node => node.props.visible === false)).toBe(true)
   })
 
   it('draws the same disclosure glyph whether open or closed', () => {

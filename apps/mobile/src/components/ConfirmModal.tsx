@@ -1,7 +1,11 @@
 /**
- * Destructive-action confirmation. The repo already uses the native Alert for
- * one case, but this dialog carries multi-line consequence text that sits
- * inside the app's own dark theme, so it matches the other modals instead.
+ * Destructive-action confirmation — the app's only "are you sure?" card.
+ *
+ * `Alert.alert` drew the OS's panel: the OS's corner radius, the OS's font, and
+ * the OS's wording for its own buttons, which no dictionary here can reach.
+ * Every confirmation (unpair, delete a workspace, archive a chat, full access)
+ * goes through this instead, so the question looks like the rest of the app and
+ * its labels come from `t()`.
  */
 import React from 'react'
 import { Modal, StyleSheet, Text, View } from 'react-native'

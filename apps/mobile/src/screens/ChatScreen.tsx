@@ -6,7 +6,6 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert,
   ActivityIndicator,
   Clipboard,
   Image,
@@ -43,6 +42,7 @@ import { AttachmentImage } from '../components/AttachmentImage'
 import { Icon } from '../icons'
 import { ChatSearchSheet } from '../components/ChatSearchSheet'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { ConfirmModal } from '../components/ConfirmModal'
 import { linkTarget } from '../link-targets'
 import { foldPath } from '../path-label'
 import { markdownCompactStyles, markdownRules, markdownStyles } from '../markdown'
@@ -405,6 +405,8 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   /** Host catalog of switchable presets; null until read, [] when unavailable. */
   const [permissionOptions, setPermissionOptions] = useState<MobilePermissionPreset[] | null>(null)
   const [permissionPickerOpen, setPermissionPickerOpen] = useState(false)
+  /** Waiting on the full-access warning: the last preset the user picked. */
+  const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false)
   const [presetPickerOpen, setPresetPickerOpen] = useState(false)
   /**
    * Where the mode menu hangs off. Both chips open the same floating panel, so
@@ -2072,10 +2074,9 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
   const selectPermission = (value: string): void => {
     setPermissionPickerOpen(false)
     if (value === 'danger-full-access') {
-      Alert.alert(t('chat.fullAccessTitle'), t('chat.fullAccessMessage'), [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('chat.enable'), style: 'destructive', onPress: () => { void runCommand('/permission danger-full-access') } },
-      ])
+      // The whole point of the screen's sandbox is this one preset, so it is
+      // asked for in the app's own modal rather than the OS's alert.
+      setFullAccessConfirmOpen(true)
       return
     }
     void runCommand(`/permission ${value}`)
@@ -2997,6 +2998,19 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
         anchorTop={modeMenuTop}
         onClose={() => setPresetPickerOpen(false)}
         onSelect={selectPreset}
+      />
+      <ConfirmModal
+        visible={fullAccessConfirmOpen}
+        title={t('chat.fullAccessTitle')}
+        message={t('chat.fullAccessMessage')}
+        confirmLabel={t('chat.enable')}
+        cancelLabel={t('common.cancel')}
+        danger
+        onCancel={() => setFullAccessConfirmOpen(false)}
+        onConfirm={() => {
+          setFullAccessConfirmOpen(false)
+          void runCommand('/permission danger-full-access')
+        }}
       />
       <ChatSearchSheet
         visible={searchOpen}

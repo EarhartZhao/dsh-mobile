@@ -37,6 +37,7 @@ jest.mock('react-native-markdown-display', () => {
 })
 
 import { ChatScreen } from './ChatScreen'
+import { ConfirmModal } from '../components/ConfirmModal'
 import { MessageActionRow } from '../components/MessageActions'
 import { WorkspaceBrowserSheet } from '../components/WorkspaceBrowserSheet'
 
@@ -1286,6 +1287,33 @@ describe('ChatScreen composer mode controls', () => {
     act(() => { pressableByLabel(tree, 'permission.readOnly')?.props.onPress() })
     await settle()
     expect(execute).toHaveBeenCalledWith({ sessionId: 's1', line: '/permission read-only' })
+  })
+
+  it('asks before granting full access, in the app’s own modal', async () => {
+    /**
+     * The preset that leaves the sandbox is the one choice here worth a
+     * question, and it used to be asked by `Alert.alert` — the OS's panel, the
+     * OS's button words. It is the shared `ConfirmModal` now, and the command
+     * only runs once the answer is yes.
+     */
+    const { manager, execute } = setupModes({ permission: 'workspace-write', options: OPTIONS })
+    const tree = render(manager)
+    await settle()
+
+    act(() => { pressableByLabel(tree, 'chat.permissionMode(permission.workspaceWrite)')?.props.onPress() })
+    await settle()
+    act(() => { pressableByLabel(tree, 'permission.fullAccess')?.props.onPress() })
+    await settle()
+
+    const modal = tree.root.findAllByType(ConfirmModal).find(node => node.props.visible === true)
+    expect(modal).toBeDefined()
+    expect(modal!.props.title).toBe('chat.fullAccessTitle')
+    expect(execute).not.toHaveBeenCalled()
+
+    act(() => { modal!.props.onConfirm() })
+    await settle()
+
+    expect(execute).toHaveBeenCalledWith({ sessionId: 's1', line: '/permission danger-full-access' })
   })
 
   it('leaves the composer without a switcher when the host offers no catalog', async () => {
