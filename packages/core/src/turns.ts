@@ -399,6 +399,20 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
   let current: Turn | null = null
   /** A `turn/start` seen before its turn's first content row. */
   let pendingStart: number | undefined
+  /** The number that pending `turn/start` named, handed to the turn it opens. */
+  let pendingNumber: number | undefined
+  /**
+   * The `turn/start` number the open turn belongs to, when the log carried one.
+   *
+   * `undefined` while the open turn was opened by a prompt the log placed
+   * before its own boundary, which is also how the Web reads that order.
+   */
+  let currentNumber: number | undefined
+  /**
+   * Which turn each boundary number opened, so a closing event lands on the
+   * turn it names even after a prompt has opened the next one.
+   */
+  const numbered = new Map<number, Turn>()
   /** Preamble (a system prompt, injected context) seen before the first turn. */
   const leading: ConversationItem[] = []
   /** The run of steps the turn is reading right now; an answer closes it. */
@@ -442,22 +456,65 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
       startedAt: pendingStart ?? itemTime(item),
       endedAt: itemTime(item),
     }
+    currentNumber = pendingNumber
+    if (pendingNumber !== undefined) numbered.set(pendingNumber, turn)
     pendingStart = undefined
+    pendingNumber = undefined
     turns.push(turn)
+    // The preamble the log wrote before the first prompt reads above it, the
+    // way the Web orders it: it belongs to the turn that follows, never to a
+    // section of its own.
+    if (leading.length > 0) turn.items.unshift(...leading.splice(0))
     return turn
   }
 
   for (const item of items) {
-    // Turn boundaries carry no content: they time the turn and name its end.
+    /**
+     * The boundaries carry no content of their own, but they are the turn
+     * boundaries: the Web keys each process disclosure, each answer row and
+     * each running clock to one `turn/start … turn/end` pair.
+     *
+     * That matters for a Session the Host keeps running by itself — a goal
+     * round, a retry, a scheduled wake opens a *new* turn with no prompt of its
+     * own. Folding those rounds into the prompt's turn made the first round's
+     * `turn/end` settle the whole run: from then on the log read as finished,
+     * so every later round rendered in the folded shape (its narration dropped,
+     * its steps hidden behind the closing answer) and flipped back to the live
+     * shape the moment a step was in flight. The reader watched the block they
+     * were reading empty out and come back, thousands of pixels at a time, and
+     * a long run spent most of its time blank between two steps.
+     */
     if (item.kind === 'turn-start') {
-      pendingStart = itemTime(item)
+      const time = itemTime(item)
+      if (current !== null && currentNumber !== undefined && currentNumber !== item.turn) {
+        // A round after the prompt's own: it opens a turn of its own, timed by
+        // the boundary itself rather than by whatever content lands next.
+        flushRun()
+        pendingStart = time
+        pendingNumber = item.turn
+        current = open(item)
+      } else if (current === null) {
+        // Nothing owns this boundary yet: it times the turn the prompt below
+        // opens, which is where the log puts a Session's first prompt.
+        pendingStart = time
+        pendingNumber = item.turn
+      } else if (currentNumber === undefined) {
+        // The prompt arrived before its own boundary; this one names it.
+        currentNumber = item.turn
+        numbered.set(item.turn, current)
+      }
       continue
     }
     if (item.kind === 'turn-end') {
-      if (current !== null) {
-        current.endedAt = Math.max(current.endedAt, itemTime(item))
-        current.endReason = item.reason
-        current.endSeq = item.seq
+      // Only the turn the boundary names reads its own end: a prompt — or a
+      // steer — that opened the next block before this one closed must not
+      // inherit it, which is what left a still-running turn settled.
+      const owner = numbered.get(item.turn)
+        ?? (current !== null && currentNumber === undefined ? current : null)
+      if (owner !== null) {
+        owner.endedAt = Math.max(owner.endedAt, itemTime(item))
+        owner.endReason = item.reason
+        owner.endSeq = item.seq
       }
       continue
     }
@@ -472,14 +529,23 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
     }
     // A prompt opens a new turn; anything before the first prompt (a restored
     // greeting, say) still needs a home, so the first item opens one too.
-    if (item.kind === 'user' || current === null) {
+    //
+    // Except the prompt its own boundary just made room for: the log writes
+    // `turn/start` and only then commits the claimed message, so every human
+    // prompt below the first arrives *after* the boundary it belongs to. A turn
+    // the boundary opened and nothing has claimed still is that prompt's home —
+    // what it holds is the preamble the log wrote under the same boundary (a
+    // re-rendered system prompt, injected context), none of it a step or a row.
+    // Opening another turn beside it would leave an empty one the reader has to
+    // scroll past, and seat the prompt in a block the boundary does not name.
+    if (item.kind === 'user' && current !== null && current.endReason === undefined
+      && current.process.length === 0 && current.visible.length === 0) {
+      // This prompt is that turn's first content; it stays where it is.
+    } else if (item.kind === 'user' || current === null) {
       // The previous turn's trailing run belongs to that turn, not to the prompt
       // that just closed it.
       flushRun()
       current = open(item)
-      // The preamble the log wrote before the prompt reads above it, the way
-      // the Web orders it.
-      if (leading.length > 0) current.items.unshift(...leading.splice(0))
     }
 
     current.items.push(item)
@@ -506,10 +572,7 @@ export function groupTurns(items: ConversationItem[], options: TurnGroupOptions 
   if (current === null && leading.length > 0) {
     flushRun()
     const first = leading[0]
-    if (first !== undefined) {
-      current = open(first)
-      current.items = leading.splice(0)
-    }
+    if (first !== undefined) current = open(first)
   }
   // The last turn's final run has no answer after it to close it.
   flushRun()

@@ -2436,6 +2436,16 @@ export function ChatScreen({ manager, sessionId, onBack, onOpenSession, onOpenTr
           key={sessionId}
           data={listRows}
           style={styles.list}
+          // Rows here change shape while the reader watches: a run's steps fold
+          // into its answer when the turn closes, which drops whole rows above
+          // the tail. Android clips a cell by detaching its native view while
+          // the layout the list has already measured stays put, and that is how
+          // a folding transcript came back blank from the top of the frame down
+          // to the running line, for seconds at a time, until the next re-layout
+          // filled it in again. The window decides what is rendered either way —
+          // this only keeps the drawn cells attached, so the cost is the tail of
+          // a screen's worth of views.
+          removeClippedSubviews={false}
           keyExtractor={row => row.key}
           contentContainerStyle={styles.listContent}
           // A refused read is the bar's to explain; claiming "no messages yet"

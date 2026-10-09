@@ -449,6 +449,59 @@
 > 状态栏；点开显示全文三行 + 下方 ×，点 × 关闭；长按弹出「已复制」；连拍测时得到
 > 失败卡约 5s、确认卡约 3s 后自行消失。中文真机文字与截图一致。
 
+> 2026-10-09 追加（每轮 Turn 各成一块，思考块不再自己折叠／闪空）：
+>
+> ① **读到的现象**：`dsh项目前端深入学习课程计划` 这个会话里，同一段思考区在读者
+> 不动手的情况下反复换脸——一会儿是展开的多行工具/思考行，一会儿塌成两三行，
+> 中间还夹着整屏空白（顶带往下到「深度求索中」之间全白，持续 4–7 秒后自己长回来）。
+> 这个会话是 **goal 自动续轮**会话：1 条人类 prompt + 9 个 turn（`turn/start 1..9`，
+> 每轮之间由 `agent/inbox/spliced` 注入 `<goal_round>`），共 179 步、225 次工具调用。
+>
+> ② **根因一，分轮太粗**：`packages/core/src/turns.ts` 的 `groupTurns` 原来**只在人类
+> 消息处开新 turn**，于是 9 轮被合并成 1 块；第一轮的 `turn/end` 一落地就把 `endReason`
+> 写在这个唯一的块上，而那 8 轮自动续轮既没有自己的 prompt、也没有自己的结束事件，
+> `turn.live` 于是退化成「此刻有没有步骤在飞」——**每过一个 step 边界就折叠一次再展开
+> 一次**。折叠会把整块的 narration 收进回答下的一条 disclosure，读者眼前的行数从
+> 20 行掉到 3 行；展开又弹回来。Web 不是这么读的：`ui-conversation` 的 location index
+> 按「最后一个 `turn/start` 直到 `turn/end`」把事件归轮，`ui-chat` 的 `ProcessGroup`
+> 每个 turn 一组，`turn-process` 的 `liveProcess` 也是按轮判定的。
+>
+> ③ **根因二，空白是 Android 的 cell 回收**：行在读者眼皮底下被移除时，Android 的
+> `removeClippedSubviews`（FlatList 默认开）会摘掉 cell 的原生视图，而列表已量好的
+> 布局高度还在——内容高度仍是折叠前的两万来像素，可视区却什么都没有。所以白屏和
+> 折叠是同一件事的两面。
+>
+> ④ **改法**：`groupTurns` 改成 **`turn/start` 即轮边界**（与 Web 同构），并把结算收口到
+> 事件自己点名的那一轮：
+> - `turn/start` 见到不同的 turn 号就开新块，先 `flushRun()` 再计时（自动续轮从此各有
+>   自己的开始时间和 `endReason`）；
+> - `turn-end` 只结算它点名的 turn（`numbered` 表），不再把旧轮的结束扣在刚开的新块上；
+> - **prompt 坐在自己的边界里**：日志的顺序是 `turn/start` 先写、被认领的 `user/message`
+>   后写（宿主 `turn/start → 认领 → append user/message`），所以第一条之后的人类 prompt
+>   都排在它自己的边界**之后**。边界开了、还没有任何步骤和行的 turn 就是这条 prompt 的
+>   家；再给它另开一块会在读者路上留一个空 turn，也把这一轮挂在边界没点名的块上。
+>   （这一段是实机数据逼出来的：只做前三步时，`session-01974258` 等 5 个正常会话多出
+>   了一个 `items=0` 的空轮。）
+> - `apps/mobile/src/screens/ChatScreen.tsx` 的 transcript `FlatList` 加
+>   `removeClippedSubviews={false}`（折叠仍会在每轮结束时收行，不让它再留白）。
+>
+> ⑤ **取证**：把本机 `~/.dsh/sessions` 的 80 个会话全部解码重放（多帧 zstd 按 magic
+> `28 B5 2F FD` 切帧），新旧 `groupTurns` 逐会话对比：**76 个逐字节相同**，4 个变化——
+> 上报的 `session-c03c6af3` 由「1 块 / 427 项」变成 **9 轮**（55/59/37/70/39/45/58/39/25），
+> `0aeded81` 由 96 变成 42/54，`84f31419` 由 148 变成 128/20，`55f9dd5b` 只是把
+> `turn/start` 之后的那条 system 消息从上一轮尾巴挪回它自己那一轮（9/9 → 8/10，轮数不变）。
+> 对上报会话再按 179 个 step 边界逐帧建 transcript：修前那块在连续 27 个 step 里钉在
+> 折叠态的 3 行（整段 9 轮里翻了 7 次脸），修后运行中的那一轮行数随工作单调增长
+> （3→6→8→10…→24），只在真正结束的那一轮才收成折叠态。
+>
+> 验证：`packages/core` `typecheck` 清、`test` 21 套 170 例全过（`turns.spec.ts` 新增 2 例：
+> 边界各成一轮且自动续轮自己活着、prompt 坐进自己边界开的那一轮而不是旁边另开空轮）；
+> 工作区 `typecheck` 清；`sync-protocol:check` 通过；`apps/mobile` `typecheck` 清、
+> `lint` 0 error（223 warning，与基线同量级）、`test` 32 套 267 例全过。
+> **本轮没有真机/模拟器复核**（`adb devices` 为空，机器上也没有 Android 模拟器），
+> 上面全部结论来自对真实会话日志的重放；`removeClippedSubviews={false}` 与滚动是否
+> 回退需要在下次接上设备时按「长会话滚动」那一段的办法再核一遍。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、

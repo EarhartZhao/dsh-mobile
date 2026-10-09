@@ -32,6 +32,10 @@ function preparing(seq: number, callId: string, name: string, time: number) {
   return { kind: 'preparing', key: `p${callId}`, seq, time, callId, name }
 }
 
+function context(seq: number, text: string) {
+  return { kind: 'context', key: `c${seq}`, seq, time: seq * 1_000, text, sourceKind: 'goal' }
+}
+
 const turnStart = (seq: number, turn: number, time: number) => ({ kind: 'turn-start', key: `ts${turn}`, seq, time, turn })
 const turnEnd = (seq: number, turn: number, time: number, reason: string) =>
   ({ kind: 'turn-end', key: `te${turn}`, seq, time, turn, reason })
@@ -299,6 +303,80 @@ describe('groupTurns', () => {
     // A turn the Host has never reported on keeps the log-only reading: an
     // unknown Session is not an idle one.
     expect(groupTurns(dropped, { running: undefined })[0]!.live).toBe(true)
+  })
+
+  it('opens a turn of its own at every boundary, so an auto-continued round keeps its own clock', () => {
+    // A goal round, a retry or a scheduled wake begins a new turn with no prompt
+    // of its own, and the Web seats each one as a turn of its own. Folding them
+    // into the prompt's turn let the first round's `turn/end` settle the whole
+    // run: every later round then rendered folded — its narration dropped, its
+    // steps hidden behind the closing answer — and flipped back to the live
+    // shape whenever a step was in flight, emptying the block the reader was
+    // reading and filling it again thousands of pixels at a time.
+    const turns = groupTurns(items(
+      turnStart(1, 1, 1_000),
+      user(2, 'q'),
+      assistant(3, 'round one', 'think'),
+      turnEnd(4, 1, 5_000, 'completed'),
+      turnStart(5, 2, 6_000),
+      context(6, '<goal_round>'),
+      assistant(7, 'round two', 'think again'),
+    ))
+
+    expect(turns).toHaveLength(2)
+    // The prompt's own turn closed where the log said it did.
+    expect(turns[0]!.endReason).toBe('completed')
+    expect(turns[0]!.durationMs).toBe(4_000)
+    expect(rowShape(turns[0]!)).toEqual(['q', 'process', 'round one'])
+    // The round that is still open is live, timed by its own boundary rather
+    // than by the prompt that started the Session.
+    expect(turns[1]!.live).toBe(true)
+    expect(turns[1]!.startedAt).toBe(6_000)
+    expect(rowShape(turns[1]!)).toEqual(['process', 'round two'])
+  })
+
+  it('settles the turn a closing event names, never the block that opened after it', () => {
+    // A prompt — the composer's steering, say — opens the next block while the
+    // running turn is still open. That turn's own `turn/end` belongs to it, and
+    // handing it to the block that had just started is what left a live
+    // transcript reading as finished.
+    const turns = groupTurns(items(
+      turnStart(1, 1, 1_000),
+      user(2, 'q'),
+      assistant(3, 'a'),
+      user(4, 'also do this'),
+      assistant(5, 'b'),
+      turnEnd(6, 1, 9_000, 'aborted'),
+    ))
+
+    expect(turns.map(turn => turn.endReason)).toEqual(['aborted', undefined])
+    expect(turns[0]!.endSeq).toBe(6)
+    expect(turns[1]!.live).toBe(true)
+  })
+
+  it('seats a prompt in the turn its own boundary opened, not in an empty one beside it', () => {
+    // The log writes `turn/start` and only then commits the message the turn
+    // claimed, so every prompt below the first arrives after its boundary. The
+    // preamble the boundary carries (here the injected context) is part of the
+    // same turn, and the prompt below it belongs there too: opening a turn of
+    // its own left an empty block above every prompt after the first.
+    const turns = groupTurns(items(
+      turnStart(1, 1, 1_000),
+      user(2, 'q'),
+      assistant(3, 'a'),
+      turnEnd(4, 1, 5_000, 'completed'),
+      turnStart(5, 2, 6_000),
+      context(6, 'injected'),
+      user(7, 'q2'),
+      assistant(8, 'a2'),
+      turnEnd(9, 2, 11_000, 'completed'),
+    ))
+
+    expect(turns).toHaveLength(2)
+    expect(turns[1]!.items.map(item => item.kind)).toEqual(['context', 'user', 'assistant'])
+    expect(turns[1]!.endReason).toBe('completed')
+    expect(turns[1]!.startedAt).toBe(6_000)
+    expect(rowShape(turns[1]!)).toEqual(['q2', 'a2'])
   })
 
   it('seats the branch control on the turn tail, anchored at the turn/end seq', () => {

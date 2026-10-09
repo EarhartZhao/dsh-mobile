@@ -719,6 +719,50 @@ describe('ChatScreen running turn', () => {
     expect(screenText(tree)).toContain('先规划一下')
   })
 
+  it('keeps an auto-continued round open instead of folding it into the round that closed', async () => {
+    const { manager, history } = setup()
+    history.mockResolvedValueOnce(okPage())
+    const tree = render(manager)
+    await settle()
+
+    // A goal round, a retry or a scheduled wake opens a turn with no prompt of
+    // its own, and the Web seats each as a turn of its own. Reading them as one
+    // block let the first round's `turn/end` settle everything after it: the
+    // round that was running rendered folded — its narration dropped, its trace
+    // collapsed over the previous answer — and unfolded again the moment a step
+    // was in flight, which is the block the reader watched empty out.
+    feed(manager, 2, 'turn/start', { turn: 1 })
+    feed(manager, 3, 'assistant/message', {
+      turn: 1, step: 1,
+      message: {
+        content: [
+          { type: 'reasoning', text: '先摸仓库' },
+          { type: 'text', text: '先摸清仓库结构。' },
+        ],
+      },
+    })
+    feed(manager, 4, 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+    feed(manager, 5, 'turn/start', { turn: 2 })
+    feed(manager, 6, 'assistant/message', {
+      turn: 2, step: 1,
+      message: {
+        content: [
+          { type: 'reasoning', text: '第 2 轮先看讲义' },
+          { type: 'text', text: 'Round 2：讲义继续。' },
+        ],
+      },
+    })
+    await settle()
+
+    // The closed round keeps its folded shape — its trace rides inside the
+    // answer's own card, so it takes no row of its own — while the round still
+    // running keeps its trace open and its own clock, rather than inheriting the
+    // first round's end and folding into a shape the reader has to reopen.
+    expect(rowText(tree)).toEqual(['你好', '先摸清仓库结构。', 'process', 'Round 2：讲义继续。'])
+    expect(screenText(tree)).toContain('第 2 轮先看讲义')
+    expect(screenText(tree)).toContain('chat.running')
+  })
+
   it('stops showing a turn as live once the Host reports the Session idle', async () => {
     const { manager, history } = setup()
     history.mockResolvedValueOnce(okPage())
