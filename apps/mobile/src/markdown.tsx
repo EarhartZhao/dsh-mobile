@@ -9,13 +9,31 @@
  * what a link *means* depends on the surface it was tapped from.
  */
 import React from 'react'
-import { Clipboard, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
+import { Clipboard, PanResponder, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
 import { TouchableOpacity } from './components/Touchable'
 import { chat, fontSize, radius, spacing } from './theme'
 import { useI18n } from './i18n'
 import { Icon } from './icons'
 
-/** Fenced code block: language chip, copy/share, horizontal scroll. */
+/** Tallest the panel grows before it scrolls its own code (points). */
+const CODE_PANEL_MAX_HEIGHT = 320
+
+/**
+ * Fenced code block: language chip, copy/share, and a panel that pans the code
+ * in both directions, keeping its line structure.
+ *
+ * The panel drives that pan itself, and it is worth knowing why. On Android a
+ * nested ScrollView inside the transcript loses the gesture: the list scrolls
+ * vertically above it and a drag goes to whichever view crosses its own touch
+ * slop first, so a slow drag — or any drag that is not perfectly straight —
+ * left the code untouched (`nestedScrollEnabled` on either side changed
+ * nothing). Taking the responder as the finger lands fixes the list, but it
+ * also blocks the touch from reaching the panel's own scrollers, because React
+ * Native implements a JS responder by stopping native responders in that
+ * subtree. So both are done here: the panel claims the touch once the code has
+ * somewhere to go, and moves its two scroll views by hand. A short snippet
+ * never claims anything, leaving the drag to the transcript.
+ */
 export function CodeBlock({ node }: { node: { content: string; attributes?: unknown } }): React.JSX.Element {
   const { t } = useI18n()
   const content = node.content.endsWith('\n') ? node.content.slice(0, -1) : node.content
@@ -25,6 +43,36 @@ export function CodeBlock({ node }: { node: { content: string; attributes?: unkn
   const language = typeof attributes.info === 'string' && attributes.info !== ''
     ? attributes.info.split(/\s+/)[0]
     : t('chat.code')
+  const vertical = React.useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const sideways = React.useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const panel = React.useRef({
+    contentW: 0, contentH: 0, viewportW: 0, viewportH: 0,
+    maxX: 0, maxY: 0, x: 0, y: 0, startX: 0, startY: 0,
+  })
+  const scrollable = React.useRef(false)
+  const measure = (): void => {
+    const state = panel.current
+    state.maxX = Math.max(0, state.contentW - state.viewportW)
+    state.maxY = Math.max(0, state.contentH - state.viewportH)
+    state.x = Math.min(state.x, state.maxX)
+    state.y = Math.min(state.y, state.maxY)
+    scrollable.current = state.maxX > 0 || state.maxY > 0
+  }
+  const pan = React.useRef(PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => scrollable.current,
+    onPanResponderGrant: () => {
+      panel.current.startX = panel.current.x
+      panel.current.startY = panel.current.y
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const state = panel.current
+      // Drag left/up to move the code left/up, clamped to what there is to see.
+      state.x = Math.max(0, Math.min(state.maxX, state.startX - gesture.dx))
+      state.y = Math.max(0, Math.min(state.maxY, state.startY - gesture.dy))
+      sideways.current?.scrollTo({ x: state.x, animated: false })
+      vertical.current?.scrollTo({ y: state.y, animated: false })
+    },
+  })).current
   return (
     <View style={codeStyles.block}>
       <View style={codeStyles.header}>
@@ -48,9 +96,36 @@ export function CodeBlock({ node }: { node: { content: string; attributes?: unkn
           </TouchableOpacity>
         </View>
       </View>
-      <ScrollView horizontal nestedScrollEnabled>
-        <Text selectable style={codeStyles.code}>{content}</Text>
-      </ScrollView>
+      <View
+        style={codeStyles.viewport}
+        {...pan.panHandlers}
+        onLayout={event => {
+          panel.current.viewportW = event.nativeEvent.layout.width
+          panel.current.viewportH = event.nativeEvent.layout.height
+          measure()
+        }}
+      >
+        <ScrollView
+          ref={sideways}
+          horizontal
+          scrollEnabled={false}
+          onContentSizeChange={width => {
+            panel.current.contentW = width
+            measure()
+          }}
+        >
+          <ScrollView
+            ref={vertical}
+            scrollEnabled={false}
+            onContentSizeChange={(_width, height) => {
+              panel.current.contentH = height
+              measure()
+            }}
+          >
+            <Text selectable style={codeStyles.code}>{content}</Text>
+          </ScrollView>
+        </ScrollView>
+      </View>
     </View>
   )
 }
@@ -192,6 +267,9 @@ const codeStyles = StyleSheet.create({
   },
   language: { color: chat.labelTertiary, fontSize: fontSize.tiny },
   actions: { flexDirection: 'row', gap: spacing(3) },
+  // The panel grows with the code up to this height, then scrolls inside itself
+  // — sideways for long lines, downwards for long blocks.
+  viewport: { maxHeight: CODE_PANEL_MAX_HEIGHT },
   code: {
     minWidth: '100%',
     paddingHorizontal: spacing(2.5),

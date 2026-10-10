@@ -584,6 +584,34 @@
 > 不用抢真实鼠标的工具驱动；记录页的渲染顺序用一次性的 headless 渲染核对过（
 > 概述 → 来源/请求 #N → 层级 → 状态 → Token/推理/内容 → 预览（思考块 + 正文）→ 请求计时）。
 
+> 2026-10-10 追加（代码块保留自身行结构，面板内可横竖双向滑动）：
+>
+> 现象：聊天里代码块的长行被卡片右边缘裁掉，用户反馈「拖动代码部分不能横向滚动」，
+> 并明确要求**不要折行破坏代码结构**，而是面板内横竖都能滑。
+>
+> 排障：`ScrollView horizontal` 嵌在会话列表里，Android 把手势判给先越过自己 touch slop 的
+> 视图——模拟器实测只有**快速、笔直的水平甩动**能滚到代码，慢拖（900ms）与带纵向分量的拖动
+> （dx=-500 / dy=+90）都不动（后者页面跟着滚）。四种补救逐一否掉：内外都开
+> `nestedScrollEnabled`、整张卡按下即抢 responder（`onStartShouldSetResponderCapture`，
+> PanResponder 写法等价）、只在移动阶段按横向意图抢 responder、关闭 ScrollView 自身滚动后由
+> `scrollTo` 手驱偏移。其中「抢 responder」看似最接近成功（它确实把外层列表挡在门外了），
+> 但面板自己的滚动器同时失灵——**RN 在 Android 上用 `blockNativeResponder` 实现 JS responder，
+> 抢到手势必阻断该子树的原生触摸**，所以「抢手势」与「原生嵌套滚动」天生互斥。
+> 另外量到一个容易踩的细节：横向 ScrollView 会把子节点的**高度**夹住，嵌套顺序若写成
+> 「外层纵向、内层横向」，内层永远量不到代码真实高度（日志里 `contentH == viewportH`、
+> `maxY=0`），正确顺序是**外层横向、内层纵向**——每层只在它滚动的那根轴上放开约束。
+>
+> 结论与改动（`apps/mobile/src/markdown.tsx` 的 `CodeBlock`）：面板固定最大高度 320pt，
+> 内部两层 ScrollView（外层横向、内层纵向）都关掉自身滚动，由面板在按下时抢下手势、
+> 按 `gesture.dx/dy` 自己算偏移再 `scrollTo`，横向与纵向（以及斜向）一次手势同时生效。
+> 只在**确实有内容可滚**时才抢（按 content 与 viewport 的实测尺寸判断），所以短代码块
+> 不会拦截拖动——那种情况下拖动照旧滚会话。复制/分享仍按原文输出。
+>
+> 验证：模拟器（emulator-5554，Android 16）实测——长行块慢速水平拖动滚到右半边；
+> 高度受限的框图块内部向上拖动滚到下半部分，且页面纹丝不动；量得的
+> `maxX=312.76 / maxY=134.86` 与渲染结果一致。新增 `apps/mobile/src/markdown.test.tsx` 4 例
+> 钉住面板契约（原文渲染、语言 chip 回落、复制按钮逐字复制、保留自身的横向滚动器）。
+
 ## 一、移动端现状（已完成）
 配对/token、连接生命周期（重连+基线重拉+hello 重放）、workspace/session 列表、
 新建会话、会话历史分页、prompt 发送（queue 模式）、流式渲染（chunk 节流）、
@@ -598,7 +626,7 @@
 
 | 功能 | 数据来源 | 移动端 | 说明 |
 |---|---|---|---|
-| Markdown/代码块渲染 | 客户端本地 | ● | Markdown 渲染、代码块横向滚动、复制和分享已接入 |
+| Markdown/代码块渲染 | 客户端本地 | ● | Markdown 渲染、代码块保留行结构并在面板内横竖双向滑动（见 2026-10-10 条目）、复制和分享已接入 |
 | 工具卡片分级展示 | ✅ tool/call+result 的 `view` 槽（桥 0.2.10 起真正下发） | ● | 卡片注册表在 `apps/mobile/src/components/tool-cards.tsx`（generic/terminal/diff/read/search/web，每个条目声明 title/meta/summary/body）；settled 行的**标签取自两个相位**（result 未声明 title 时沿用 call 的，宿主契约如此），内容取当前状态相位。真机已验证：read 卡显示行号窗口；`pwsh` 行标题为宿主的 `echo title-check · title-check`，展开有输出与 `退出码 0` |
 | 工序实时表头（"在做什么"） | ✅ assistant/chunk 具名 tool-call-delta + tool/call + turn/start\|end | ● | 分类词表与详情字段优先级与 Web 同表（`packages/core/src/activity.ts`）；运行中显示"正在调用工具 · job_output"（与 Web 的 `message.stepProcess.*` 逐条对应），结束的轮次只显示 Web 那一行"用时 1分04秒"（无计时"已完成工作"，取消"已停止"，出错"处理失败"，计时下限 1 秒），不再另外拼类别摘要 |
 | 工序逐步行 + 思考预览 | ✅ 同上 | ● | 运行中自动展开并逐步列出工具行（分类 + 详情 + 状态）；思考行折叠成一行预览（末段首行），点开看全文 |
