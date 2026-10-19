@@ -1,6 +1,6 @@
 /** Full-screen image preview; the scroll container provides pinch zoom. */
 import React from 'react'
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
 import { TouchableOpacity } from './Touchable'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors, fontSize, spacing } from '../theme'
@@ -15,6 +15,13 @@ export function ImageLightbox({ visible, source, name, onClose }: {
   const { t } = useI18n()
   /** The lightbox is a Modal window of its own, so it pays the system bars itself. */
   const insets = useSafeAreaInsets()
+  /**
+   * A flexed image inside a ScrollView has no height to resolve against, so it
+   * lays out at zero and the viewer stays black. Give the zoom content the
+   * window's own box instead: the header and both bars are subtracted here.
+   */
+  const window = useWindowDimensions()
+  const viewerHeight = Math.max(1, window.height - insets.top - insets.bottom - 64)
   return (
     <Modal
       visible={visible}
@@ -36,13 +43,18 @@ export function ImageLightbox({ visible, source, name, onClose }: {
         </View>
         <ScrollView
           style={styles.viewer}
+          contentContainerStyle={styles.viewerContent}
           maximumZoomScale={5}
           minimumZoomScale={1}
           showsVerticalScrollIndicator={false}
           showsHorizontalScrollIndicator={false}
           centerContent
         >
-          <Image source={{ uri: source }} style={styles.image} resizeMode="contain" />
+          <Image
+            source={{ uri: source }}
+            style={{ width: window.width, height: viewerHeight }}
+            resizeMode="contain"
+          />
         </ScrollView>
       </Pressable>
     </Modal>
@@ -61,5 +73,5 @@ const styles = StyleSheet.create({
   name: { flex: 1, color: '#fff', fontSize: fontSize.small },
   close: { color: colors.accent, fontSize: fontSize.small },
   viewer: { flex: 1 },
-  image: { flex: 1, width: '100%' },
+  viewerContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
 })

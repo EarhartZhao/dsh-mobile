@@ -9,8 +9,9 @@
  * what a link *means* depends on the surface it was tapped from.
  */
 import React from 'react'
-import { Clipboard, PanResponder, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
+import { Clipboard, Image, PanResponder, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
 import { TouchableOpacity } from './components/Touchable'
+import { ImageLightbox } from './components/ImageLightbox'
 import { chat, fontSize, radius, spacing } from './theme'
 import { useI18n } from './i18n'
 import { Icon } from './icons'
@@ -130,8 +131,51 @@ export function CodeBlock({ node }: { node: { content: string; attributes?: unkn
   )
 }
 
+/**
+ * A Markdown image that opens the same full-screen viewer as an attachment.
+ * The renderer's own rule draws a bare `Image`, so a transcript screenshot had
+ * no route to the lightbox at all.
+ */
+function MarkdownImage({ node }: { node: { attributes?: unknown } }): React.JSX.Element {
+  const attributes = typeof node.attributes === 'object' && node.attributes !== null
+    ? node.attributes as { src?: unknown; alt?: unknown }
+    : {}
+  const source = typeof attributes.src === 'string' ? attributes.src : ''
+  const alt = typeof attributes.alt === 'string' && attributes.alt !== '' ? attributes.alt : undefined
+  const [open, setOpen] = React.useState(false)
+  const [aspect, setAspect] = React.useState(4 / 3)
+  if (source === '') return <></>
+  return (
+    <>
+      <TouchableOpacity onPress={() => setOpen(true)} accessibilityRole="imagebutton" accessibilityLabel={alt}>
+        <Image
+          source={{ uri: source }}
+          style={[imageStyles.image, { aspectRatio: aspect }]}
+          resizeMode="contain"
+          onLoad={event => {
+            const size = event.nativeEvent.source
+            if (size.width > 0 && size.height > 0) setAspect(size.width / size.height)
+          }}
+        />
+      </TouchableOpacity>
+      <ImageLightbox visible={open} source={source} name={alt} onClose={() => setOpen(false)} />
+    </>
+  )
+}
+
+const imageStyles = StyleSheet.create({
+  image: {
+    width: '100%',
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
+})
+
 /** Rules shared by every Markdown surface. */
 export const markdownRules = {
+  image: (node: { key: string; attributes?: unknown }): React.JSX.Element => (
+    <MarkdownImage key={node.key} node={node} />
+  ),
   code_block: (node: { key: string; content: string; attributes?: unknown }): React.JSX.Element => (
     <CodeBlock key={node.key} node={node} />
   ),
