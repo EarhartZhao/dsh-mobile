@@ -61,6 +61,25 @@
 > `caFpEnforced: false`。剩余三项分别卡在：上游 fs seam 的 `listDir` 上限与 Remote 游标（分页）、
 > Hub 中继或局域网端点（大文件）、FCM/APNs 凭据（推送）与原生 TLS pinning（CA 指纹强制）。
 
+> 2026-10-19 追加（dsh 0.2.1-rc.2 上游核对：一次**破坏性**更新）：区间 `639ed01539`
+> （0.2.0-rc.2）→ `687f282e86`，1925 个提交。核心变化是**每个 in-process Remote 调用都必须
+> 指明 Peer**：`InvokeRemoteRequest.peer` 必填、`wireStream.open(endpoint, payload, uplink, peer,
+> signal)` 的 peer 必填、`@Remote({ resources })` 与事件 `resources` readers 参与访问控制；
+> Gateway 的 `assertPeerLive(peer)` 第一句就读 `peer.signal`，没有 peer 直接抛
+> `Cannot read properties of undefined (reading 'signal')`。
+> 插件侧适配（0.2.43）：新增 `src/host-peer.ts`，用
+> `connection.createPeer({ principal: { kind: 'owner' } })` 取 owner Peer，并用 Proxy 注入
+> `invoke` / `stream` / `wireStream.open`。最初漏了 `wireStream.open`，`$events` 一直起不来，
+> 连带审批卡、提问卡、`host/remote-event`（工作区变更/插件清单/文件监视）全部收不到；
+> 补上后宿主 `lastError` 从该报错变为空，事件泵在连接时立即恢复。
+> 其余核对结论：会话格式仍 **v4**；`SessionFollowFrame` 与 `page`/`follow` 参数形状未变；
+> `agent-tool-presentation` 只改 PTC 的 mode 枚举；`present` 工具与 `deliverables/presented`
+> 未变；新增 3 个 **log-only** durable 事件 `job/registered`、`job/settled`、
+> `working-directory/change`；`session.create` 增加可选 `agentPreset`、`session.projections`
+> 增加 `allowMigration`（均为加法）。**App 侧无需改代码**；只有验收门禁的 owner token 过期
+> （`@Remote('page')` → `name: 'page'`），已修，manifest 的 `protocol`/`verifiedAt` 一并更新为
+> `dsh-0.2.1-rc.2-remote` / 2026-10-19。
+
 > 2026-09-30 追加（dsh 0.2.0-rc.2 上游核对）：区间 `21638c5631`（0.1.7-rc.2）→
 > `639ed01539`，293 个提交。结论是**零破坏，两个项目都不用改代码**：
 > `sync-protocol --check` 报 `frozen mobile wire verified (36 files)` +

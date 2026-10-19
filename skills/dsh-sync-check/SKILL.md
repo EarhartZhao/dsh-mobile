@@ -79,6 +79,7 @@ pnpm test
 | 0.1.6-alpha.2（2026-09-22 核对） | 同上；删除 `session/control` 的 `queues` 与 `queue` 帧，改由会话 `inbox` 投影提供待处理输入 | 插件 0.2.8+ 把 `inbox` 翻译回 `session/queue`，App 与冻结 wire 不变；新增面：引用候选 `displayTitle`、插件清单 `managementAvailable`、转发的 `plugin-manager/*` 事件 |
 | 0.1.7-rc.2（2026-09-28 核对） | 同上；`wireStream.open` 增加 uplink/peer 参数、`readBytes` 窗口移入 `options` 且 `data` 变原生字节、`readRelated` 与 `subagents/list` 删除、`changes` 改为单目标、`session/control` 的 jobs 改到 `job` 命名空间 | 插件 0.2.9+ 在桥内吸收全部五处（含旧宿主回退）；App 侧仅 `file.watch/unwatch` 增加可选 `path`、目录自身变更也触发刷新 |
 | 0.2.0-rc.2（2026-09-30 核对） | 同上；`api/gateway` 只新增 `hasLiveClient()`（移动侧不依赖），冻结 wire（36 文件）与 51 个 Remote endpoint 全部命中，移动端相关包无删除/重命名 | **无需改动**：插件 0.2.14 + App 0.0.8 直接兼容。区间唯一实质变化在 `packages/interaction`——新增 `questions` 会话投影与 `ask_user_question` 可选 timed 模式（`mode` 默认仍是 `legacy`，请求多一个可选 `wait`，超时后返回 `{ pending, callId }` 并经 inbox 回灌答复；当前没有 bundle 打开它）。durable 事件词汇表与会话格式 v4 均未变 |
+| 0.2.1-rc.2（2026-10-19 核对） | **破坏性**：每个 in-process Remote 调用都必须带 Peer——`InvokeRemoteRequest.peer` 必填、`wireStream.open(..., peer, signal)` 的 peer 必填、`@Remote({ resources })`/事件 `resources` readers 参与访问控制；`assertPeerLive(peer)` 直接读 `peer.signal` | **插件 0.2.43** 用 `connection.createPeer({ principal: { kind: 'owner' } })` + Proxy 注入 `invoke`/`stream`/`wireStream.open`（漏掉最后一项会抛 `reading 'signal'`，`$events` 连带审批/提问/转发事件全断）。App 侧无需改代码；验收门禁的 owner token 需更新（`@Remote('page')` → `name: 'page'`）。会话格式仍 v4，follow 帧与 page/follow 参数未变；新增 log-only 事件 `job/registered`、`job/settled`、`working-directory/change` |
 
 ## 防止遗漏
 

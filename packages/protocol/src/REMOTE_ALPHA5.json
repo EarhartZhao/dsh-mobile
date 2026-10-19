@@ -1,6 +1,6 @@
 {
-  "protocol": "dsh-0.1.7-rc.2-remote",
-  "verifiedAt": "2026-09-28",
+  "protocol": "dsh-0.2.1-rc.2-remote",
+  "verifiedAt": "2026-10-19",
   "mobileApi": 2,
   "endpoints": [
     "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",
@@ -20,7 +20,7 @@
   "sourceChecks": [
     {
       "file": "packages/api/session-controller/src/index.ts",
-      "includes": ["@Remote('list')", "@Remote('modelCatalog')", "@Remote('page')", "@Remote({ mode: 'stream' })", "@Remote('openWorkspacePath')", "control("]
+      "includes": ["@Remote('list')", "@Remote('modelCatalog')", "name: 'page'", "@Remote({ mode: 'stream'", "@Remote('openWorkspacePath')", "control("]
     },
     {
       "file": "packages/api/workspace-files/src/index.ts",
