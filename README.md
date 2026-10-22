@@ -1,5 +1,7 @@
 <div align="center">
 
+**简体中文** · [English](README.en.md)
+
 <img src="docs/assets/dsh-mobile-banner.svg" alt="dsh-mobile：把 DeepSeek Harness 装进手机" width="100%">
 
 # dsh-mobile
