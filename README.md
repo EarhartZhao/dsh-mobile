@@ -77,7 +77,7 @@ flowchart LR
 
 新电脑还没有 `nats-server` 或 `leaf.conf` 时，直接把 [AI 接入清单](https://github.com/EarhartZhao/dsh-mobile-plugin/blob/master/docs/04-ai-onboarding.md)交给这台电脑上的助手执行即可。
 
-> App `0.1.6` 支持插件 `>=0.2.2 <0.3.0`。两端版本不兼容时，App 会在连接阶段直接说明缺少的能力，不会静默失败。
+> App `0.1.7` 支持插件 `>=0.2.2 <0.3.0`。两端版本不兼容时，App 会在连接阶段直接说明缺少的能力，不会静默失败。
 
 ## 从源码运行
 

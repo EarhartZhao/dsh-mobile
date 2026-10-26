@@ -77,7 +77,7 @@ Open the plugin settings and follow the on-screen checklist:
 
 If this computer does not have `nats-server` or `leaf.conf` yet, give the [AI onboarding checklist](https://github.com/EarhartZhao/dsh-mobile-plugin/blob/master/docs/04-ai-onboarding.md) to the assistant running on that computer.
 
-> App `0.1.6` supports plugin `>=0.2.2 <0.3.0`. If the versions or required capabilities do not match, the app reports the exact incompatibility during connection instead of failing silently.
+> App `0.1.7` supports plugin `>=0.2.2 <0.3.0`. If the versions or required capabilities do not match, the app reports the exact incompatibility during connection instead of failing silently.
 
 ## Run from source
 
