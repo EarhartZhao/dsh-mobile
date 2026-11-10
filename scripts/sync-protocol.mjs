@@ -95,6 +95,15 @@ function verifyRemote() {
     for (const token of check.includes) {
       if (!source.includes(token)) failures.push(`${check.file} no longer contains ${JSON.stringify(token)}`)
     }
+    for (const alternatives of check.includesAny ?? []) {
+      if (!Array.isArray(alternatives) || alternatives.length === 0) {
+        failures.push(`${check.file} has an invalid includesAny group`)
+        continue
+      }
+      if (!alternatives.some(token => typeof token === 'string' && source.includes(token))) {
+        failures.push(`${check.file} matches none of ${JSON.stringify(alternatives)}`)
+      }
+    }
   }
   if (failures.length > 0) {
     console.error('[sync-protocol] dsh Remote surface drifted:')

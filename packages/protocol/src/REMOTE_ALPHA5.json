@@ -1,6 +1,6 @@
 {
-  "protocol": "dsh-0.2.1-rc.3-remote",
-  "verifiedAt": "2026-10-26",
+  "protocol": "dsh-0.2.2-remote",
+  "verifiedAt": "2026-11-10",
   "mobileApi": 2,
   "endpoints": [
     "session/list", "session/search", "session/create", "session/selectModel", "session/modelCatalog",
@@ -14,7 +14,7 @@
     "commands/list", "commands/execute", "agentPresets/list", "agentPresets/read", "agentPresets/select",
     "goals/get", "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear",
     "messageFeedback/list", "messageFeedback/put", "messageFeedback/delete",
-    "subagents/list", "subagents/prompt", "subagents/interruptByParent", "pluginInventory/list",
+    "subagents/list", "subagents/prompt", "subagents/interruptByParent", "subagents/interruptByUser", "pluginInventory/list",
     "fileReferences/list", "sessionReferenceResolver/candidates", "$events", "$events/result"
   ],
   "sourceChecks": [
@@ -48,7 +48,11 @@
     },
     {
       "file": "packages/subagent/subagent/src/index.ts",
-      "includes": ["@Remote('prompt')", "@Remote('interruptByParent')", "subagentCatalogProjectionDefinition"]
+      "includes": ["subagentCatalogProjectionDefinition"],
+      "includesAny": [
+        ["@Remote('prompt')", "@Remote({ name: 'prompt'"],
+        ["@Remote('interruptByParent')", "@Remote({ name: 'interruptByUser'"]
+      ]
     },
     {
       "file": "packages/api/job-controller/src/index.ts",
